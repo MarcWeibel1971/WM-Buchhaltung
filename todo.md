@@ -155,3 +155,8 @@
 - [x] Bestehende Eröffnungsbuchungen löschen/aktualisieren (keine vorhanden, neu erstellt)
 - [x] Neue Eröffnungsbuchungen für alle Konten erstellt: 10 Aktiven (Soll) + 12 Passiven (Haben) = CHF 1'105'612.54
 - [x] Bilanz verifiziert: Total Soll = Total Haben = CHF 1'105'612.54, Entry #2026-00005, Status approved
+
+## Feature: KK-Buchungsregeln aus VISA-Abrechnungen 2025 lernen
+- [x] Alle 6 Seiten der VISA-Kreditkartenabrechnungen 2025 extrahiert (~300 Buchungszeilen)
+- [x] 70 neue + 17 aktualisierte Booking Rules geseeded (Total: 91 Regeln in DB)
+- [x] Verifiziert: 91 Regeln in DB, alle 39 Tests grün

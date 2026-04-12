@@ -1,0 +1,90 @@
+Vendor-Konto Zuordnungen aus VISA Kreditkartenabrechnungen 2025
+Seite 1-3 extrahiert:
+
+Barbatti → 4891
+Villa Schweizerhof → 4891
+Rest. Herrenboden → 4891
+Uber → 4821
+Conditorei Schelbert → 4891
+Adobe → 4305
+Perplexity → 4305
+bexio → 4305
+Envato → 4305
+Hauser Parking → 4821
+Ecarup (Strom) → 4821
+SBB → 4821
+ecarup → 4821
+Confiseur Bachmann → 4792
+Elvetino → 4792
+Brither with Herbert → 4711
+I/O Fund → 4711 (auch 4305)
+Moonpay → 1081
+Rest. Rossstall → 4891
+PH Seehof → 4821
+Klara → 4720
+Orell Füssli → 4711
+Under Armour → 1081
+Fruugo → 1081
+Manufactum → 1081
+Zalando → 1081
+Migros → 4792
+Schweizer Modewelt → 1081
+Rundung → 4792
+Jahresbeitrag Karte → 4222
+Sollzinsen → 4220
+Rest. Barbatti → 1081
+Brasserie Bodu → 1081
+Rest. Portofino → 1081
+Kost + Brechbühl → 4792
+Musik Hug → 1081
+Rest. Stadtkeller → 1081
+Parkhaus National → 4821
+Hotel Cascada → 4891
+Mobility → 4821
+Jazz Kantine → 4891
+Suite-Smallplates & Cock → 4891
+Parkhaus Bahnhofplatz → 4821
+Rest. Perlen → 4891
+Yooji's Passage → 4792
+N-Security GmbH → 4792
+Rest. Schwanen → 4891
+La Bonne Cave → 4811 (auch 4891)
+Interdiscount → 4701
+Midjourney Inc. → 4305
+Manus AI → 4305
+Marché Gunzgen → 4792
+Docusign → 4305
+Galaxy AI → 4305
+GoDaddy → 4305
+DeepL → 4305
+Banana → 4305
+Beautiful.AI → 4305
+Steamgames → 4305
+Tom Walker → 4711
+Rest. Ochsen → 4891
+Aldi → 4792
+
+Seite 4-6 zusätzlich extrahiert:
+
+Paddle.net → 4305
+Microsoft → 4305
+Mode Mobile (Investment) → 1081
+Republik → 4711
+Moby.co → 4305
+IA Rotation Model → 4305
+Techsmith → 4305
+Portfolio BIG → 4305
+Twilio → 4305
+Dropbox → 4305
+EODHD → 4305
+Fiscal.AI → 4305
+Migros Schweizerhof → 4792
+Josephinenhütte → 1081
+digitec (Kopfhörer) → 4300
+Coop Disentis → 1081
+Aeropuerto Tenerife → 1081
+NZZ → 4711
+Express Limousine → 4821
+Conditorei Schelbert → 4792
+Markthalle Luzern → 1081
+EODH → 4305

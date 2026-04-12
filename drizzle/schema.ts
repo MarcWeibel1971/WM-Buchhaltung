@@ -61,8 +61,8 @@ export type Account = typeof accounts.$inferSelect;
 export const fiscalYears = mysqlTable("fiscal_years", {
   id: int("id").autoincrement().primaryKey(),
   year: int("year").notNull().unique(),
-  startDate: date("startDate").notNull(),
-  endDate: date("endDate").notNull(),
+  startDate: date("startDate", { mode: 'string' }).notNull(),
+  endDate: date("endDate", { mode: 'string' }).notNull(),
   isClosed: boolean("isClosed").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -73,9 +73,9 @@ export const journalEntries = mysqlTable("journal_entries", {
   // Entry number (Belegnummer)
   entryNumber: varchar("entryNumber", { length: 20 }),
   // Booking date
-  bookingDate: date("bookingDate").notNull(),
+  bookingDate: date("bookingDate", { mode: 'string' }).notNull(),
   // Value date
-  valueDate: date("valueDate"),
+  valueDate: date("valueDate", { mode: 'string' }),
   // Description
   description: text("description").notNull(),
   // Status: pending = Vorschlag, approved = freigegeben, rejected = abgelehnt
@@ -142,8 +142,8 @@ export const bankTransactions = mysqlTable("bank_transactions", {
   id: int("id").autoincrement().primaryKey(),
   bankAccountId: int("bankAccountId").notNull(),
   // Transaction date
-  transactionDate: date("transactionDate").notNull(),
-  valueDate: date("valueDate"),
+  transactionDate: date("transactionDate", { mode: 'string' }).notNull(),
+  valueDate: date("valueDate", { mode: 'string' }),
   // Amount (positive = credit, negative = debit)
   amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("CHF").notNull(),
@@ -176,7 +176,7 @@ export type BankTransaction = typeof bankTransactions.$inferSelect;
 export const creditCardStatements = mysqlTable("credit_card_statements", {
   id: int("id").autoincrement().primaryKey(),
   // Statement period
-  statementDate: date("statementDate").notNull(),
+  statementDate: date("statementDate", { mode: 'string' }).notNull(),
   // Total amount
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("CHF").notNull(),
@@ -205,9 +205,9 @@ export const employees = mysqlTable("employees", {
   // Address
   address: text("address"),
   // Date of birth
-  dateOfBirth: date("dateOfBirth"),
+  dateOfBirth: date("dateOfBirth", { mode: 'string' }),
   // Employment start
-  employmentStart: date("employmentStart"),
+  employmentStart: date("employmentStart", { mode: 'string' }),
   // Linked salary account (Kontokorrent)
   salaryAccountId: int("salaryAccountId"),
   // Linked gross salary account
@@ -254,8 +254,8 @@ export const vatPeriods = mysqlTable("vat_periods", {
   year: int("year").notNull(),
   // Period: Q1, Q2, Q3, Q4, S1, S2
   period: varchar("period", { length: 5 }).notNull(),
-  startDate: date("startDate").notNull(),
-  endDate: date("endDate").notNull(),
+  startDate: date("startDate", { mode: 'string' }).notNull(),
+  endDate: date("endDate", { mode: 'string' }).notNull(),
   // Turnover amounts per rate
   turnover81: decimal("turnover81", { precision: 15, scale: 2 }).default("0"),
   turnover26: decimal("turnover26", { precision: 15, scale: 2 }).default("0"),

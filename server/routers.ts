@@ -19,6 +19,31 @@ import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeri
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 
+/**
+ * Converts a date string or Date object to 'YYYY-MM-DD' string for Drizzle date() columns.
+ * Drizzle's date() in mysql2 mode expects a plain string, NOT a Date object.
+ */
+function toDateStr(val: string | Date | undefined | null): string | undefined {
+  if (!val) return undefined;
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return undefined;
+    return val.toISOString().substring(0, 10);
+  }
+  // Already a string – normalise to YYYY-MM-DD
+  const s = String(val).trim();
+  // DD.MM.YYYY
+  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  // YYYY-MM-DD (already ISO)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
+  // MM/DD/YYYY
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+  // YYYYMMDD compact
+  if (/^\d{8}$/.test(s)) return `${s.substring(0,4)}-${s.substring(4,6)}-${s.substring(6,8)}`;
+  return undefined;
+}
+
 // ─── Accounts Router ──────────────────────────────────────────────────────────
 const accountsRouter = router({
   list: publicProcedure.query(() => getAllAccounts()),
@@ -97,8 +122,8 @@ const journalRouter = router({
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const year = input.fiscalYear ?? new Date(input.bookingDate).getFullYear();
       const entryId = await createJournalEntry({
-        bookingDate: new Date(input.bookingDate),
-        valueDate: input.valueDate ? new Date(input.valueDate) : undefined,
+        bookingDate: toDateStr(input.bookingDate) as string,
+        valueDate: toDateStr(input.valueDate),
         description: input.description,
         source: input.source,
         fiscalYear: year,
@@ -153,7 +178,7 @@ const journalRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const updateData: Record<string, unknown> = {};
       if (input.description) updateData.description = input.description;
-      if (input.bookingDate) updateData.bookingDate = new Date(input.bookingDate);
+      if (input.bookingDate) updateData.bookingDate = toDateStr(input.bookingDate);
       if (Object.keys(updateData).length > 0) {
         await db.update(journalEntries).set(updateData).where(eq(journalEntries.id, input.entryId));
       }
@@ -197,8 +222,8 @@ const bankImportRouter = router({
 
         const saved = await saveBankTransaction({
           bankAccountId: input.bankAccountId,
-          transactionDate: new Date(tx.transactionDate),
-          valueDate: tx.valueDate ? new Date(tx.valueDate) : undefined,
+          transactionDate: toDateStr(tx.transactionDate) as string,
+          valueDate: toDateStr(tx.valueDate),
           amount: tx.amount,
           currency: tx.currency,
           description: tx.description,
@@ -328,8 +353,8 @@ Regeln:
       const year = new Date(tx.transactionDate as any).getFullYear();
 
       const entryId = await createJournalEntry({
-        bookingDate: new Date(tx.transactionDate as any),
-        valueDate: tx.valueDate ? new Date(tx.valueDate as any) : undefined,
+        bookingDate: toDateStr(tx.transactionDate as string) as string,
+        valueDate: toDateStr(tx.valueDate as string),
         description: input.description ?? tx.description ?? "Bankbuchung",
         source: "bank_import",
         sourceRef: `bank-tx-${tx.id}`,
@@ -380,7 +405,7 @@ const creditCardRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       const [result] = await db.insert(creditCardStatements).values({
-        statementDate: new Date(input.statementDate),
+        statementDate: toDateStr(input.statementDate) as string,
         totalAmount: input.totalAmount,
         owner: "mw",
         status: "pending",
@@ -414,7 +439,7 @@ const creditCardRouter = router({
 
       // Sammelbelastung: Debit Aufwandskonto, Credit 1082 (Durchlaufkonto)
       const entryId = await createJournalEntry({
-        bookingDate: new Date(stmt.statementDate as any),
+        bookingDate: toDateStr(stmt.statementDate as string) as string,
         description: input.description ?? `VISA Sammelbelastung ${stmt.statementDate}`,
         source: "credit_card",
         sourceRef: `cc-stmt-${stmt.id}`,
@@ -549,7 +574,7 @@ const payrollRouter = router({
       lines.push({ accountId: creditAcc.id, side: "credit" as const, amount: totalDebit.toFixed(2), description: `Nettolohn ${emp.code}` });
 
       const entryId = await createJournalEntry({
-        bookingDate: new Date(p.year, p.month - 1, 25),
+        bookingDate: `${p.year}-${String(p.month).padStart(2,"0")}-25`,
         description: `Lohn ${emp.code} ${monthName} ${p.year}`,
         source: "payroll",
         sourceRef: `payroll-${p.id}`,
@@ -600,8 +625,8 @@ const vatRouter = router({
       const [result] = await db.insert(vatPeriods).values({
         year: input.year,
         period: input.period,
-        startDate: new Date(input.startDate),
-        endDate: new Date(input.endDate),
+        startDate: toDateStr(input.startDate) as string,
+        endDate: toDateStr(input.endDate) as string,
       });
       return { periodId: (result as any).insertId };
     }),

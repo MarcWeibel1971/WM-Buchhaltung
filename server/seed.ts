@@ -183,16 +183,16 @@ async function seed() {
 
   // Fiscal years
   await db.insert(fiscalYears).values(
-    { year: 2023, startDate: new Date("2023-01-01"), endDate: new Date("2023-12-31"), isClosed: true }
+    { year: 2023, startDate: "2023-01-01", endDate: "2023-12-31", isClosed: true }
   ).onDuplicateKeyUpdate({ set: { isClosed: true } });
   await db.insert(fiscalYears).values(
-    { year: 2024, startDate: new Date("2024-01-01"), endDate: new Date("2024-12-31"), isClosed: true }
+    { year: 2024, startDate: "2024-01-01", endDate: "2024-12-31", isClosed: true }
   ).onDuplicateKeyUpdate({ set: { isClosed: true } });
   await db.insert(fiscalYears).values(
-    { year: 2025, startDate: new Date("2025-01-01"), endDate: new Date("2025-12-31"), isClosed: true }
+    { year: 2025, startDate: "2025-01-01", endDate: "2025-12-31", isClosed: true }
   ).onDuplicateKeyUpdate({ set: { isClosed: true } });
   await db.insert(fiscalYears).values(
-    { year: 2026, startDate: new Date("2026-01-01"), endDate: new Date("2026-12-31"), isClosed: false }
+    { year: 2026, startDate: "2026-01-01", endDate: "2026-12-31", isClosed: false }
   ).onDuplicateKeyUpdate({ set: { isClosed: false } });
   console.log("✓ Geschäftsjahre geseedet");
 

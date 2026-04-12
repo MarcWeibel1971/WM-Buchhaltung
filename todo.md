@@ -92,3 +92,6 @@
 - [x] Vitest: Bank-Parser
 - [x] Vitest: Kontenplan-Klassifizierung
 - [x] Vitest: auth.logout (Template-Test)
+
+## Bugfixes
+- [x] Bankimport: transactionDate 'Invalid Date' behoben – alle date()-Spalten auf mode:'string' umgestellt, toDateStr()-Hilfsfunktion eingeführt

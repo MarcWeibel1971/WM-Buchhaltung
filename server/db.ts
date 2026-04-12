@@ -173,8 +173,8 @@ export async function getJournalEntryWithLines(entryId: number) {
 }
 
 export async function createJournalEntry(data: {
-  bookingDate: Date;
-  valueDate?: Date;
+  bookingDate: string;
+  valueDate?: string;
   description: string;
   status?: "pending" | "approved";
   source?: "manual" | "bank_import" | "credit_card" | "payroll" | "vat" | "system";

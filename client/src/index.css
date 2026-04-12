@@ -113,12 +113,15 @@
   --sidebar-ring: oklch(0.488 0.243 264.376);
 }
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
@@ -174,4 +177,86 @@
       max-width: 1280px; /* Standard content width */
     }
   }
+}
+/* ── Accounting-specific utilities ──────────────────────────────────────── */
+.amount-positive {
+  color: oklch(0.5 0.17 145);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+}
+
+.amount-negative {
+  color: oklch(0.55 0.22 25);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+}
+
+.amount-neutral {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+}
+
+.badge-pending {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background-color: oklch(0.97 0.08 85);
+  color: oklch(0.45 0.15 75);
+}
+
+.badge-approved {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background-color: oklch(0.95 0.07 145);
+  color: oklch(0.4 0.15 145);
+}
+
+.badge-rejected {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background-color: oklch(0.95 0.05 25);
+  color: oklch(0.45 0.2 25);
+}
+
+.accounting-table {
+  width: 100%;
+  font-size: 0.875rem;
+  border-collapse: collapse;
+}
+
+.accounting-table th {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+  background-color: oklch(from var(--muted) l c h / 0.5);
+}
+
+.accounting-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid oklch(from var(--border) l c h / 0.5);
+}
+
+.accounting-table tr:hover td {
+  background-color: oklch(from var(--muted) l c h / 0.3);
+}
+
+@media print {
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
 }

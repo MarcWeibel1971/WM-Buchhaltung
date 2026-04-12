@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { FiscalYearProvider } from "./contexts/FiscalYearContext";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
 import { Loader2 } from "lucide-react";
@@ -87,9 +88,11 @@ function App() {
         <TooltipProvider>
           <Toaster position="top-right" richColors />
           <AuthGuard>
-            <Layout>
-              <Router />
-            </Layout>
+            <FiscalYearProvider>
+              <Layout>
+                <Router />
+              </Layout>
+            </FiscalYearProvider>
           </AuthGuard>
         </TooltipProvider>
       </ThemeProvider>

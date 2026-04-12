@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
 import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -42,13 +43,15 @@ export default function Journal() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const limit = 20;
 
+  const { fiscalYear } = useFiscalYear();
+
   const filters = useMemo(() => ({
     status: status === "all" ? undefined : status as any,
     search: search || undefined,
-    fiscalYear: new Date().getFullYear(),
+    fiscalYear,
     limit,
     offset,
-  }), [status, search, offset]);
+  }), [status, search, offset, fiscalYear]);
 
   const { data, refetch } = trpc.journal.list.useQuery(filters);
   const { data: accounts } = trpc.accounts.list.useQuery();

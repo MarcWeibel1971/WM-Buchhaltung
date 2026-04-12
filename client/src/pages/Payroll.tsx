@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { Plus, Check, FileText, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,7 +16,7 @@ function formatCHF(val: string | number) {
 const MONTHS = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
 
 export default function Payroll() {
-  const [year, setYear] = useState(new Date().getFullYear());
+  const { fiscalYear: year } = useFiscalYear();
   const [showCreate, setShowCreate] = useState(false);
 
   const { data: employees } = trpc.payroll.getEmployees.useQuery();
@@ -35,14 +36,6 @@ export default function Payroll() {
           <p className="text-sm text-muted-foreground">Lohnabrechnung für mw und jm</p>
         </div>
         <div className="flex gap-2">
-          <Select value={String(year)} onValueChange={v => setYear(parseInt(v))}>
-            <SelectTrigger className="w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {[2023,2024,2025,2026].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-            </SelectContent>
-          </Select>
           <Button size="sm" className="gap-2" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4" /> Lohnabrechnung
           </Button>

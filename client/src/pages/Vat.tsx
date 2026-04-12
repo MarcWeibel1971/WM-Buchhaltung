@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { Plus, Check, FileText, Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,7 +22,7 @@ const PERIODS = [
 ];
 
 export default function Vat() {
-  const [year, setYear] = useState(new Date().getFullYear());
+  const { fiscalYear: year } = useFiscalYear();
   const [showCreate, setShowCreate] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<any>(null);
 
@@ -41,12 +42,6 @@ export default function Vat() {
           <p className="text-sm text-muted-foreground">Schweizer Mehrwertsteuer (8.1% / 2.6% / 3.8%)</p>
         </div>
         <div className="flex gap-2">
-          <Select value={String(year)} onValueChange={v => setYear(parseInt(v))}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {[2023,2024,2025,2026].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-            </SelectContent>
-          </Select>
           <Button size="sm" className="gap-2" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4" /> Neue Abrechnung
           </Button>

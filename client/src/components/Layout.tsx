@@ -8,16 +8,18 @@ import {
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const NAV_ITEMS = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/journal", icon: BookOpen, label: "Journal" },
+  { href: "/accounts", icon: FileText, label: "Konten" },
   { href: "/bank-import", icon: Building2, label: "Bankimport" },
   { href: "/credit-card", icon: CreditCard, label: "Kreditkarte" },
   { href: "/payroll", icon: Users, label: "Lohnbuchhaltung" },
   { href: "/vat", icon: Receipt, label: "MWST" },
   { href: "/reports", icon: BarChart3, label: "Berichte" },
-  { href: "/accounts", icon: FileText, label: "Kontenplan" },
   { href: "/documents", icon: Paperclip, label: "Dokumente" },
 ];
 
@@ -25,8 +27,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { fiscalYear, setFiscalYear, fiscalYears } = useFiscalYear();
 
-  const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear: new Date().getFullYear() });
+  const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
 
   const pendingCount = (stats?.pendingEntries ?? 0) + (stats?.pendingBankTransactions ?? 0);
 
@@ -149,9 +152,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground hidden sm:block">
-              GJ {new Date().getFullYear()}
-            </span>
+            <Select value={String(fiscalYear)} onValueChange={v => setFiscalYear(Number(v))}>
+              <SelectTrigger className="w-28 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {fiscalYears.map(y => (
+                  <SelectItem key={y} value={String(y)}>GJ {y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {pendingCount > 0 && (
               <div className="relative">
                 <Bell className="h-5 w-5 text-muted-foreground" />

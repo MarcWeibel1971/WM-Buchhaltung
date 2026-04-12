@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { Link } from "wouter";
 import { BookOpen, Building2, Clock, CheckCircle, TrendingUp, TrendingDown, AlertCircle, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,8 +11,7 @@ function formatCHF(val: number) {
 }
 
 export default function Dashboard() {
-  const currentYear = new Date().getFullYear();
-  const [year] = useState(currentYear);
+  const { fiscalYear: year } = useFiscalYear();
 
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear: year });
   const { data: incomeStatement } = trpc.reports.incomeStatement.useQuery({ fiscalYear: year });

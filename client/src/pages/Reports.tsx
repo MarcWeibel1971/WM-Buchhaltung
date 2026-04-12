@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { useState } from "react";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { BarChart3, Download, TrendingUp, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -67,8 +67,8 @@ function AccountRow({ account, balance, indent = 0 }: { account: any; balance: n
 }
 
 export default function Reports() {
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [prevYear] = useState(year - 1);
+  const { fiscalYear: year } = useFiscalYear();
+  const prevYear = year - 1;
 
   const { data: bs } = trpc.reports.balanceSheet.useQuery({ fiscalYear: year });
   const { data: bsPrev } = trpc.reports.balanceSheet.useQuery({ fiscalYear: prevYear });
@@ -95,12 +95,6 @@ export default function Reports() {
           <p className="text-sm text-muted-foreground">Bilanz und Erfolgsrechnung</p>
         </div>
         <div className="flex gap-2">
-          <Select value={String(year)} onValueChange={v => setYear(parseInt(v))}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {[2023,2024,2025,2026].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-            </SelectContent>
-          </Select>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => {
             const rows = [
               { label: 'AKTIVEN', amount: totalAssets, bold: true },

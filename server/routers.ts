@@ -722,18 +722,77 @@ const creditCardRouter = router({
     .input(z.object({ documentUrl: z.string() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+      // Load all booking rules and accounts for context
+      const allRules = await getAllBookingRules();
+      const allAccts = await getAllAccounts();
+
+      // Build account lookup map
+      const acctMap: Record<number, { number: string; name: string }> = {};
+      allAccts.forEach(a => { acctMap[a.id] = { number: a.number, name: a.name }; });
+
+      // Build learned rules context for the LLM
+      const rulesContext = allRules
+        .filter(r => r.debitAccountId)
+        .map(r => {
+          const acct = acctMap[r.debitAccountId!];
+          return acct ? `${r.counterpartyPattern} → ${acct.number} ${acct.name}` : null;
+        })
+        .filter(Boolean)
+        .join("\n");
+
+      // Build full account list (only expense/asset accounts relevant for CC)
+      const accountList = allAccts
+        .filter(a => a.number.startsWith("4") || a.number.startsWith("1"))
+        .map(a => `${a.number} ${a.name}`)
+        .join("\n");
+
+      const prompt = `Du bist Buchhalter der WM Weibel Mueller AG in der Schweiz.
+Analysiere diese Kreditkartenabrechnung (VISA Cornèr Banca SA) und extrahiere ALLE Einzelpositionen/Transaktionen.
+
+WICHTIG:
+- Jede Zeile in der Abrechnung ist eine separate Transaktion
+- Extrahiere ALLE Transaktionen, überspringe keine
+- Das Datum steht links (Format DD.MM.YYYY), dann der Beschreibungstext, dann der Betrag rechts
+- Beträge sind in CHF, verwende den Absolutwert (ohne Minus)
+- Ignoriere Zeilen wie "Saldo Vormonat", "Zahlung", "Neuer Saldo", "Total" – nur echte Einkäufe/Transaktionen
+- Die Beschreibung soll den Vendor/Händler-Namen enthalten, NICHT die ganze Zeile kopieren
+
+GELERNTE KONTENZUORDNUNGEN (verwende diese als Priorität!):
+${rulesContext}
+
+VOLLSTÄNDIGER KONTENPLAN (falls kein gelernter Match):
+${accountList}
+
+FALLBACK-REGELN:
+- Software/SaaS/Cloud → 4305 Software & ITBeratung mw
+- Restaurant/Essen auswärts (geschäftlich) → 4891 Repräsentationsspesen mw
+- Restaurant/Essen (privat) → 1081 Kontokorrent mw
+- Reisen/Transport/SBB/Taxi/Uber/Parkhaus → 4821 Reisespesen mw
+- Bücher/Zeitungen/Medien → 4711 Fachliteratur mw
+- Lebensmittel/Migros/Coop/Aldi → 4792 Übriger Betriebs- und Verwaltungsaufwand jm
+- Kleidung/Shopping (privat) → 1081 Kontokorrent mw
+- Bankgebühren/Kartengebühren → 4222 Bankspesen mw
+- Zinsen → 4220 Zinsen
+- Unbekannt → 4799 Diverser Aufwand
+
+Antwort NUR als JSON-Array, keine Erklärung:
+[{"date": "YYYY-MM-DD", "description": "Vendor/Händler Kurzbeschreibung", "amount": "123.45", "suggestedAccount": "4xxx Kontoname"}]`;
+
       const response = await invokeLLM({
         messages: [{
           role: "user",
           content: [
-            { type: "text", text: `Du bist Buchhalter der WM Weibel Mueller AG.\nAnalysiere diese Kreditkartenabrechnung (VISA Corner Banca) und extrahiere ALLE Einzelpositionen.\n\nAntwort als JSON-Array:\n[{"date": "YYYY-MM-DD", "description": "Kurzbeschreibung", "amount": "123.45", "suggestedAccount": "4xxx Kontoname"}]\n\nKontenvorschläge:\n- 4200 Reisespesen\n- 4720 Kommunikation/Internet/Porto\n- 4799 Diverser Aufwand\n- 4300 Software, Cloud & IT\n- 4600 Strom/Energie\n- 4740 Rechts- und Beratungsaufwand\n- 4500 Büromaterial\n- 4210 Repräsentationsaufwand\n\nNur das JSON-Array zurückgeben, keine Erklärung.` },
+            { type: "text", text: prompt },
             { type: "file_url", file_url: { url: input.documentUrl, mime_type: "application/pdf" } },
           ],
         }],
       });
 
       const rawContent = response.choices[0]?.message?.content;
-      const text = typeof rawContent === "string" ? rawContent : "";
+      let text = typeof rawContent === "string" ? rawContent : "";
+      // Strip markdown code fences if present
+      text = text.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "");
       // Extract JSON from response
       const jsonMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
       if (!jsonMatch) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "KI konnte keine Positionen extrahieren" });

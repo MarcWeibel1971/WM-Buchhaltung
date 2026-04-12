@@ -172,3 +172,7 @@
 - [x] Frontend Bankimport: Matched-Dokument-Icon (FileText grün) bei Transaktionen
 - [x] Tests: 13 Vitest-Tests für calculateMatchScore und improveBookingSuggestionFromDocument
 - [x] Frontend Bankimport: Rechnungsdetails im Bearbeitungsdialog anzeigen wenn gematched (Dokumentname, Betrag, Datum, Gegenpartei, Match-Score, Link zur Rechnung)
+
+## Bugfix: Kreditkarten-PDF-Analyse
+- [x] KK-PDF-Parsing: LLM-Prompt komplett überarbeitet mit 91 gelernten Regeln + vollständigem Kontenplan als Kontext, JSON-Extraktion robuster (Markdown-Code-Blöcke)
+- [x] KK-Dialog: Breite auf volle Seitenbreite (sm:max-w-[95vw]) ohne horizontales Scrollen

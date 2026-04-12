@@ -637,7 +637,7 @@ export default function BankImport() {
 
       {/* ─── Credit Card Statement Dialog ─── */}
       <Dialog open={!!ccDialog} onOpenChange={open => { if (!open) setCcDialog(null); }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[95vw] w-full max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Kreditkartenbeleg verbuchen</DialogTitle>
             <DialogDescription>
@@ -680,7 +680,7 @@ export default function BankImport() {
                             }}>
                               <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Konto..." /></SelectTrigger>
                               <SelectContent>
-                                {accounts?.filter(a => a.accountType === "expense").map(a => (
+                                {accounts?.filter(a => a.accountType === "expense" || a.number.startsWith("1")).map(a => (
                                   <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
                                 ))}
                               </SelectContent>

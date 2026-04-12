@@ -160,3 +160,15 @@
 - [x] Alle 6 Seiten der VISA-Kreditkartenabrechnungen 2025 extrahiert (~300 Buchungszeilen)
 - [x] 70 neue + 17 aktualisierte Booking Rules geseeded (Total: 91 Regeln in DB)
 - [x] Verifiziert: 91 Regeln in DB, alle 39 Tests grün
+
+## Feature: Dokument-Transaktions-Matching
+- [x] DB-Schema: matchedDocumentId und matchScore zu bank_transactions, matchStatus und matchScore zu documents hinzugefügt
+- [x] Backend: Matching-Algorithmus implementiert (Betrag 40%, Counterparty 30%, Datum 10%, IBAN 10%, Referenz 10%)
+- [x] Backend: Auto-Match Endpunkt – alle ungematchten Dokumente gegen pending Transaktionen prüfen
+- [x] Backend: Unmatch-Endpunkt zum Aufheben von Matches
+- [x] Backend: improveBookingSuggestionFromDocument – Rechnungsdetails für Buchungsvorschläge nutzen
+- [x] Frontend Dokumente: Matched/Offen Status-Badges, Match-Score %, verlinkte Txn-Nummer, Match-Filter
+- [x] Frontend Dokumente: Auto-Match Button, Unmatch Button
+- [x] Frontend Bankimport: Matched-Dokument-Icon (FileText grün) bei Transaktionen
+- [x] Tests: 13 Vitest-Tests für calculateMatchScore und improveBookingSuggestionFromDocument
+- [x] Frontend Bankimport: Rechnungsdetails im Bearbeitungsdialog anzeigen wenn gematched (Dokumentname, Betrag, Datum, Gegenpartei, Match-Score, Link zur Rechnung)

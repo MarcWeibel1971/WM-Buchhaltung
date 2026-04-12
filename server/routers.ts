@@ -15,6 +15,7 @@ import {
   getVatPeriods, getCreditCardStatements, getDashboardStats,
   getDb,
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
+  autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
 } from "./db";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
@@ -1053,6 +1054,37 @@ const documentsRouter = router({
         bankTransactionId: input.bankTransactionId,
       }).where(eqOp(docs.id, input.documentId));
       return { success: true };
+    }),
+
+  // Auto-match unmatched documents with pending bank transactions
+  autoMatch: protectedProcedure
+    .input(z.object({ threshold: z.number().default(50) }))
+    .mutation(async ({ input }) => {
+      const matches = await autoMatchDocuments(input.threshold);
+      const applied = await applyMatches(matches);
+      return { matched: applied, total: matches.length, details: matches };
+    }),
+
+  // Unmatch a document from a transaction
+  unmatch: protectedProcedure
+    .input(z.object({ documentId: z.number() }))
+    .mutation(async ({ input }) => {
+      await unmatchDocument(input.documentId);
+      return { success: true };
+    }),
+
+  // Get match info for a bank transaction (document details + improved suggestion)
+  getMatchInfo: protectedProcedure
+    .input(z.object({ transactionId: z.number() }))
+    .query(async ({ input }) => {
+      const doc = await getMatchedDocument(input.transactionId);
+      if (!doc) return { matched: false, document: null, improvements: null };
+      let metadata = null;
+      if (doc.aiMetadata) {
+        try { metadata = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
+      }
+      const improvements = improveBookingSuggestionFromDocument(metadata, {});
+      return { matched: true, document: doc, metadata, improvements };
     }),
 });
 

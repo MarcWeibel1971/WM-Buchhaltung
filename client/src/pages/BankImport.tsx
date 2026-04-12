@@ -65,6 +65,7 @@ export default function BankImport() {
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   const { data: pendingTxs, refetch: refetchPending } = trpc.bankImport.getPendingTransactions.useQuery({ bankAccountId: pendingFilter });
   const { data: accounts } = trpc.accounts.list.useQuery();
+  const { data: allDocs } = trpc.documents.list.useQuery({ limit: 500 });
 
   const utils = trpc.useUtils();
 
@@ -462,14 +463,21 @@ export default function BankImport() {
                       {amount >= 0 ? "" : "-"}{formatCHF(Math.abs(amount))}
                     </td>
                     <td className="text-right text-xs">
-                      {tx.aiConfidence ? (
-                        <span className="inline-flex items-center gap-1">
-                          {tx.aiConfidence}%
-                          {tx.aiReasoning?.startsWith("Gelernte Regel") && (
-                            <span title="Gelernte Regel"><BookOpen className="h-3 w-3 text-amber-600" /></span>
-                          )}
-                        </span>
-                      ) : "–"}
+                      <span className="inline-flex items-center gap-1">
+                        {tx.aiConfidence ? (
+                          <>
+                            {tx.aiConfidence}%
+                            {tx.aiReasoning?.startsWith("Gelernte Regel") && (
+                              <span title="Gelernte Regel"><BookOpen className="h-3 w-3 text-amber-600" /></span>
+                            )}
+                          </>
+                        ) : "–"}
+                        {(tx as any).matchedDocumentId && (
+                          <span title="Rechnung gematched" className="inline-flex items-center text-green-600">
+                            <FileText className="h-3 w-3" />
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td className="text-right">
                       <div className="flex gap-1 justify-end flex-nowrap">
@@ -576,6 +584,39 @@ export default function BankImport() {
                   <p className="text-sm mt-1">{editTx.aiReasoning}</p>
                 </div>
               )}
+              {/* Matched document info */}
+              {(() => {
+                const matchedDocId = (editTx as any).matchedDocumentId;
+                if (!matchedDocId) return null;
+                const matchedDoc = allDocs?.find((d: any) => d.id === matchedDocId);
+                if (!matchedDoc) return null;
+                let docMeta: any = null;
+                try { if (matchedDoc.aiMetadata) docMeta = JSON.parse(matchedDoc.aiMetadata); } catch {}
+                return (
+                  <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <FileText className="h-4 w-4 text-green-600" />
+                      <Label className="text-xs font-semibold text-green-700 dark:text-green-400">Gematchte Rechnung</Label>
+                      <span className="text-xs text-green-600 ml-auto">{(editTx as any).matchScore ?? ''}% Match</span>
+                    </div>
+                    <p className="text-sm font-medium truncate">{matchedDoc.filename}</p>
+                    {docMeta && (
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                        {docMeta.counterparty && <span>Gegenpartei: <span className="text-foreground font-medium">{docMeta.counterparty}</span></span>}
+                        {docMeta.totalAmount != null && <span>Betrag: <span className="text-foreground font-medium">CHF {formatCHF(Number(docMeta.totalAmount))}</span></span>}
+                        {docMeta.documentDate && <span>Datum: <span className="text-foreground font-medium">{docMeta.documentDate}</span></span>}
+                        {docMeta.vatRate != null && <span>MWST: <span className="text-foreground font-medium">{docMeta.vatRate}%</span></span>}
+                        {docMeta.description && <span className="truncate max-w-xs">{docMeta.description}</span>}
+                      </div>
+                    )}
+                    {matchedDoc.s3Url && (
+                      <a href={matchedDoc.s3Url} target="_blank" rel="noopener noreferrer" className="text-xs text-green-600 hover:underline mt-1 inline-block">
+                        Rechnung öffnen
+                      </a>
+                    )}
+                  </div>
+                );
+              })()}
               <div>
                 <Label className="text-xs">Belege</Label>
                 <div className="mt-1">

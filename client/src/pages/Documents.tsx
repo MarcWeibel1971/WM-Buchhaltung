@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import {
   FileText, Image, Eye, Trash2, Search, Filter,
-  Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2
+  Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
+  Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,6 +18,12 @@ const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; co
   receipt:     { label: "Quittung",           icon: <Receipt className="w-3.5 h-3.5" />,         color: "text-blue-600 bg-blue-50" },
   bank_statement: { label: "Kontoauszug",    icon: <Building2 className="w-3.5 h-3.5" />,        color: "text-purple-600 bg-purple-50" },
   other:       { label: "Sonstiges",          icon: <StickyNote className="w-3.5 h-3.5" />,      color: "text-gray-600 bg-gray-50" },
+};
+
+const MATCH_STATUS_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+  matched:   { label: "Matched",   icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-green-700 bg-green-100 border-green-200" },
+  unmatched: { label: "Offen",     icon: <AlertCircle className="w-3.5 h-3.5" />,  color: "text-amber-700 bg-amber-50 border-amber-200" },
+  manual:    { label: "Manuell",   icon: <Link2 className="w-3.5 h-3.5" />,        color: "text-blue-700 bg-blue-50 border-blue-200" },
 };
 
 function formatBytes(bytes: number) {
@@ -29,14 +36,39 @@ function formatDate(d: Date | string) {
   return new Date(d).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+function formatCHF(n: number) {
+  return n.toLocaleString("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 export default function Documents() {
   const [filterType, setFilterType] = useState<string>("all");
+  const [filterMatch, setFilterMatch] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
   const { data: docs, refetch } = trpc.documents.list.useQuery({
     documentType: filterType !== "all" ? filterType : undefined,
     limit: 200,
+  });
+
+  const autoMatchMutation = trpc.documents.autoMatch.useMutation({
+    onSuccess: (result) => {
+      if (result.matched > 0) {
+        toast.success(`${result.matched} Dokument(e) automatisch mit Transaktionen gematched`);
+      } else {
+        toast.info("Keine neuen Matches gefunden");
+      }
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const unmatchMutation = trpc.documents.unmatch.useMutation({
+    onSuccess: () => {
+      toast.success("Match aufgehoben");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   const handleUploaded = useCallback((_doc: UploadedDocument) => {
@@ -60,6 +92,11 @@ export default function Documents() {
   }, [refetch]);
 
   const filtered = (docs ?? []).filter(doc => {
+    // Match status filter
+    if (filterMatch !== "all") {
+      const ms = (doc as any).matchStatus ?? "unmatched";
+      if (ms !== filterMatch) return false;
+    }
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -76,28 +113,45 @@ export default function Documents() {
   });
 
   // Stats
+  const allDocs = docs ?? [];
   const stats = {
-    total: docs?.length ?? 0,
-    invoice_in: docs?.filter(d => d.documentType === "invoice_in").length ?? 0,
-    invoice_out: docs?.filter(d => d.documentType === "invoice_out").length ?? 0,
-    receipt: docs?.filter(d => d.documentType === "receipt").length ?? 0,
+    total: allDocs.length,
+    matched: allDocs.filter(d => (d as any).matchStatus === "matched").length,
+    unmatched: allDocs.filter(d => (d as any).matchStatus === "unmatched" || !(d as any).matchStatus).length,
+    invoice_in: allDocs.filter(d => d.documentType === "invoice_in").length,
   };
 
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-bold">Dokumente</h2>
-        <p className="text-sm text-muted-foreground">Belege, Rechnungen und Quittungen zentral verwalten</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold">Dokumente</h2>
+          <p className="text-sm text-muted-foreground">Belege, Rechnungen und Quittungen zentral verwalten</p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => autoMatchMutation.mutate({ threshold: 50 })}
+          disabled={autoMatchMutation.isPending}
+          className="gap-2"
+        >
+          {autoMatchMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4" />
+          )}
+          Auto-Match
+        </Button>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: "Gesamt", value: stats.total, color: "text-foreground" },
+          { label: "Matched", value: stats.matched, color: "text-green-600" },
+          { label: "Offen", value: stats.unmatched, color: "text-amber-600" },
           { label: "Eingangsrechnungen", value: stats.invoice_in, color: "text-red-600" },
-          { label: "Ausgangsrechnungen", value: stats.invoice_out, color: "text-green-600" },
-          { label: "Quittungen", value: stats.receipt, color: "text-blue-600" },
         ].map(s => (
           <div key={s.label} className="bg-card border border-border rounded-xl p-4 shadow-sm">
             <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -112,7 +166,7 @@ export default function Documents() {
         <DocumentUpload onUploaded={handleUploaded} />
         <p className="text-xs text-muted-foreground mt-2">
           Die KI analysiert den Beleg automatisch und extrahiert Betrag, Gegenpartei und Datum.
-          Das Dokument kann anschliessend mit einer Buchung oder Banktransaktion verknüpft werden.
+          Klicken Sie «Auto-Match» um Dokumente automatisch mit Banktransaktionen zu verknüpfen.
         </p>
       </div>
 
@@ -128,7 +182,7 @@ export default function Documents() {
           />
         </div>
         <Select value={filterType} onValueChange={setFilterType}>
-          <SelectTrigger className="w-full sm:w-52">
+          <SelectTrigger className="w-full sm:w-44">
             <Filter className="w-4 h-4 mr-2 text-muted-foreground" />
             <SelectValue placeholder="Alle Typen" />
           </SelectTrigger>
@@ -139,6 +193,18 @@ export default function Documents() {
             <SelectItem value="receipt">Quittungen</SelectItem>
             <SelectItem value="bank_statement">Kontoauszüge</SelectItem>
             <SelectItem value="other">Sonstiges</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={filterMatch} onValueChange={setFilterMatch}>
+          <SelectTrigger className="w-full sm:w-40">
+            <Link2 className="w-4 h-4 mr-2 text-muted-foreground" />
+            <SelectValue placeholder="Match-Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Alle Status</SelectItem>
+            <SelectItem value="matched">Matched</SelectItem>
+            <SelectItem value="unmatched">Offen</SelectItem>
+            <SelectItem value="manual">Manuell</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -155,6 +221,9 @@ export default function Documents() {
           <div className="divide-y divide-border">
             {filtered.map(doc => {
               const typeInfo = DOC_TYPE_LABELS[doc.documentType] ?? DOC_TYPE_LABELS.other;
+              const matchStatus = (doc as any).matchStatus ?? "unmatched";
+              const matchInfo = MATCH_STATUS_LABELS[matchStatus] ?? MATCH_STATUS_LABELS.unmatched;
+              const matchScoreVal = (doc as any).matchScore as number | null;
               let meta: any = null;
               try { if (doc.aiMetadata) meta = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
 
@@ -176,11 +245,22 @@ export default function Documents() {
                         {typeInfo.icon}
                         {typeInfo.label}
                       </span>
+                      {/* Match status badge */}
+                      <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium border ${matchInfo.color}`}>
+                        {matchInfo.icon}
+                        {matchInfo.label}
+                        {matchScoreVal != null && matchStatus === "matched" && (
+                          <span className="ml-0.5 opacity-70">{matchScoreVal}%</span>
+                        )}
+                      </span>
+                      {doc.bankTransactionId && (
+                        <Badge variant="outline" className="text-xs gap-1">
+                          <Link2 className="w-3 h-3" />
+                          Txn #{doc.bankTransactionId}
+                        </Badge>
+                      )}
                       {doc.journalEntryId && (
                         <Badge variant="outline" className="text-xs">Buchung #{doc.journalEntryId}</Badge>
-                      )}
-                      {doc.bankTransactionId && (
-                        <Badge variant="outline" className="text-xs">Transaktion #{doc.bankTransactionId}</Badge>
                       )}
                     </div>
 
@@ -188,8 +268,9 @@ export default function Documents() {
                     {meta && (
                       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
                         {meta.counterparty && <span>Gegenpartei: <span className="text-foreground font-medium">{meta.counterparty}</span></span>}
-                        {meta.totalAmount != null && <span>Betrag: <span className="text-foreground font-medium">CHF {Number(meta.totalAmount).toFixed(2)}</span></span>}
+                        {meta.totalAmount != null && <span>Betrag: <span className="text-foreground font-medium">CHF {formatCHF(Number(meta.totalAmount))}</span></span>}
                         {meta.documentDate && <span>Datum: <span className="text-foreground font-medium">{meta.documentDate}</span></span>}
+                        {meta.vatRate != null && <span>MWST: <span className="text-foreground font-medium">{meta.vatRate}%</span></span>}
                         {meta.description && <span className="truncate max-w-xs">{meta.description}</span>}
                       </div>
                     )}
@@ -211,6 +292,17 @@ export default function Documents() {
                         <Eye className="w-4 h-4" />
                       </Button>
                     </a>
+                    {matchStatus === "matched" && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-amber-600 hover:text-amber-700"
+                        title="Match aufheben"
+                        onClick={() => unmatchMutation.mutate({ documentId: doc.id })}
+                      >
+                        <Unlink className="w-4 h-4" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon"

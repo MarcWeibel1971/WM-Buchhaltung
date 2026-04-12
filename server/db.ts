@@ -4,9 +4,9 @@ import {
   InsertUser, users, accounts, journalEntries, journalLines,
   bankAccounts, bankTransactions, employees, payrollEntries,
   vatPeriods, openingBalances, fiscalYears, creditCardStatements,
-  bookingRules,
+  bookingRules, documents,
   type Account, type JournalEntry, type JournalLine, type BankTransaction,
-  type Employee, type PayrollEntry, type BookingRule,
+  type Employee, type PayrollEntry, type BookingRule, type Document,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -536,4 +536,260 @@ export async function incrementRuleUsage(ruleId: number): Promise<void> {
   await db.update(bookingRules).set({
     usageCount: sql`${bookingRules.usageCount} + 1`,
   }).where(eq(bookingRules.id, ruleId));
+}
+
+
+// ─── Document-Transaction Matching ──────────────────────────────────────────
+
+/**
+ * Match score calculation between a document and a bank transaction.
+ * Returns 0-100 score based on:
+ * - Amount match (exact or close): 40 points
+ * - Counterparty/vendor match: 30 points
+ * - Date proximity: 20 points
+ * - Reference/IBAN match: 10 points
+ */
+export function calculateMatchScore(
+  doc: { totalAmount?: number; counterparty?: string; documentDate?: string; counterpartyIban?: string; referenceNumber?: string },
+  txn: { amount: string; counterparty: string | null; transactionDate: string; counterpartyIban: string | null; reference: string | null }
+): number {
+  let score = 0;
+
+  // 1. Amount match (40 points)
+  if (doc.totalAmount != null) {
+    const docAmount = Math.abs(doc.totalAmount);
+    const txnAmount = Math.abs(parseFloat(txn.amount));
+    if (docAmount > 0 && txnAmount > 0) {
+      const diff = Math.abs(docAmount - txnAmount);
+      const pctDiff = diff / Math.max(docAmount, txnAmount);
+      if (pctDiff === 0) score += 40;           // exact match
+      else if (pctDiff < 0.001) score += 38;    // rounding diff
+      else if (pctDiff < 0.01) score += 30;     // <1% off
+      else if (pctDiff < 0.05) score += 15;     // <5% off (partial payment?)
+    }
+  }
+
+  // 2. Counterparty match (30 points)
+  if (doc.counterparty && txn.counterparty) {
+    const docVendor = doc.counterparty.toLowerCase().replace(/[^a-zäöüéèà0-9]/g, '');
+    const txnVendor = txn.counterparty.toLowerCase().replace(/[^a-zäöüéèà0-9]/g, '');
+    if (docVendor === txnVendor) {
+      score += 30;
+    } else if (docVendor.includes(txnVendor) || txnVendor.includes(docVendor)) {
+      score += 25;
+    } else {
+      // Check if any significant word matches
+      const docWords = docVendor.match(/[a-zäöüéèà]{3,}/g) || [];
+      const txnWords = txnVendor.match(/[a-zäöüéèà]{3,}/g) || [];
+      const commonWords = docWords.filter(w => txnWords.some(tw => tw.includes(w) || w.includes(tw)));
+      if (commonWords.length > 0) {
+        score += Math.min(20, commonWords.length * 10);
+      }
+    }
+  }
+
+  // 3. Date proximity (20 points)
+  if (doc.documentDate && txn.transactionDate) {
+    const docDate = new Date(doc.documentDate);
+    const txnDate = new Date(txn.transactionDate);
+    const daysDiff = Math.abs((docDate.getTime() - txnDate.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysDiff <= 3) score += 20;
+    else if (daysDiff <= 7) score += 15;
+    else if (daysDiff <= 14) score += 10;
+    else if (daysDiff <= 30) score += 5;
+    else if (daysDiff <= 60) score += 2;
+  }
+
+  // 4. Reference/IBAN match (10 points)
+  if (doc.counterpartyIban && txn.counterpartyIban) {
+    const docIban = doc.counterpartyIban.replace(/\s/g, '').toUpperCase();
+    const txnIban = txn.counterpartyIban.replace(/\s/g, '').toUpperCase();
+    if (docIban === txnIban) score += 10;
+  }
+  if (doc.referenceNumber && txn.reference) {
+    const docRef = doc.referenceNumber.replace(/\s/g, '');
+    const txnRef = txn.reference.replace(/\s/g, '');
+    if (docRef === txnRef || docRef.includes(txnRef) || txnRef.includes(docRef)) {
+      score += 10;
+    }
+  }
+
+  return Math.min(100, score);
+}
+
+/**
+ * Run auto-matching: find best matches between unmatched documents and pending transactions.
+ * Returns array of matches with scores >= threshold.
+ */
+export async function autoMatchDocuments(threshold: number = 50): Promise<{
+  documentId: number;
+  transactionId: number;
+  score: number;
+  docFilename: string;
+  txnDescription: string;
+}[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get unmatched documents with AI metadata
+  const unmatchedDocs = await db.select().from(documents)
+    .where(and(
+      eq(documents.matchStatus, 'unmatched'),
+      sql`${documents.aiMetadata} IS NOT NULL`
+    ));
+
+  // Get pending (unmatched) bank transactions
+  const pendingTxns = await db.select().from(bankTransactions)
+    .where(eq(bankTransactions.status, 'pending'));
+
+  if (unmatchedDocs.length === 0 || pendingTxns.length === 0) return [];
+
+  const matches: { documentId: number; transactionId: number; score: number; docFilename: string; txnDescription: string }[] = [];
+
+  for (const doc of unmatchedDocs) {
+    let meta: any;
+    try {
+      meta = JSON.parse(doc.aiMetadata || '{}');
+    } catch { continue; }
+
+    let bestMatch: { txnId: number; score: number; desc: string } | null = null;
+
+    for (const txn of pendingTxns) {
+      const score = calculateMatchScore(
+        {
+          totalAmount: meta.totalAmount,
+          counterparty: meta.counterparty,
+          documentDate: meta.documentDate,
+          counterpartyIban: meta.counterpartyIban,
+          referenceNumber: meta.referenceNumber,
+        },
+        {
+          amount: txn.amount,
+          counterparty: txn.counterparty,
+          transactionDate: txn.transactionDate,
+          counterpartyIban: txn.counterpartyIban,
+          reference: txn.reference,
+        }
+      );
+
+      if (score >= threshold && (!bestMatch || score > bestMatch.score)) {
+        bestMatch = { txnId: txn.id, score, desc: txn.description || '' };
+      }
+    }
+
+    if (bestMatch) {
+      matches.push({
+        documentId: doc.id,
+        transactionId: bestMatch.txnId,
+        score: bestMatch.score,
+        docFilename: doc.filename,
+        txnDescription: bestMatch.desc,
+      });
+    }
+  }
+
+  return matches;
+}
+
+/**
+ * Apply matches: update both documents and bank_transactions with match links.
+ */
+export async function applyMatches(matches: { documentId: number; transactionId: number; score: number }[]): Promise<number> {
+  const db = await getDb();
+  if (!db || matches.length === 0) return 0;
+
+  let applied = 0;
+  for (const match of matches) {
+    // Update document
+    await db.update(documents)
+      .set({
+        bankTransactionId: match.transactionId,
+        matchStatus: 'matched',
+        matchScore: match.score,
+      })
+      .where(eq(documents.id, match.documentId));
+
+    // Update bank transaction
+    await db.update(bankTransactions)
+      .set({
+        matchedDocumentId: match.documentId,
+        matchScore: match.score,
+      })
+      .where(eq(bankTransactions.id, match.transactionId));
+
+    applied++;
+  }
+
+  return applied;
+}
+
+/**
+ * Get matched document info for a bank transaction.
+ */
+export async function getMatchedDocument(transactionId: number): Promise<Document | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(documents)
+    .where(eq(documents.bankTransactionId, transactionId))
+    .limit(1);
+
+  return result[0] || null;
+}
+
+/**
+ * Improve booking suggestion using matched document metadata.
+ * Returns enhanced suggestion or null if no improvement possible.
+ */
+export function improveBookingSuggestionFromDocument(
+  docMetadata: any,
+  currentSuggestion: { bookingText?: string; debitAccountId?: number; creditAccountId?: number }
+): { bookingText?: string; suggestedAccount?: string; vatRate?: number; vatAmount?: number; description?: string } | null {
+  if (!docMetadata) return null;
+
+  const improvements: any = {};
+
+  // Use document description for better booking text
+  if (docMetadata.description) {
+    improvements.description = docMetadata.description;
+  }
+
+  // Use suggested account from document
+  if (docMetadata.suggestedAccount) {
+    improvements.suggestedAccount = docMetadata.suggestedAccount;
+  }
+
+  // Use VAT info from document
+  if (docMetadata.vatRate != null) {
+    improvements.vatRate = docMetadata.vatRate;
+  }
+  if (docMetadata.vatAmount != null) {
+    improvements.vatAmount = docMetadata.vatAmount;
+  }
+
+  return Object.keys(improvements).length > 0 ? improvements : null;
+}
+
+/**
+ * Unmatch a document from a transaction.
+ */
+export async function unmatchDocument(documentId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+
+  // Get the document to find linked transaction
+  const [doc] = await db.select().from(documents).where(eq(documents.id, documentId));
+  if (!doc) return;
+
+  // Clear document match
+  await db.update(documents)
+    .set({ bankTransactionId: null, matchStatus: 'unmatched', matchScore: null })
+    .where(eq(documents.id, documentId));
+
+  // Clear transaction match if linked
+  if (doc.bankTransactionId) {
+    await db.update(bankTransactions)
+      .set({ matchedDocumentId: null, matchScore: null })
+      .where(eq(bankTransactions.id, doc.bankTransactionId));
+  }
 }

@@ -166,6 +166,12 @@ export const bankTransactions = mysqlTable("bank_transactions", {
   suggestedCreditAccountId: int("suggestedCreditAccountId"),
   aiConfidence: int("aiConfidence"),
   aiReasoning: text("aiReasoning"),
+  // Matched document ID (if a document/invoice was matched)
+  matchedDocumentId: int("matchedDocumentId"),
+  // Match confidence score (0-100)
+  matchScore: int("matchScore"),
+  // Suggested booking text (from AI or matched document)
+  suggestedBookingText: varchar("suggestedBookingText", { length: 500 }),
   // Duplicate check hash
   txHash: varchar("txHash", { length: 64 }).unique(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -307,6 +313,10 @@ export const documents = mysqlTable("documents", {
   aiMetadata: text("aiMetadata"),
   // Notes
   notes: text("notes"),
+  // Match status: unmatched, matched, manual
+  matchStatus: mysqlEnum("matchStatus", ["unmatched", "matched", "manual"]).default("unmatched").notNull(),
+  // Match confidence score (0-100)
+  matchScore: int("matchScore"),
   // Uploader
   uploadedBy: int("uploadedBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

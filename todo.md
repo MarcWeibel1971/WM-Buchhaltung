@@ -107,3 +107,7 @@
 - [x] Frontend: Beleg-Upload-Widget in Bankimport-Transaktionszeile
 - [x] Frontend: Beleg-Vorschau (PDF inline / Bild-Thumbnail) in Dokumentenübersicht
 - [x] Frontend: Beleg-Badge bei Buchungen/Transaktionen die bereits Dokumente haben
+
+## Bugfix: Bankimport Invalid Date (persistent)
+- [x] Bankimport: Invalid Date Fehler behoben – normaliseDate() mit strikter Validierung, ungültige Zeilen werden übersprungen
+- [x] PDF-Bankauszug-Import: LUKB PDF-Kontoauszüge via KI-Extraktion (LLM Vision) implementiert, Button im Bankimport

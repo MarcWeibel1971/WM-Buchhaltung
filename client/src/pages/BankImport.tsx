@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback } from "react";
-import { Upload, Check, X, Zap, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { Upload, Check, X, Zap, AlertCircle, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,6 +19,8 @@ export default function BankImport() {
   const [approveDialog, setApproveDialog] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  const [importingPdf, setImportingPdf] = useState(false);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   const { data: pendingTxs, refetch: refetchPending } = trpc.bankImport.getPendingTransactions.useQuery({ bankAccountId: pendingFilter });
@@ -69,6 +71,33 @@ export default function BankImport() {
 
   const pendingIds = (pendingTxs ?? []).filter(tx => !tx.suggestedDebitAccountId).map(tx => tx.id);
 
+  const handlePdfUpload = useCallback(async (file: File) => {
+    if (!selectedBankAccountId) { toast.error("Bitte zuerst ein Bankkonto auswählen"); return; }
+    setImportingPdf(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const resp = await fetch("/api/upload/bank-statement-pdf", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error ?? "PDF-Verarbeitung fehlgeschlagen");
+      if (!result.transactions?.length) { toast.error("Keine Transaktionen im PDF erkannt"); return; }
+      toast.info(`${result.totalExtracted} Transaktionen aus PDF extrahiert. Importiere...`);
+      importMutation.mutate({
+        bankAccountId: selectedBankAccountId,
+        transactions: result.transactions,
+        importBatchId: `pdf-${Date.now()}`,
+      });
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setImportingPdf(false);
+    }
+  }, [selectedBankAccountId, importMutation]);
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -104,19 +133,38 @@ export default function BankImport() {
               className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }}
             />
-            <Button
-              variant="outline"
-              className="w-full gap-2"
-              disabled={!selectedBankAccountId || importing}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="h-4 w-4" />
-              {importing ? "Importiere..." : "Datei hochladen"}
-            </Button>
+            <input
+              ref={pdfInputRef}
+              type="file"
+              accept=".pdf"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handlePdfUpload(f); }}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 gap-2"
+                disabled={!selectedBankAccountId || importing || importingPdf}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" />
+                {importing ? "Importiere..." : "CAMT/MT940/CSV"}
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1 gap-2 border-blue-300 text-blue-700 hover:bg-blue-50"
+                disabled={!selectedBankAccountId || importing || importingPdf}
+                onClick={() => pdfInputRef.current?.click()}
+                title="PDF-Kontoauszug via KI importieren"
+              >
+                <FileText className="h-4 w-4" />
+                {importingPdf ? "KI liest PDF..." : "PDF (KI)"}
+              </Button>
+            </div>
           </div>
         </div>
         <p className="text-xs text-muted-foreground">
-          Unterstützte Formate: CAMT.053 (XML), MT940 (.sta), CSV (Semikolon-getrennt)
+          Unterstützte Formate: CAMT.053 (XML), MT940 (.sta), CSV (Semikolon-getrennt) • PDF-Kontoauszug via KI-Extraktion
         </p>
       </div>
 

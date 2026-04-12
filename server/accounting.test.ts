@@ -136,3 +136,34 @@ describe("Swiss Account Number Validation (KMU Kontenrahmen)", () => {
     expect(getAccountCategory("6000")).toBe("expense");
   });
 });
+
+// ─── normaliseDate Tests ───────────────────────────────────────────────────────
+import { normaliseDate } from "../shared/bankParser";
+
+describe("normaliseDate – Datumsparser", () => {
+  it("parst Schweizer Format DD.MM.YYYY", () => {
+    expect(normaliseDate("01.04.2026")).toBe("2026-04-01");
+    expect(normaliseDate("31.12.2025")).toBe("2025-12-31");
+    expect(normaliseDate("1.1.2026")).toBe("2026-01-01");
+  });
+  it("parst ISO-Format YYYY-MM-DD", () => {
+    expect(normaliseDate("2026-04-01")).toBe("2026-04-01");
+    expect(normaliseDate("2025-12-31T00:00:00Z")).toBe("2025-12-31");
+  });
+  it("parst kompaktes Format YYYYMMDD", () => {
+    expect(normaliseDate("20260401")).toBe("2026-04-01");
+  });
+  it("parst MT940-Format YYMMDD", () => {
+    expect(normaliseDate("260401")).toBe("2026-04-01");
+  });
+  it("gibt null für ungültige Datumsstrings zurück", () => {
+    expect(normaliseDate("Invalid Date")).toBeNull();
+    expect(normaliseDate("")).toBeNull();
+    expect(normaliseDate(null)).toBeNull();
+    expect(normaliseDate(undefined)).toBeNull();
+    expect(normaliseDate("not-a-date")).toBeNull();
+  });
+  it("gibt null für unmögliche Datumsangaben zurück", () => {
+    expect(normaliseDate("32.13.2026")).toBeNull(); // Tag/Monat ungültig
+  });
+});

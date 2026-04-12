@@ -173,3 +173,125 @@ uploadRouter.delete("/document/:id", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// ─── POST /api/upload/bank-statement-pdf ─────────────────────────────────────
+// Accepts a PDF bank statement, extracts transactions via LLM, returns them
+// as ParsedTransaction objects for the frontend to review and import.
+const pdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "application/pdf") cb(null, true);
+    else cb(new Error("Nur PDF-Dateien erlaubt"));
+  },
+});
+
+uploadRouter.post("/bank-statement-pdf", pdfUpload.single("file"), async (req, res) => {
+  let user;
+  try {
+    user = await sdk.authenticateRequest(req as any);
+  } catch {
+    return res.status(401).json({ error: "Nicht authentifiziert" });
+  }
+
+  if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
+
+  try {
+    // Upload PDF to S3 to get a URL for LLM processing
+    const fileKey = `bank-statements/${user.id}-${nanoid()}.pdf`;
+    const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, "application/pdf");
+
+    // Extract transactions via LLM (vision model reads the PDF)
+    const extractResp = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `Du bist ein Schweizer Buchhalter und analysierst Bankauszüge der Luzerner Kantonalbank (LUKB).
+Extrahiere ALLE Transaktionen aus dem Kontoauszug.
+Jede Transaktion hat:
+- transactionDate: "YYYY-MM-DD" (Buchungsdatum, zwingend)
+- valueDate: "YYYY-MM-DD" oder null
+- amount: Zahl (positiv = Gutschrift/Eingang, negativ = Belastung/Ausgang)
+- currency: "CHF"
+- description: Buchungstext (max 200 Zeichen)
+- reference: Referenznummer oder null
+- counterparty: Name Auftraggeber/Empfänger oder null
+- counterpartyIban: IBAN oder null
+Antworte NUR mit JSON: { "transactions": [...], "accountNumber": "IBAN", "statementPeriod": "z.B. Januar 2026" }`,
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text" as const, text: "Extrahiere alle Transaktionen aus diesem Kontoauszug:" },
+            { type: "file_url" as const, file_url: { url: fileUrl, mime_type: "application/pdf" as const } },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "bank_statement_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              transactions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    transactionDate: { type: "string" },
+                    valueDate: { type: ["string", "null"] },
+                    amount: { type: "number" },
+                    currency: { type: "string" },
+                    description: { type: "string" },
+                    reference: { type: ["string", "null"] },
+                    counterparty: { type: ["string", "null"] },
+                    counterpartyIban: { type: ["string", "null"] },
+                  },
+                  required: ["transactionDate", "valueDate", "amount", "currency", "description", "reference", "counterparty", "counterpartyIban"],
+                  additionalProperties: false,
+                },
+              },
+              accountNumber: { type: ["string", "null"] },
+              statementPeriod: { type: ["string", "null"] },
+            },
+            required: ["transactions", "accountNumber", "statementPeriod"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const msgContent = extractResp.choices[0]?.message?.content;
+    if (!msgContent) return res.status(500).json({ error: "KI-Extraktion fehlgeschlagen" });
+
+    const parsed = typeof msgContent === "string" ? JSON.parse(msgContent) : msgContent;
+
+    // Normalise dates using the same function as the CSV/CAMT parser
+    const { normaliseDate } = await import("../shared/bankParser.js");
+    const transactions = (parsed.transactions ?? [])
+      .map((tx: any) => ({
+        transactionDate: normaliseDate(String(tx.transactionDate ?? "")),
+        valueDate: tx.valueDate ? normaliseDate(String(tx.valueDate)) : null,
+        amount: typeof tx.amount === "number" ? tx.amount.toFixed(2) : String(tx.amount ?? "0"),
+        currency: tx.currency || "CHF",
+        description: tx.description || "PDF Import",
+        reference: tx.reference || null,
+        counterparty: tx.counterparty || null,
+        counterpartyIban: tx.counterpartyIban || null,
+      }))
+      .filter((tx: any) => tx.transactionDate !== null);
+
+    return res.json({
+      success: true,
+      transactions,
+      accountNumber: parsed.accountNumber ?? null,
+      statementPeriod: parsed.statementPeriod ?? null,
+      totalExtracted: transactions.length,
+    });
+  } catch (err: any) {
+    console.error("[PDF Bank Import] Error:", err);
+    return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
+  }
+});

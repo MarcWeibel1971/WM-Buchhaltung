@@ -18,6 +18,7 @@ import {
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
+import { normaliseDate } from "../shared/bankParser";
 
 /**
  * Converts a date string or Date object to 'YYYY-MM-DD' string for Drizzle date() columns.
@@ -213,17 +214,19 @@ const bankImportRouter = router({
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const batchId = input.importBatchId ?? `import-${Date.now()}`;
-      let imported = 0, duplicates = 0;
-
+      let imported = 0, duplicates = 0, skipped = 0;
       for (const tx of input.transactions) {
+        // Validate date before insert – skip rows with invalid dates
+        const transactionDate = normaliseDate(tx.transactionDate);
+        if (!transactionDate) { skipped++; continue; }
+        const valueDate = tx.valueDate ? (normaliseDate(tx.valueDate) ?? undefined) : undefined;
         const hash = crypto.createHash("sha256")
-          .update(`${input.bankAccountId}-${tx.transactionDate}-${tx.amount}-${tx.description}`)
+          .update(`${input.bankAccountId}-${transactionDate}-${tx.amount}-${tx.description}`)
           .digest("hex");
-
         const saved = await saveBankTransaction({
           bankAccountId: input.bankAccountId,
-          transactionDate: toDateStr(tx.transactionDate) as string,
-          valueDate: toDateStr(tx.valueDate),
+          transactionDate,
+          valueDate,
           amount: tx.amount,
           currency: tx.currency,
           description: tx.description,
@@ -239,7 +242,7 @@ const bankImportRouter = router({
         else duplicates++;
       }
 
-      return { imported, duplicates, batchId };
+      return { imported, duplicates, skipped, batchId };
     }),
 
   categorizeWithAI: protectedProcedure

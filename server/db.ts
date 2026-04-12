@@ -317,6 +317,35 @@ export async function approveBankTransaction(txId: number, journalEntryId: numbe
   await db.update(bankTransactions).set({ status: "matched", journalEntryId }).where(eq(bankTransactions.id, txId));
 }
 
+export async function updateBankTransaction(txId: number, data: {
+  description?: string;
+  counterparty?: string;
+  counterpartyIban?: string;
+  reference?: string;
+  suggestedDebitAccountId?: number | null;
+  suggestedCreditAccountId?: number | null;
+  aiReasoning?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updateSet: Record<string, unknown> = {};
+  if (data.description !== undefined) updateSet.description = data.description;
+  if (data.counterparty !== undefined) updateSet.counterparty = data.counterparty;
+  if (data.counterpartyIban !== undefined) updateSet.counterpartyIban = data.counterpartyIban;
+  if (data.reference !== undefined) updateSet.reference = data.reference;
+  if (data.suggestedDebitAccountId !== undefined) updateSet.suggestedDebitAccountId = data.suggestedDebitAccountId;
+  if (data.suggestedCreditAccountId !== undefined) updateSet.suggestedCreditAccountId = data.suggestedCreditAccountId;
+  if (data.aiReasoning !== undefined) updateSet.aiReasoning = data.aiReasoning;
+  if (Object.keys(updateSet).length === 0) return;
+  await db.update(bankTransactions).set(updateSet).where(eq(bankTransactions.id, txId));
+}
+
+export async function getBankTransactionsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(bankTransactions).where(inArray(bankTransactions.id, ids));
+}
+
 // ─── Employees ────────────────────────────────────────────────────────────────
 export async function getEmployees() {
   const db = await getDb();

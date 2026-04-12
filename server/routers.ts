@@ -9,7 +9,7 @@ import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
   getJournalEntries, getJournalEntryWithLines, createJournalEntry,
   approveJournalEntry, rejectJournalEntry, updateJournalEntryLines,
-  getBankAccounts, getPendingBankTransactions, saveBankTransaction, approveBankTransaction,
+  getBankAccounts, getPendingBankTransactions, saveBankTransaction, approveBankTransaction, updateBankTransaction, getBankTransactionsByIds,
   getEmployees, getPayrollEntries,
   getBalanceSheet, getIncomeStatement,
   getVatPeriods, getCreditCardStatements, getDashboardStats,
@@ -384,6 +384,130 @@ Regeln:
       await db.update(bankTransactions).set({ status: "ignored" }).where(eq(bankTransactions.id, input.transactionId));
       return { success: true };
     }),
+
+  updateTransaction: protectedProcedure
+    .input(z.object({
+      transactionId: z.number(),
+      description: z.string().optional(),
+      counterparty: z.string().optional(),
+      counterpartyIban: z.string().optional(),
+      reference: z.string().optional(),
+      suggestedDebitAccountId: z.number().nullable().optional(),
+      suggestedCreditAccountId: z.number().nullable().optional(),
+      aiReasoning: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const { transactionId, ...data } = input;
+      await updateBankTransaction(transactionId, data);
+      return { success: true };
+    }),
+
+  bulkApprove: protectedProcedure
+    .input(z.object({
+      transactions: z.array(z.object({
+        transactionId: z.number(),
+        debitAccountId: z.number(),
+        creditAccountId: z.number(),
+        description: z.string().optional(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const results = [];
+      for (const item of input.transactions) {
+        try {
+          const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, item.transactionId)).limit(1);
+          if (!tx || tx.status !== "pending") { results.push({ txId: item.transactionId, success: false, error: "Nicht ausstehend" }); continue; }
+
+          const amount = Math.abs(parseFloat(tx.amount as string));
+          const dateStr = toDateStr(tx.transactionDate as string);
+          const year = dateStr ? parseInt(dateStr.substring(0, 4)) : new Date().getFullYear();
+
+          const entryId = await createJournalEntry({
+            bookingDate: dateStr as string,
+            valueDate: toDateStr(tx.valueDate as string),
+            description: item.description ?? tx.description ?? "Bankbuchung",
+            source: "bank_import",
+            sourceRef: `bank-tx-${tx.id}`,
+            fiscalYear: year,
+            status: "approved",
+            lines: [
+              { accountId: item.debitAccountId, side: "debit", amount: amount.toFixed(2) },
+              { accountId: item.creditAccountId, side: "credit", amount: amount.toFixed(2) },
+            ],
+          });
+
+          await approveBankTransaction(item.transactionId, entryId);
+          await approveJournalEntry(entryId, ctx.user.id);
+          results.push({ txId: item.transactionId, success: true, entryId });
+        } catch (e: any) {
+          results.push({ txId: item.transactionId, success: false, error: e.message });
+        }
+      }
+      return { results, approved: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length };
+    }),
+
+  generateBookingText: protectedProcedure
+    .input(z.object({ transactionIds: z.array(z.number()) }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const txs = await getBankTransactionsByIds(input.transactionIds);
+      if (!txs.length) return { results: [] };
+
+      const results = [];
+      for (const tx of txs) {
+        try {
+          const dateStr = tx.transactionDate as string;
+          const d = new Date(dateStr);
+          const monthNames = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+          const month = monthNames[d.getMonth()] ?? "";
+          const year = d.getFullYear();
+          const quarter = `${Math.ceil((d.getMonth() + 1) / 3)}. Quartal`;
+
+          const response = await invokeLLM({
+            messages: [{
+              role: "user",
+              content: `Du bist Buchhalter der WM Weibel Mueller AG (Finanzberatung, Luzern).
+Erstelle einen kurzen, präzisen Buchungstext für diese Banktransaktion.
+
+Transaktion:
+- Datum: ${dateStr}
+- Betrag: CHF ${tx.amount}
+- Beschreibung: ${tx.description}
+- Gegenpartei: ${tx.counterparty ?? "unbekannt"}
+- IBAN: ${tx.counterpartyIban ?? "unbekannt"}
+
+Regeln:
+- Maximal 60 Zeichen
+- Lieferantenname + Zeitraum (Monat oder Quartal + Jahr)
+- Beispiele: "Sunrise 1. Quartal 2026", "SBB GA Januar 2026", "Miete Büro April 2026", "Lohn mw März 2026"
+- Aktueller Monat: ${month} ${year}, Quartal: ${quarter} ${year}
+- Bei Lohnzahlungen: "Lohn [Kürzel] [Monat] [Jahr]"
+- Bei Daueraufträgen/Abos: Lieferant + Periode
+- Kein "CHF", keine Beträge im Text
+
+Antworte NUR mit dem Buchungstext, nichts anderes.`
+            }],
+          });
+
+          const rawContent = response.choices[0]?.message?.content;
+          const bookingText = (typeof rawContent === "string" ? rawContent : "").trim().replace(/^"|"$/g, "");
+          if (bookingText) {
+            await updateBankTransaction(tx.id, { description: bookingText });
+            results.push({ txId: tx.id, success: true, bookingText });
+          } else {
+            results.push({ txId: tx.id, success: false });
+          }
+        } catch (e) {
+          results.push({ txId: tx.id, success: false });
+        }
+      }
+      return { results };
+    }),
 });
 
 // ─── Credit Card Router ───────────────────────────────────────────────────────
@@ -433,14 +557,12 @@ const creditCardRouter = router({
       const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
       if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Get account 1082 (Durchlaufkonto VISA mw)
       const visaAccount = await getAccountByNumber("1082");
       if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
 
       const amount = Math.abs(parseFloat(stmt.totalAmount as string));
       const year = new Date(stmt.statementDate as any).getFullYear();
 
-      // Sammelbelastung: Debit Aufwandskonto, Credit 1082 (Durchlaufkonto)
       const entryId = await createJournalEntry({
         bookingDate: toDateStr(stmt.statementDate as string) as string,
         description: input.description ?? `VISA Sammelbelastung ${stmt.statementDate}`,
@@ -458,6 +580,111 @@ const creditCardRouter = router({
       await approveJournalEntry(entryId, ctx.user.id);
 
       return { success: true, entryId };
+    }),
+
+  // Dedicated credit card PDF parsing via LLM
+  parsePdf: protectedProcedure
+    .input(z.object({ documentUrl: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const response = await invokeLLM({
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: `Du bist Buchhalter der WM Weibel Mueller AG.\nAnalysiere diese Kreditkartenabrechnung (VISA Corner Banca) und extrahiere ALLE Einzelpositionen.\n\nAntwort als JSON-Array:\n[{"date": "YYYY-MM-DD", "description": "Kurzbeschreibung", "amount": "123.45", "suggestedAccount": "4xxx Kontoname"}]\n\nKontenvorschläge:\n- 4200 Reisespesen\n- 4720 Kommunikation/Internet/Porto\n- 4799 Diverser Aufwand\n- 4300 Software, Cloud & IT\n- 4600 Strom/Energie\n- 4740 Rechts- und Beratungsaufwand\n- 4500 Büromaterial\n- 4210 Repräsentationsaufwand\n\nNur das JSON-Array zurückgeben, keine Erklärung.` },
+            { type: "file_url", file_url: { url: input.documentUrl, mime_type: "application/pdf" } },
+          ],
+        }],
+      });
+
+      const rawContent = response.choices[0]?.message?.content;
+      const text = typeof rawContent === "string" ? rawContent : "";
+      // Extract JSON from response
+      const jsonMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+      if (!jsonMatch) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "KI konnte keine Positionen extrahieren" });
+
+      try {
+        const items = JSON.parse(jsonMatch[0]);
+        return { items: items.map((i: any) => ({
+          date: i.date ?? "",
+          description: i.description ?? "",
+          amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
+          suggestedAccount: i.suggestedAccount ?? "",
+        })) };
+      } catch {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
+      }
+    }),
+
+  // Approve with individual items (Sammelbuchung with per-position accounts)
+  approveWithItems: protectedProcedure
+    .input(z.object({
+      bankTransactionId: z.number().optional(),
+      statementDate: z.string(),
+      counterparty: z.string(),
+      items: z.array(z.object({
+        date: z.string(),
+        description: z.string(),
+        amount: z.string(),
+        debitAccountId: z.number(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const visaAccount = await getAccountByNumber("1082");
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
+
+      const totalAmount = input.items.reduce((s, i) => s + Math.abs(parseFloat(i.amount)), 0);
+      const dateStr = toDateStr(input.statementDate) ?? new Date().toISOString().split("T")[0];
+      const year = parseInt(dateStr.substring(0, 4));
+
+      // Build journal lines: one debit per item + one credit total for 1082
+      const debitLines = input.items.map(item => ({
+        accountId: item.debitAccountId,
+        side: "debit" as const,
+        amount: Math.abs(parseFloat(item.amount)).toFixed(2),
+        description: item.description,
+      }));
+
+      const creditLine = {
+        accountId: visaAccount.id,
+        side: "credit" as const,
+        amount: totalAmount.toFixed(2),
+        description: `Durchlaufkonto VISA mw – ${input.counterparty}`,
+      };
+
+      const entryId = await createJournalEntry({
+        bookingDate: dateStr,
+        description: `VISA Sammelbuchung ${input.counterparty} ${dateStr}`,
+        source: "credit_card",
+        sourceRef: `cc-items-${Date.now()}`,
+        fiscalYear: year,
+        status: "approved",
+        lines: [...debitLines, creditLine],
+      });
+
+      await approveJournalEntry(entryId, ctx.user.id);
+
+      // Mark bank transaction as matched if provided
+      if (input.bankTransactionId) {
+        await approveBankTransaction(input.bankTransactionId, entryId);
+      }
+
+      // Save as credit card statement
+      await db.insert(creditCardStatements).values({
+        statementDate: dateStr,
+        totalAmount: totalAmount.toFixed(2),
+        owner: "mw",
+        status: "approved",
+        journalEntryId: entryId,
+        rawText: input.items.map(i => `${i.date} ${i.description} ${i.amount}`).join("\n"),
+        parsedItems: input.items,
+      });
+
+      return { success: true, entryId, totalAmount: totalAmount.toFixed(2), itemCount: input.items.length };
     }),
 });
 

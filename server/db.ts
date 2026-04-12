@@ -153,7 +153,57 @@ export async function getJournalEntries(filters: {
     db.select({ count: sql<number>`COUNT(*)` }).from(journalEntries).where(whereClause),
   ]);
 
-  return { entries: entriesResult, total: countResult[0]?.count ?? 0 };
+  // Enrich entries with line summaries (debit/credit accounts, total amount, type)
+  const entryIds = entriesResult.map(e => e.id);
+  let lineSummaries: Record<number, { debitAccounts: Array<{id: number; number: string; name: string}>; creditAccounts: Array<{id: number; number: string; name: string}>; totalDebit: number; totalCredit: number; lineCount: number }> = {};
+  
+  if (entryIds.length > 0) {
+    const allLines = await db.select({
+      entryId: journalLines.entryId,
+      side: journalLines.side,
+      amount: journalLines.amount,
+      accountId: accounts.id,
+      accountNumber: accounts.number,
+      accountName: accounts.name,
+    }).from(journalLines)
+      .innerJoin(accounts, eq(journalLines.accountId, accounts.id))
+      .where(inArray(journalLines.entryId, entryIds));
+    
+    for (const line of allLines) {
+      if (!lineSummaries[line.entryId]) {
+        lineSummaries[line.entryId] = { debitAccounts: [], creditAccounts: [], totalDebit: 0, totalCredit: 0, lineCount: 0 };
+      }
+      const s = lineSummaries[line.entryId];
+      s.lineCount++;
+      const amt = parseFloat(line.amount as string);
+      if (line.side === 'debit') {
+        s.totalDebit += amt;
+        if (!s.debitAccounts.find(a => a.id === line.accountId)) {
+          s.debitAccounts.push({ id: line.accountId, number: line.accountNumber, name: line.accountName });
+        }
+      } else {
+        s.totalCredit += amt;
+        if (!s.creditAccounts.find(a => a.id === line.accountId)) {
+          s.creditAccounts.push({ id: line.accountId, number: line.accountNumber, name: line.accountName });
+        }
+      }
+    }
+  }
+
+  const enrichedEntries = entriesResult.map(e => {
+    const summary = lineSummaries[e.id] || { debitAccounts: [], creditAccounts: [], totalDebit: 0, totalCredit: 0, lineCount: 0 };
+    const isCollective = summary.debitAccounts.length > 1 || summary.creditAccounts.length > 1;
+    return {
+      ...e,
+      isCollective,
+      debitAccountLabel: summary.debitAccounts.length > 1 ? 'Diverse' : summary.debitAccounts[0] ? `${summary.debitAccounts[0].number} ${summary.debitAccounts[0].name}` : '–',
+      creditAccountLabel: summary.creditAccounts.length > 1 ? 'Diverse' : summary.creditAccounts[0] ? `${summary.creditAccounts[0].number} ${summary.creditAccounts[0].name}` : '–',
+      totalAmount: summary.totalDebit,
+      lineCount: summary.lineCount,
+    };
+  });
+
+  return { entries: enrichedEntries, total: countResult[0]?.count ?? 0 };
 }
 
 export async function getJournalEntryWithLines(entryId: number) {

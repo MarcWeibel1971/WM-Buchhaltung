@@ -119,47 +119,57 @@ export default function Journal() {
           <table className="accounting-table">
             <thead>
               <tr>
-                <th className="w-8"></th>
                 <th>Nr.</th>
                 <th>Datum</th>
+                <th>Typ</th>
                 <th>Beschreibung</th>
+                <th>Konto (Soll)</th>
+                <th>Gegenkonto (Haben)</th>
+                <th className="text-right">Betrag CHF</th>
                 <th>Quelle</th>
                 <th>Status</th>
-                <th className="text-right">Betrag</th>
                 <th className="text-right">Aktionen</th>
               </tr>
             </thead>
             <tbody>
               {entries.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-12 text-muted-foreground">
+                  <td colSpan={10} className="text-center py-12 text-muted-foreground">
                     Keine Buchungen gefunden
                   </td>
                 </tr>
-              ) : entries.map((entry) => (
+              ) : entries.map((entry: any) => (
                 <>
                   <tr
                     key={entry.id}
                     className={cn("cursor-pointer hover:bg-muted/20", expandedId === entry.id && "bg-muted/30")}
                     onClick={() => setDetailEntryId(entry.id)}
                   >
-                    <td className="text-center">
-                      {expandedId === entry.id
-                        ? <ChevronUp className="h-3 w-3 text-muted-foreground mx-auto" />
-                        : <ChevronDown className="h-3 w-3 text-muted-foreground mx-auto" />}
-                    </td>
                     <td className="font-mono text-xs text-muted-foreground">{entry.entryNumber}</td>
                     <td className="text-sm whitespace-nowrap">
                       {new Date(entry.bookingDate as any).toLocaleDateString("de-CH")}
                     </td>
-                    <td className="text-sm max-w-xs truncate">{entry.description}</td>
-                    <td><SourceBadge source={entry.source ?? "manual"} /></td>
-                    <td><StatusBadge status={entry.status} /></td>
-                    <td className="text-right">
-                      {entry.aiConfidence != null && (
-                        <span className="text-xs text-muted-foreground mr-2">KI {entry.aiConfidence}%</span>
+                    <td className="text-xs">
+                      {entry.isCollective ? (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Sammel</span>
+                      ) : (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">Einzel</span>
                       )}
                     </td>
+                    <td className="text-sm max-w-xs truncate">{entry.description}</td>
+                    <td className="text-xs font-mono truncate max-w-[180px]" title={entry.debitAccountLabel}>
+                      {entry.debitAccountLabel ?? '\u2013'}
+                    </td>
+                    <td className="text-xs font-mono truncate max-w-[180px]" title={entry.creditAccountLabel}>
+                      {entry.creditAccountLabel ?? '\u2013'}
+                    </td>
+                    <td className="text-right font-mono text-sm whitespace-nowrap">
+                      {entry.totalAmount != null && entry.totalAmount > 0 ? (
+                        <span>{formatCHF(entry.totalAmount)}</span>
+                      ) : '\u2013'}
+                    </td>
+                    <td><SourceBadge source={entry.source ?? "manual"} /></td>
+                    <td><StatusBadge status={entry.status} /></td>
                     <td className="text-right">
                       {entry.status === "pending" && (
                         <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
@@ -191,7 +201,7 @@ export default function Journal() {
                   {/* Expanded detail row */}
                   {expandedId === entry.id && entryDetail && (
                     <tr key={`detail-${entry.id}`}>
-                      <td colSpan={8} className="bg-muted/20 px-6 py-3">
+                      <td colSpan={10} className="bg-muted/20 px-6 py-3">
                         <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Buchungszeilen</div>
                         <table className="w-full text-sm">
                           <thead>

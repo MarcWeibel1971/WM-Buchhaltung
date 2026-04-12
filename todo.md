@@ -176,3 +176,9 @@
 ## Bugfix: Kreditkarten-PDF-Analyse
 - [x] KK-PDF-Parsing: LLM-Prompt komplett überarbeitet mit 91 gelernten Regeln + vollständigem Kontenplan als Kontext, JSON-Extraktion robuster (Markdown-Code-Blöcke)
 - [x] KK-Dialog: Breite auf volle Seitenbreite (sm:max-w-[95vw]) ohne horizontales Scrollen
+
+## Verbesserungen Journal-Ansicht
+- [x] Journal: Typ-Spalte hinzugefügt (Einzel=grau, Sammel=blau Badge)
+- [x] Journal: Konto (Soll) und Gegenkonto (Haben) Spalten – bei Sammelbuchungen "Diverse" im Soll, Bankkonto im Haben
+- [x] Journal: Betrag CHF Spalte mit korrekten Beträgen (Total Soll der Buchungszeilen)
+- [x] Journal: LUKB mw Buchungen: Alle 48 Transaktionen sind noch pending im Bankimport, erscheinen nach Verbuchung automatisch

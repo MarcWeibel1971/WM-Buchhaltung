@@ -4,8 +4,9 @@ import {
   InsertUser, users, accounts, journalEntries, journalLines,
   bankAccounts, bankTransactions, employees, payrollEntries,
   vatPeriods, openingBalances, fiscalYears, creditCardStatements,
+  bookingRules,
   type Account, type JournalEntry, type JournalLine, type BankTransaction,
-  type Employee, type PayrollEntry,
+  type Employee, type PayrollEntry, type BookingRule,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -444,4 +445,95 @@ export async function getDashboardStats(fiscalYear: number) {
     approvedEntries: approvedCount[0]?.count ?? 0,
     pendingBankTransactions: pendingTxCount?.count ?? 0,
   };
+}
+
+
+// ─── Booking Rules (Gelernte Buchungsregeln) ─────────────────────────────────
+
+/**
+ * Find a matching booking rule for a given counterparty name.
+ * Returns the best matching rule (highest priority, then highest usageCount).
+ */
+export async function findMatchingRule(counterpartyName: string): Promise<BookingRule | null> {
+  const db = await getDb();
+  if (!db || !counterpartyName) return null;
+  
+  const rules = await db.select().from(bookingRules)
+    .where(eq(bookingRules.isActive, true))
+    .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
+  
+  const cpLower = counterpartyName.toLowerCase();
+  for (const rule of rules) {
+    if (cpLower.includes(rule.counterpartyPattern.toLowerCase())) {
+      return rule;
+    }
+  }
+  return null;
+}
+
+/**
+ * Get all active booking rules.
+ */
+export async function getAllBookingRules(): Promise<BookingRule[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(bookingRules)
+    .where(eq(bookingRules.isActive, true))
+    .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
+}
+
+/**
+ * Create or update a booking rule based on counterparty pattern.
+ * If a rule with the same counterpartyPattern already exists, update it.
+ * Otherwise, create a new one.
+ */
+export async function upsertBookingRule(data: {
+  counterpartyPattern: string;
+  bookingTextTemplate?: string;
+  debitAccountId?: number;
+  creditAccountId?: number;
+  vatRate?: string;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+
+  // Check if a rule with this pattern already exists (case-insensitive)
+  const existing = await db.select().from(bookingRules)
+    .where(eq(bookingRules.counterpartyPattern, data.counterpartyPattern))
+    .limit(1);
+
+  if (existing.length > 0) {
+    // Update existing rule and increment usage count
+    await db.update(bookingRules).set({
+      bookingTextTemplate: data.bookingTextTemplate ?? existing[0].bookingTextTemplate,
+      debitAccountId: data.debitAccountId ?? existing[0].debitAccountId,
+      creditAccountId: data.creditAccountId ?? existing[0].creditAccountId,
+      vatRate: data.vatRate ?? existing[0].vatRate,
+      usageCount: sql`${bookingRules.usageCount} + 1`,
+      source: "manual",
+    }).where(eq(bookingRules.id, existing[0].id));
+  } else {
+    // Create new rule
+    await db.insert(bookingRules).values({
+      counterpartyPattern: data.counterpartyPattern,
+      bookingTextTemplate: data.bookingTextTemplate,
+      debitAccountId: data.debitAccountId,
+      creditAccountId: data.creditAccountId,
+      vatRate: data.vatRate,
+      usageCount: 1,
+      priority: 20, // Manual rules get higher priority than AI
+      source: "manual",
+    });
+  }
+}
+
+/**
+ * Increment usage count for a rule.
+ */
+export async function incrementRuleUsage(ruleId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(bookingRules).set({
+    usageCount: sql`${bookingRules.usageCount} + 1`,
+  }).where(eq(bookingRules.id, ruleId));
 }

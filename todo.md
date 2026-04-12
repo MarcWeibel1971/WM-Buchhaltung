@@ -130,3 +130,11 @@
 
 ## Bugfix: Kreditkarten-PDF-Upload
 - [x] creditCard.parsePdf: documentUrl wird als undefined gesendet – Upload-Flow korrigiert: result.document.s3Url statt result.url, fehlerhafter Server-Import in CreditCard.tsx entfernt
+
+## Feature: Lern-System für Buchungsvorschläge (Refresh)
+- [x] DB-Schema: booking_rules Tabelle (counterpartyPattern, bookingTextTemplate, debitAccountId, creditAccountId, vatRate, priority, usageCount)
+- [x] Backend: Beim Verbuchen einer manuell angepassten Transaktion automatisch eine Regel lernen/aktualisieren
+- [x] Backend: refreshSuggestions-Endpunkt – alle ausstehenden Transaktionen gegen gelernte Regeln matchen und Vorschläge aktualisieren
+- [x] Frontend: "Refresh (gelernt)" Button neben "Buchungstexte generieren" im Bankimport
+- [x] Frontend: Visuelles Feedback: Buch-Icon bei Transaktionen die von gelernten Regeln profitieren, 98% Konfidenz
+- [x] Tests: 17 Vitest-Tests für Regel-Matching, Buchungstext-Template-Generierung und Lern-Flow

@@ -14,8 +14,9 @@ import {
   getBalanceSheet, getIncomeStatement,
   getVatPeriods, getCreditCardStatements, getDashboardStats,
   getDb,
+  findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -372,6 +373,24 @@ Regeln:
       await approveBankTransaction(input.transactionId, entryId);
       await approveJournalEntry(entryId, ctx.user.id);
 
+      // ── Learn booking rule from this approval ──
+      if (tx.counterparty) {
+        try {
+          // Extract a clean counterparty pattern (first significant word(s))
+          const cpClean = tx.counterparty.trim();
+          // Use the booking text as template if user provided a custom description
+          const bookingText = input.description ?? tx.description ?? undefined;
+          await upsertBookingRule({
+            counterpartyPattern: cpClean,
+            bookingTextTemplate: bookingText,
+            debitAccountId: input.debitAccountId,
+            creditAccountId: input.creditAccountId,
+          });
+        } catch (e) {
+          console.error("Failed to learn booking rule:", e);
+        }
+      }
+
       return { success: true, entryId };
     }),
 
@@ -444,6 +463,20 @@ Regeln:
           await approveBankTransaction(item.transactionId, entryId);
           await approveJournalEntry(entryId, ctx.user.id);
           results.push({ txId: item.transactionId, success: true, entryId });
+
+          // ── Learn booking rule from this approval ──
+          if (tx.counterparty) {
+            try {
+              await upsertBookingRule({
+                counterpartyPattern: tx.counterparty.trim(),
+                bookingTextTemplate: item.description ?? tx.description ?? undefined,
+                debitAccountId: item.debitAccountId,
+                creditAccountId: item.creditAccountId,
+              });
+            } catch (e) {
+              console.error("Failed to learn booking rule:", e);
+            }
+          }
         } catch (e: any) {
           results.push({ txId: item.transactionId, success: false, error: e.message });
         }
@@ -507,6 +540,107 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         }
       }
       return { results };
+    }),
+
+  // ── Refresh: Apply learned rules to all pending transactions ──
+  refreshSuggestions: protectedProcedure
+    .input(z.object({ bankAccountId: z.number().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const rules = await getAllBookingRules();
+      if (!rules.length) return { updated: 0, total: 0, message: "Keine gelernten Regeln vorhanden. Verbuchen Sie zuerst einige Transaktionen manuell." };
+
+      // Get all pending transactions
+      const conditions = [eq(bankTransactions.status, "pending" as const)];
+      if (input.bankAccountId) {
+        conditions.push(eq(bankTransactions.bankAccountId, input.bankAccountId));
+      }
+      const pending = await db.select().from(bankTransactions)
+        .where(and(...conditions))
+        .orderBy(asc(bankTransactions.transactionDate));
+
+      const allAccounts = await getAllAccounts();
+      let updated = 0;
+
+      for (const tx of pending) {
+        const cpName = (tx.counterparty ?? "").toLowerCase();
+        if (!cpName) continue;
+
+        // Find best matching rule
+        let matchedRule = null;
+        for (const rule of rules) {
+          if (cpName.includes(rule.counterpartyPattern.toLowerCase())) {
+            matchedRule = rule;
+            break; // Rules are already sorted by priority desc
+          }
+        }
+
+        if (!matchedRule) continue;
+
+        // Build update payload
+        const updateData: Record<string, any> = {};
+        let changed = false;
+
+        // Apply account suggestions
+        if (matchedRule.debitAccountId) {
+          updateData.suggestedDebitAccountId = matchedRule.debitAccountId;
+          changed = true;
+        }
+        if (matchedRule.creditAccountId) {
+          updateData.suggestedCreditAccountId = matchedRule.creditAccountId;
+          changed = true;
+        }
+
+        // Apply booking text template with date substitution
+        if (matchedRule.bookingTextTemplate) {
+          const dateStr = tx.transactionDate as string;
+          const d = new Date(dateStr);
+          const monthNames = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+          const month = monthNames[d.getMonth()] ?? "";
+          const year = d.getFullYear();
+          const quarter = `${Math.ceil((d.getMonth() + 1) / 3)}. Quartal`;
+
+          // Replace date placeholders in template
+          let text = matchedRule.bookingTextTemplate;
+          // Detect month/year patterns and replace with transaction's month/year
+          // e.g., "SBB GA Februar 2026" → "SBB GA März 2026" for a March transaction
+          text = text.replace(/(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+\d{4}/g, `${month} ${year}`);
+          // Also handle quarter patterns
+          text = text.replace(/\d+\.\s*Quartal\s+\d{4}/g, `${quarter} ${year}`);
+
+          updateData.description = text;
+          changed = true;
+        }
+
+        // Set AI reasoning to indicate rule-based
+        if (changed) {
+          updateData.aiReasoning = `Gelernte Regel: ${matchedRule.counterpartyPattern} (${matchedRule.usageCount}x verwendet)`;
+          updateData.aiConfidence = 98; // High confidence for learned rules
+          await db.update(bankTransactions).set(updateData).where(eq(bankTransactions.id, tx.id));
+          await incrementRuleUsage(matchedRule.id);
+          updated++;
+        }
+      }
+
+      return { updated, total: pending.length, message: `${updated} von ${pending.length} Transaktionen mit gelernten Regeln aktualisiert.` };
+    }),
+
+  // ── List all learned booking rules ──
+  listRules: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const rules = await getAllBookingRules();
+      const allAccounts = await getAllAccounts();
+      return rules.map(r => ({
+        ...r,
+        debitAccountName: allAccounts.find(a => a.id === r.debitAccountId)?.name,
+        debitAccountNumber: allAccounts.find(a => a.id === r.debitAccountId)?.number,
+        creditAccountName: allAccounts.find(a => a.id === r.creditAccountId)?.name,
+        creditAccountNumber: allAccounts.find(a => a.id === r.creditAccountId)?.number,
+      }));
     }),
 });
 

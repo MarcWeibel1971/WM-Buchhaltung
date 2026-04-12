@@ -313,3 +313,33 @@ export const documents = mysqlTable("documents", {
 });
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = typeof documents.$inferInsert;
+
+// ─── Booking Rules (Gelernte Buchungsregeln) ─────────────────────────────────
+// When a user manually edits and approves a transaction, the system learns a rule
+// that maps counterparty patterns to booking text templates and account assignments.
+export const bookingRules = mysqlTable("booking_rules", {
+  id: int("id").autoincrement().primaryKey(),
+  // Pattern to match counterparty name (case-insensitive substring match)
+  counterpartyPattern: varchar("counterpartyPattern", { length: 300 }).notNull(),
+  // Optional: pattern to match description text
+  descriptionPattern: varchar("descriptionPattern", { length: 500 }),
+  // Template for booking text (e.g., "SBB GA {month} {year}" or "Swisscom {quarter}. Quartal {year}")
+  bookingTextTemplate: varchar("bookingTextTemplate", { length: 500 }),
+  // Learned account assignments
+  debitAccountId: int("debitAccountId"),
+  creditAccountId: int("creditAccountId"),
+  // Default VAT rate for this type of transaction
+  vatRate: decimal("vatRate", { precision: 5, scale: 2 }),
+  // How many times this rule has been applied
+  usageCount: int("usageCount").default(0).notNull(),
+  // Priority: higher = checked first. Manual rules > AI rules
+  priority: int("priority").default(10).notNull(),
+  // Source: "manual" (user edited), "ai" (AI-generated)
+  source: mysqlEnum("source", ["manual", "ai"]).default("manual").notNull(),
+  // Is this rule active?
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type BookingRule = typeof bookingRules.$inferSelect;
+export type InsertBookingRule = typeof bookingRules.$inferInsert;

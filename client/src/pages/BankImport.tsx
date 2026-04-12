@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CheckSquare, Square, CreditCard } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CheckSquare, Square, CreditCard, RefreshCw, BookOpen } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -125,6 +125,14 @@ export default function BankImport() {
 
   const ignoreMutation = trpc.bankImport.ignoreTransaction.useMutation({
     onSuccess: () => { toast.success("Transaktion ignoriert"); refetchPending(); },
+  });
+
+  const refreshMutation = trpc.bankImport.refreshSuggestions.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.message);
+      refetchPending();
+    },
+    onError: (e) => toast.error(e.message),
   });
 
   const handleFileUpload = useCallback(async (file: File) => {
@@ -367,6 +375,14 @@ export default function BankImport() {
                 {bookingTextMutation.isPending ? "Texte werden generiert..." : "Buchungstexte generieren"}
               </Button>
             )}
+            {allPendingIds.length > 0 && (
+              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+                disabled={refreshMutation.isPending}
+                onClick={() => refreshMutation.mutate({ bankAccountId: pendingFilter })}>
+                <RefreshCw className={`h-3 w-3 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
+                {refreshMutation.isPending ? "Aktualisiere..." : "Refresh (gelernt)"}
+              </Button>
+            )}
             {selectedTxIds.size > 0 && readyToApprove.length > 0 && (
               <Button size="sm" className="gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
                 disabled={bulkApproveMutation.isPending}
@@ -446,7 +462,14 @@ export default function BankImport() {
                       {amount >= 0 ? "" : "-"}{formatCHF(Math.abs(amount))}
                     </td>
                     <td className="text-right text-xs">
-                      {tx.aiConfidence ? `${tx.aiConfidence}%` : "–"}
+                      {tx.aiConfidence ? (
+                        <span className="inline-flex items-center gap-1">
+                          {tx.aiConfidence}%
+                          {tx.aiReasoning?.startsWith("Gelernte Regel") && (
+                            <span title="Gelernte Regel"><BookOpen className="h-3 w-3 text-amber-600" /></span>
+                          )}
+                        </span>
+                      ) : "–"}
                     </td>
                     <td className="text-right">
                       <div className="flex gap-1 justify-end flex-nowrap">

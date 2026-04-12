@@ -1,0 +1,41 @@
+Eröffnungsbilanz per 01.01.2026 - WM Weibel Mueller AG
+
+AKTIVEN:
+Umlaufvermögen:
+1000 CHF Kasse              280.05
+1010 Bankguthaben         13609.35
+1050 Debitoren             91500.00
+1051 Angefangene Arbeiten  35000.00
+1080 Darlehen mw           87768.05
+1090 TA                    16355.09
+Total Umlaufvermögen      244512.54
+
+Anlagevermögen:
+1110 Geräte                 1300.00
+1111 Hardware                400.00
+1113 Mobiliar/Einrichtungen 9400.00
+1200 Beteiligung SDC Zürich 850000.00
+Total Anlagevermögen      861100.00
+
+Total Aktiven            1105612.54
+
+PASSIVEN:
+Fremdkapital:
+2000 Kreditoren              7828.05
+2010 Darlehen LUKB           50000.00
+2020 Darlehen jm             87000.00
+2035 Darlehen Hr. Mölle     150000.00
+2051 LUKB Darlehen 1 SDC    200000.00
+2052 LUKB Darlehen 2 SDC    200000.00
+2053 LUKB Darlehen 3 SDC    200000.00
+2079 Darlehen MWC GmbH       20000.00
+2090 TP                      26288.38
+Total Fremdkapital         941116.43
+
+Eigenkapital:
+2200 Aktienkapital           100000.00
+2220 Gesetzliche Reserven     50000.00
+2290 Gewinn-/Verlustvortrag   14496.11
+Total Eigenkapital         164496.11
+
+Total Passiven            1105612.54

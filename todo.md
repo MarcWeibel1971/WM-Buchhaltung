@@ -149,3 +149,9 @@
 - [x] Frontend: Popup zeigt Total Soll / Total Haben am Ende
 - [x] Frontend: Popup in Journal-Seite integrieren (Klick auf Transaktion)
 - [x] Frontend: Popup in Konten/Kontoblatt-Seite integrieren (Klick auf Buchungszeile)
+
+## Feature: Eröffnungsbilanz 2026 aktualisieren
+- [x] Eröffnungsbilanz-Daten aus PDF extrahieren (alle Konten mit Salden per 01.01.2026)
+- [x] Bestehende Eröffnungsbuchungen löschen/aktualisieren (keine vorhanden, neu erstellt)
+- [x] Neue Eröffnungsbuchungen für alle Konten erstellt: 10 Aktiven (Soll) + 12 Passiven (Haben) = CHF 1'105'612.54
+- [x] Bilanz verifiziert: Total Soll = Total Haben = CHF 1'105'612.54, Entry #2026-00005, Status approved

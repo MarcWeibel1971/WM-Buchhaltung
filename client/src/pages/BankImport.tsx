@@ -262,7 +262,9 @@ export default function BankImport() {
 
       // Then parse via dedicated credit card LLM endpoint
       toast.info("Kreditkartenabrechnung wird von KI analysiert...");
-      parsePdfMutation.mutate({ documentUrl: result.url });
+      const docUrl = result.document?.s3Url ?? result.url;
+      if (!docUrl) throw new Error("Keine URL vom Upload erhalten");
+      parsePdfMutation.mutate({ documentUrl: docUrl });
     } catch (e: any) {
       toast.error(e.message);
     } finally {

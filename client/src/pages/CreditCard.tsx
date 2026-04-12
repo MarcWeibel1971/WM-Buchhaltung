@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { invokeLLM } from "../../../server/_core/llm";
 
 function formatCHF(val: string | number) {
   const n = typeof val === "string" ? parseFloat(val) : val;

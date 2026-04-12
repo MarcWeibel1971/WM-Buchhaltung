@@ -95,3 +95,15 @@
 
 ## Bugfixes
 - [x] Bankimport: transactionDate 'Invalid Date' behoben – alle date()-Spalten auf mode:'string' umgestellt, toDateStr()-Hilfsfunktion eingeführt
+
+## Feature: Dokumenten-Management
+- [x] DB-Schema: documents-Tabelle (id, filename, s3Key, s3Url, mimeType, fileSize, documentType, journalEntryId, bankTransactionId, uploadedBy, createdAt)
+- [x] Backend: S3-Upload-Endpunkt für Belege (multipart, max 20MB, PDF/JPG/PNG)
+- [x] Backend: documents-Router (upload, list, getByEntry, getByTransaction, delete)
+- [x] Backend: KI-Kategorisierung mit Beleginhalt (PDF-Text / Bild-OCR via LLM vision)
+- [x] Frontend: Seite /documents – zentrale Dokumentenübersicht mit Filter, Upload, Vorschau
+- [x] Frontend: Navigation-Eintrag "Dokumente" in Sidebar
+- [x] Frontend: Beleg-Upload-Widget in Journal-Detailansicht (bei jeder Buchung)
+- [x] Frontend: Beleg-Upload-Widget in Bankimport-Transaktionszeile
+- [x] Frontend: Beleg-Vorschau (PDF inline / Bild-Thumbnail) in Dokumentenübersicht
+- [x] Frontend: Beleg-Badge bei Buchungen/Transaktionen die bereits Dokumente haben

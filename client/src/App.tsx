@@ -17,6 +17,7 @@ import Payroll from "./pages/Payroll";
 import Reports from "./pages/Reports";
 import Accounts from "./pages/Accounts";
 import VatPage from "./pages/Vat";
+import Documents from "./pages/Documents";
 import Layout from "./components/Layout";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -72,6 +73,7 @@ function Router() {
       <Route path="/reports" component={Reports} />
       <Route path="/accounts" component={Accounts} />
       <Route path="/vat" component={VatPage} />
+      <Route path="/documents" component={Documents} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

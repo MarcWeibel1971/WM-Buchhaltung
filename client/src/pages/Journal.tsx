@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
 import { useSearch } from "wouter";
 import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp } from "lucide-react";
+import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -214,6 +215,14 @@ export default function Journal() {
                         {entry.aiReasoning && (
                           <p className="text-xs text-muted-foreground mt-2 italic">KI-Begründung: {entry.aiReasoning}</p>
                         )}
+                        {/* Belege */}
+                        <div className="mt-3 pt-3 border-t border-border/30">
+                          <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Belege</div>
+                          <DocumentList journalEntryId={entry.id} />
+                          <div className="mt-1">
+                            <DocumentUpload journalEntryId={entry.id} compact />
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   )}

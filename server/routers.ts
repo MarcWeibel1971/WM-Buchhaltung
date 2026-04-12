@@ -632,6 +632,66 @@ const vatRouter = router({
     }),
 });
 
+// ─── Documents Router ─────────────────────────────────────────────────────────
+const documentsRouter = router({
+  list: protectedProcedure
+    .input(z.object({
+      journalEntryId: z.number().optional(),
+      bankTransactionId: z.number().optional(),
+      documentType: z.string().optional(),
+      limit: z.number().default(50),
+    }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { and, eq: eqOp, desc: descOp } = await import("drizzle-orm");
+      const conditions = [];
+      if (input.journalEntryId) conditions.push(eqOp(docs.journalEntryId, input.journalEntryId));
+      if (input.bankTransactionId) conditions.push(eqOp(docs.bankTransactionId, input.bankTransactionId));
+      if (input.documentType) conditions.push(eqOp(docs.documentType, input.documentType as any));
+      const rows = await db.select().from(docs)
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(descOp(docs.createdAt))
+        .limit(input.limit);
+      return rows;
+    }),
+
+  getAiMetadata: protectedProcedure
+    .input(z.object({ documentId: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
+      let metadata = null;
+      if (doc.aiMetadata) {
+        try { metadata = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
+      }
+      return { document: doc, metadata };
+    }),
+
+  linkToEntry: protectedProcedure
+    .input(z.object({
+      documentId: z.number(),
+      journalEntryId: z.number().optional(),
+      bankTransactionId: z.number().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      await db.update(docs).set({
+        journalEntryId: input.journalEntryId,
+        bankTransactionId: input.bankTransactionId,
+      }).where(eqOp(docs.id, input.documentId));
+      return { success: true };
+    }),
+});
+
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
@@ -650,6 +710,8 @@ export const appRouter = router({
   payroll: payrollRouter,
   reports: reportsRouter,
   vat: vatRouter,
+  documents: documentsRouter,
 });
 
 export type AppRouter = typeof appRouter;
+

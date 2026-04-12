@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback } from "react";
 import { Upload, Check, X, Zap, AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -203,7 +204,8 @@ export default function BankImport() {
                       {tx.aiConfidence != null ? `${tx.aiConfidence}%` : "–"}
                     </td>
                     <td className="text-right">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1 flex-wrap">
+                        <DocumentUpload bankTransactionId={tx.id} compact />
                         <Button
                           size="sm" variant="default"
                           className="h-7 text-xs px-2 gap-1"
@@ -219,6 +221,7 @@ export default function BankImport() {
                           <X className="h-3 w-3" />
                         </Button>
                       </div>
+                      <DocumentList bankTransactionId={tx.id} />
                     </td>
                   </tr>
                 );

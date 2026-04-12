@@ -15,6 +15,13 @@
       "when": 1775994865313,
       "tag": "0001_wide_professor_monster",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1775998692755,
+      "tag": "0002_fine_wild_child",
+      "breakpoints": true
     }
   ]
 }

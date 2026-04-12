@@ -281,3 +281,35 @@ export const openingBalances = mysqlTable("opening_balances", {
   balance: decimal("balance", { precision: 15, scale: 2 }).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+// ─── Documents (Belege / Rechnungen) ──────────────────────────────────────────
+export const documents = mysqlTable("documents", {
+  id: int("id").autoincrement().primaryKey(),
+  // Original filename
+  filename: varchar("filename", { length: 255 }).notNull(),
+  // S3 storage key
+  s3Key: varchar("s3Key", { length: 500 }).notNull(),
+  // Public S3 URL
+  s3Url: text("s3Url").notNull(),
+  // MIME type (application/pdf, image/jpeg, image/png)
+  mimeType: varchar("mimeType", { length: 100 }).notNull(),
+  // File size in bytes
+  fileSize: int("fileSize").notNull(),
+  // Document type
+  documentType: mysqlEnum("documentType", ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"]).default("other").notNull(),
+  // Optional link to journal entry
+  journalEntryId: int("journalEntryId"),
+  // Optional link to bank transaction
+  bankTransactionId: int("bankTransactionId"),
+  // Extracted text content (via LLM/OCR for AI categorization)
+  extractedText: text("extractedText"),
+  // AI-extracted metadata (JSON: amount, counterparty, date, vatAmount, etc.)
+  aiMetadata: text("aiMetadata"),
+  // Notes
+  notes: text("notes"),
+  // Uploader
+  uploadedBy: int("uploadedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type Document = typeof documents.$inferSelect;
+export type InsertDocument = typeof documents.$inferInsert;

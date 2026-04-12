@@ -4,6 +4,48 @@ import { BarChart3, Download, TrendingUp, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { jsPDF } from "jspdf";
+
+function exportToPdf(title: string, year: number, rows: Array<{label: string; amount: number; indent?: number; bold?: boolean}>) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  let y = 20;
+  
+  // Header
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('WM Weibel Mueller AG', pageW / 2, y, { align: 'center' });
+  y += 8;
+  doc.setFontSize(13);
+  doc.text(`${title} ${year}`, pageW / 2, y, { align: 'center' });
+  y += 6;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(120, 120, 120);
+  doc.text(`Erstellt am ${new Date().toLocaleDateString('de-CH')}`, pageW / 2, y, { align: 'center' });
+  doc.setTextColor(0, 0, 0);
+  y += 10;
+  
+  // Table
+  doc.setFontSize(9);
+  rows.forEach(row => {
+    if (y > 270) { doc.addPage(); y = 20; }
+    const indent = (row.indent ?? 0) * 5;
+    if (row.bold) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFillColor(245, 245, 245);
+      doc.rect(14, y - 4, pageW - 28, 7, 'F');
+    } else {
+      doc.setFont('helvetica', 'normal');
+    }
+    doc.text(row.label, 15 + indent, y);
+    const amtStr = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2 }).format(Math.abs(row.amount));
+    doc.text(`CHF ${amtStr}`, pageW - 15, y, { align: 'right' });
+    y += 6;
+  });
+  
+  doc.save(`${title.replace(/\s/g, '_')}_${year}.pdf`);
+}
 
 function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
@@ -59,8 +101,21 @@ export default function Reports() {
               {[2023,2024,2025,2026].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => window.print()}>
-            <Download className="h-4 w-4" /> Drucken
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => {
+            const rows = [
+              { label: 'AKTIVEN', amount: totalAssets, bold: true },
+              ...(bs?.assets ?? []).map(a => ({ label: `${a.account.number} ${a.account.name}`, amount: a.balance, indent: 1 })),
+              { label: 'Total Aktiven', amount: totalAssets, bold: true },
+              { label: '', amount: 0 },
+              { label: 'PASSIVEN', amount: totalLiabilities, bold: true },
+              ...(bs?.liabilities ?? []).map(a => ({ label: `${a.account.number} ${a.account.name}`, amount: a.balance, indent: 1 })),
+              { label: 'Eigenkapital', amount: totalEquity, bold: true },
+              ...(bs?.equity ?? []).map(a => ({ label: `${a.account.number} ${a.account.name}`, amount: a.balance, indent: 1 })),
+              { label: 'Total Passiven', amount: totalLiabilities + totalEquity, bold: true },
+            ];
+            exportToPdf('Bilanz', year, rows);
+          }}>
+            <Download className="h-4 w-4" /> PDF Export
           </Button>
         </div>
       </div>
@@ -110,7 +165,25 @@ export default function Reports() {
           <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
             <div className="px-5 py-4 border-b border-border flex items-center justify-between">
               <h3 className="font-semibold">Erfolgsrechnung {year}</h3>
-              <span className="text-xs text-muted-foreground">Vergleich mit {prevYear}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Vergleich mit {prevYear}</span>
+                <Button variant="outline" size="sm" className="gap-1 h-7 text-xs" onClick={() => {
+                  const rows = [
+                    { label: 'ERTRAG', amount: totalRevenue, bold: true },
+                    ...(is?.revenues ?? []).filter(r => Math.abs(r.balance) > 0.01).map(r => ({ label: `${r.account.number} ${r.account.name}`, amount: r.balance, indent: 1 })),
+                    { label: 'Total Ertrag', amount: totalRevenue, bold: true },
+                    { label: '', amount: 0 },
+                    { label: 'AUFWAND', amount: totalExpenses, bold: true },
+                    ...(is?.expenses ?? []).filter(e => Math.abs(e.balance) > 0.01).map(e => ({ label: `${e.account.number} ${e.account.name}`, amount: e.balance, indent: 1 })),
+                    { label: 'Total Aufwand', amount: totalExpenses, bold: true },
+                    { label: '', amount: 0 },
+                    { label: profit >= 0 ? 'Jahresgewinn' : 'Jahresverlust', amount: profit, bold: true },
+                  ];
+                  exportToPdf('Erfolgsrechnung', year, rows);
+                }}>
+                  <Download className="h-3 w-3" /> PDF
+                </Button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">

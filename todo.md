@@ -83,7 +83,7 @@
 ## Frontend – Berichte
 - [x] Bilanz-Ansicht mit Vorjahresvergleich
 - [x] Erfolgsrechnung-Ansicht mit Vorjahresvergleich
-- [ ] PDF-Export Bilanz und Erfolgsrechnung (geplant)
+- [x] PDF-Export Bilanz und Erfolgsrechnung (jsPDF, client-side)
 
 ## Tests
 - [x] Vitest: Double-Entry-Validierung

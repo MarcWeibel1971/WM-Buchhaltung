@@ -5,6 +5,7 @@ import { Search, BookOpen, Printer, ArrowLeft, ChevronRight, Download } from "lu
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import BookingDetailDialog from "@/components/BookingDetailDialog";
 
 function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
@@ -23,6 +24,7 @@ const FISCAL_YEARS = [2026, 2025, 2024, 2023];
 // ─── Account Detail View ──────────────────────────────────────────────────────
 function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; fiscalYear: number; onBack: () => void }) {
   const printRef = useRef<HTMLDivElement>(null);
+  const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
 
   const { data, isLoading } = trpc.accounts.getLedger.useQuery({ accountId, fiscalYear });
 
@@ -178,7 +180,7 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
                   </td>
                 </tr>
               ) : linesWithBalance.map((item: any, idx: number) => (
-                <tr key={idx} className="hover:bg-muted/20">
+                <tr key={idx} className="cursor-pointer hover:bg-muted/20" onClick={() => setDetailEntryId(item.entry.id)}>
                   <td className="font-mono text-xs">{item.entry.bookingDate ? new Date(item.entry.bookingDate + 'T00:00:00').toLocaleDateString('de-CH') : '–'}</td>
                   <td className="text-sm">{item.entry.description}</td>
                   <td className="font-mono text-xs text-muted-foreground">{item.entry.id}</td>
@@ -211,6 +213,13 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
           </table>
         </div>
       </div>
+
+      {/* Buchungsdetail-Popup */}
+      <BookingDetailDialog
+        entryId={detailEntryId}
+        open={detailEntryId !== null}
+        onOpenChange={(open) => { if (!open) setDetailEntryId(null); }}
+      />
     </div>
   );
 }

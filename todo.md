@@ -138,3 +138,14 @@
 - [x] Frontend: "Refresh (gelernt)" Button neben "Buchungstexte generieren" im Bankimport
 - [x] Frontend: Visuelles Feedback: Buch-Icon bei Transaktionen die von gelernten Regeln profitieren, 98% Konfidenz
 - [x] Tests: 17 Vitest-Tests für Regel-Matching, Buchungstext-Template-Generierung und Lern-Flow
+
+## Feature: KK-Buchungsregeln aus Beispiel lernen
+- [x] Booking Rules für KK-Positionen aus Benutzer-Beispiel geseeded (SBB→4821, Uber→4821, bexio→4305, Restaurant→1081, I/O Fund→4305, Perplexity→4305, Musik Hug→1081, Parkhaus→4821, Klara→4720, Hotel→4891, Mobility→4821, Jazz Kantine→4891, Envato→4305, Adobe→4305, Jahresbeitrag Karte→4222, Sollzinsen→4220, Kost+Brechbühl→4792)
+- [x] KK-Sammelbuchung: Beim Verbuchen die gelernten Regeln anwenden (Konto-Vorschlag pro Position)
+
+## Feature: Buchungsdetail-Popup (Journal & Kontoblatt)
+- [x] Backend: getEntryDetail-Endpunkt – vollständige Buchung mit allen Zeilen, Gegen-Konto, Soll/Haben laden
+- [x] Frontend: Popup-Komponente "Buchungsliste" mit Spalten: Beleg, Datum, Konto, Text, Gegen-Konto, Soll, Haben
+- [x] Frontend: Popup zeigt Total Soll / Total Haben am Ende
+- [x] Frontend: Popup in Journal-Seite integrieren (Klick auf Transaktion)
+- [x] Frontend: Popup in Konten/Kontoblatt-Seite integrieren (Klick auf Buchungszeile)

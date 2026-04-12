@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import BookingDetailDialog from "@/components/BookingDetailDialog";
 
 function formatCHF(val: number | string) {
   const n = typeof val === "string" ? parseFloat(val) : val;
@@ -41,6 +42,7 @@ export default function Journal() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editEntry, setEditEntry] = useState<any>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
   const limit = 20;
 
   const { fiscalYear } = useFiscalYear();
@@ -138,8 +140,8 @@ export default function Journal() {
                 <>
                   <tr
                     key={entry.id}
-                    className={cn("cursor-pointer", expandedId === entry.id && "bg-muted/30")}
-                    onClick={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
+                    className={cn("cursor-pointer hover:bg-muted/20", expandedId === entry.id && "bg-muted/30")}
+                    onClick={() => setDetailEntryId(entry.id)}
                   >
                     <td className="text-center">
                       {expandedId === entry.id
@@ -271,6 +273,13 @@ export default function Journal() {
           onSaved={() => { setShowCreateDialog(false); utils.journal.list.invalidate(); }}
         />
       )}
+
+      {/* Buchungsdetail-Popup */}
+      <BookingDetailDialog
+        entryId={detailEntryId}
+        open={detailEntryId !== null}
+        onOpenChange={(open) => { if (!open) setDetailEntryId(null); }}
+      />
     </div>
   );
 }

@@ -195,3 +195,9 @@
 
 ## Bugfix: Journal Löschen/Rückgängig
 - [x] Journal: Buchungen löschen und rükgängig machen (Delete/Revert-Buttons) reparieren
+
+## Feature: KK-Verbuchung im Bankimport (Doppelbuchung)
+- [x] Bankimport Bearbeiten-Dialog: Button "Verbuchungsvorschlag aufrufen" wenn KK-Abrechnung verknüpft ist
+- [x] Bankimport Verbuchen: Bei KK-Transaktionen zwei Journal-Einträge erstellen (1082/1032 + Aufwand/1082)
+- [x] KK-Verbuchungs-Dialog: Zeigt Sammelbuchung mit Aufwandkonten aus KK-Abrechnung und ermöglicht direkte Verbuchung
+- [x] KK-Verbuchungs-Dialog: Feld "Effektiv bezahlter Betrag" (Bankbelastung) separat eingeben können (kann kleiner als Abrechnungstotal sein wegen Vormonatsguthaben)

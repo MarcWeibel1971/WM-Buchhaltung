@@ -940,6 +940,103 @@ Antwort NUR als JSON-Array, keine Erklärung:
       return { success: true, entryId, totalAmount: totalAmount.toFixed(2), itemCount: input.items.length };
     }),
 
+  // ── Approve CC from BankImport: creates TWO journal entries ──
+  // Entry 1: 1082 Durchlaufkonto (Soll) / 1032 LUKB mw (Haben) → Totalbetrag
+  // Entry 2: Diverse Aufwandkonten (Soll) / 1082 Durchlaufkonto (Haben) → Sammelbuchung
+  approveCcFromBankImport: protectedProcedure
+    .input(z.object({
+      bankTransactionId: z.number(),
+      statementId: z.number().optional(), // existing CC statement to link
+      statementDate: z.string(),
+      counterparty: z.string(),
+      paidAmount: z.string().optional(), // effektiv bezahlter Betrag (Bankbelastung), kann kleiner sein als Abrechnungstotal
+      items: z.array(z.object({
+        date: z.string(),
+        description: z.string(),
+        amount: z.string(),
+        debitAccountId: z.number(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Get the bank transaction to find the amount and date
+      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.bankTransactionId)).limit(1);
+      if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Banktransaktion nicht gefunden" });
+
+      const visaAccount = await getAccountByNumber("1082");
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
+      const bankAccount = await getAccountByNumber("1032");
+      if (!bankAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1032 nicht gefunden" });
+
+      // totalAmount = Abrechnungstotal (alle Positionen)
+      // paidAmount = effektiv bezahlter Betrag (Bankbelastung, kann kleiner sein wegen Vormonatsguthaben)
+      const txAmount = Math.abs(parseFloat(tx.amount as string));
+      const paidAmount = input.paidAmount ? Math.abs(parseFloat(input.paidAmount)) : txAmount;
+      const dateStr = toDateStr(input.statementDate) ?? toDateStr(tx.transactionDate as string) ?? new Date().toISOString().split("T")[0];
+      const year = parseInt(dateStr!.substring(0, 4));
+
+      // ── Entry 1: 1082 Durchlaufkonto (Soll) / 1032 LUKB mw (Haben) → effektiv bezahlter Betrag ──
+      const entry1Id = await createJournalEntry({
+        bookingDate: dateStr as string,
+        description: `${input.counterparty} ${dateStr} – Bankzahlung`,
+        source: "bank_import",
+        sourceRef: `bank-tx-${tx.id}`,
+        fiscalYear: year,
+        status: "approved",
+        lines: [
+          { accountId: visaAccount.id, side: "debit", amount: paidAmount.toFixed(2), description: "Durchlaufkonto VISA mw" },
+          { accountId: bankAccount.id, side: "credit", amount: paidAmount.toFixed(2), description: "LUKB mw" },
+        ],
+      });
+      await approveJournalEntry(entry1Id, ctx.user.id);
+
+      // ── Entry 2: Diverse Aufwandkonten (Soll) / 1082 Durchlaufkonto (Haben) ──
+      const itemsTotal = input.items.reduce((s, i) => s + Math.abs(parseFloat(i.amount)), 0);
+      const debitLines = input.items.map(item => ({
+        accountId: item.debitAccountId,
+        side: "debit" as const,
+        amount: Math.abs(parseFloat(item.amount)).toFixed(2),
+        description: item.description,
+      }));
+      const entry2Id = await createJournalEntry({
+        bookingDate: dateStr as string,
+        description: `VISA Sammelbuchung ${input.counterparty} ${dateStr}`,
+        source: "credit_card",
+        sourceRef: `cc-items-${Date.now()}`,
+        fiscalYear: year,
+        status: "approved",
+        lines: [
+          ...debitLines,
+          { accountId: visaAccount.id, side: "credit", amount: itemsTotal.toFixed(2), description: `Durchlaufkonto VISA mw – ${input.counterparty}` },
+        ],
+      });
+      await approveJournalEntry(entry2Id, ctx.user.id);
+
+      // Mark bank transaction as matched (linked to entry1)
+      await approveBankTransaction(input.bankTransactionId, entry1Id);
+
+      // Save or update credit card statement
+      if (input.statementId) {
+        await db.update(creditCardStatements)
+          .set({ status: "approved", journalEntryId: entry2Id })
+          .where(eq(creditCardStatements.id, input.statementId));
+      } else {
+        await db.insert(creditCardStatements).values({
+          statementDate: dateStr as string,
+          totalAmount: itemsTotal.toFixed(2),
+          owner: "mw",
+          status: "approved",
+          journalEntryId: entry2Id,
+          rawText: input.items.map(i => `${i.date} ${i.description} ${i.amount}`).join("\n"),
+          parsedItems: input.items,
+        });
+      }
+      return { success: true, entry1Id, entry2Id, totalAmount: itemsTotal.toFixed(2), paidAmount: paidAmount.toFixed(2), itemCount: input.items.length };
+    }),
+
   // ── Revert a booked CC statement back to pending ──
   unapproveStatement: protectedProcedure
     .input(z.object({ statementId: z.number() }))

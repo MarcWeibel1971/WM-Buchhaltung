@@ -61,9 +61,10 @@ export default function BankImport() {
   const [previewDoc, setPreviewDoc] = useState<any>(null);
 
   // Credit card dialog state
-  const [ccDialog, setCcDialog] = useState<{ txId: number; counterparty: string } | null>(null);
+  const [ccDialog, setCcDialog] = useState<{ txId: number; counterparty: string; txAmount: string; statementDate: string; ccStatementId?: number } | null>(null);
   const [ccParsing, setCcParsing] = useState(false);
-  const [ccItems, setCcItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string }>>([]);
+  const [ccItems, setCcItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string }>>([])
+  const [ccPaidAmount, setCcPaidAmount] = useState<string>("");
 
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   const { data: transactions, refetch: refetchTxs } = trpc.bankImport.getTransactionsByStatus.useQuery(
@@ -175,6 +176,19 @@ export default function BankImport() {
       toast.success(`Sammelbuchung erstellt: ${data.itemCount} Positionen, CHF ${formatCHF(data.totalAmount)}`);
       setCcDialog(null);
       setCcItems([]);
+      refetchTxs();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // New: approve CC from bank import (creates two journal entries: 1082/1032 + Aufwand/1082)
+  const approveCcFromBankImportMutation = trpc.creditCard.approveCcFromBankImport.useMutation({
+    onSuccess: (data) => {
+      toast.success(`KK-Abrechnung verbucht: ${data.itemCount} Positionen, Total CHF ${formatCHF(data.totalAmount)}, bezahlt CHF ${formatCHF(data.paidAmount)}`);
+      setCcDialog(null);
+      setCcItems([]);
+      setCcPaidAmount("");
       refetchTxs();
       utils.reports.dashboard.invalidate();
     },
@@ -551,8 +565,15 @@ export default function BankImport() {
                             {isCC && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-orange-600" title="Kreditkartenbeleg verbuchen"
                                 onClick={() => {
-                                  setCcDialog({ txId: tx.id, counterparty: tx.counterparty ?? "Kreditkarte" });
+                                  const txAmt = Math.abs(parseFloat(tx.amount as string)).toFixed(2);
+                                  setCcDialog({
+                                    txId: tx.id,
+                                    counterparty: tx.counterparty ?? "Kreditkarte",
+                                    txAmount: txAmt,
+                                    statementDate: tx.transactionDate ? new Date(tx.transactionDate as string).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+                                  });
                                   setCcItems([]);
+                                  setCcPaidAmount(txAmt);
                                 }}>
                                 <CreditCard className="h-3.5 w-3.5" />
                               </Button>
@@ -686,11 +707,36 @@ export default function BankImport() {
                         {docMeta.description && <span className="truncate max-w-xs">{docMeta.description}</span>}
                       </div>
                     )}
-                    {matchedDoc.s3Url && (
-                      <a href={matchedDoc.s3Url} target="_blank" rel="noopener noreferrer" className="text-xs text-green-600 hover:underline mt-1 inline-block">
-                        Rechnung öffnen
-                      </a>
-                    )}
+                    <div className="mt-2 flex gap-2 flex-wrap">
+                      {matchedDoc.s3Url && (
+                        <a href={matchedDoc.s3Url} target="_blank" rel="noopener noreferrer">
+                          <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-green-700 border-green-300">
+                            <Eye className="h-3 w-3" /> Rechnung öffnen
+                          </Button>
+                        </a>
+                      )}
+                      {/* If this is a CC transaction, offer to launch the booking proposal */}
+                      {editTx && isCreditCardTx(editTx) && (
+                        <Button size="sm" className="h-7 text-xs gap-1 bg-orange-600 hover:bg-orange-700 text-white"
+                          onClick={() => {
+                            const txAmt = Math.abs(parseFloat(editTx.amount)).toFixed(2);
+                            const stmtDate = editTx.transactionDate
+                              ? new Date(editTx.transactionDate).toISOString().split("T")[0]
+                              : new Date().toISOString().split("T")[0];
+                            setCcDialog({
+                              txId: editTx.id,
+                              counterparty: editTx.counterparty ?? "Kreditkarte",
+                              txAmount: txAmt,
+                              statementDate: stmtDate,
+                            });
+                            setCcItems([]);
+                            setCcPaidAmount(txAmt);
+                            setEditTx(null);
+                          }}>
+                          <CreditCard className="h-3 w-3" /> Verbuchungsvorschlag aufrufen
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
@@ -713,12 +759,14 @@ export default function BankImport() {
       </Dialog>
 
       {/* ─── Credit Card Statement Dialog ─── */}
-      <Dialog open={!!ccDialog} onOpenChange={open => { if (!open) setCcDialog(null); }}>
+      <Dialog open={!!ccDialog} onOpenChange={open => { if (!open) { setCcDialog(null); setCcItems([]); setCcPaidAmount(""); } }}>
         <DialogContent className="sm:max-w-[95vw] w-full max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Kreditkartenbeleg verbuchen</DialogTitle>
+            <DialogTitle>Kreditkartenabrechnung verbuchen</DialogTitle>
             <DialogDescription>
-              Laden Sie die Kreditkartenabrechnung als PDF hoch. Die einzelnen Positionen werden als Sammelbuchung über Konto 1082 (Durchlaufkonto VISA mw) verbucht.
+              PDF hochladen → KI erkennt Positionen → zwei Journal-Einträge werden erstellt:
+              (1) 1082 Durchlaufkonto / 1032 LUKB mw – effektiv bezahlter Betrag;
+              (2) Aufwandkonten / 1082 Durchlaufkonto – Abrechnungstotal (Sammelbuchung).
             </DialogDescription>
           </DialogHeader>
 
@@ -726,6 +774,33 @@ export default function BankImport() {
             onChange={e => { const f = e.target.files?.[0]; if (f) handleCcPdfUpload(f); }} />
 
           <div className="space-y-4">
+            {/* Betrag-Info und Feld für effektiv bezahlten Betrag */}
+            <div className="grid grid-cols-2 gap-4 p-3 bg-muted/40 rounded-lg">
+              <div>
+                <Label className="text-xs text-muted-foreground">Bankbelastung (aus Kontoauszug)</Label>
+                <div className="font-mono font-semibold text-sm mt-1">
+                  CHF {ccDialog ? formatCHF(ccDialog.txAmount) : "–"}
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Effektiv bezahlter Betrag</Label>
+                <div className="flex items-center gap-1 mt-1">
+                  <span className="text-xs text-muted-foreground">CHF</span>
+                  <Input
+                    className="h-8 text-sm font-mono"
+                    value={ccPaidAmount}
+                    onChange={e => setCcPaidAmount(e.target.value)}
+                    placeholder={ccDialog?.txAmount ?? "0.00"}
+                  />
+                </div>
+                {ccPaidAmount && ccDialog && parseFloat(ccPaidAmount) !== parseFloat(ccDialog.txAmount) && (
+                  <p className="text-xs text-amber-600 mt-0.5">
+                    Differenz: CHF {formatCHF(Math.abs(parseFloat(ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0).toFixed(2)) - parseFloat(ccPaidAmount)))} (Vormonatsguthaben)
+                  </p>
+                )}
+              </div>
+            </div>
+
             <Button variant="outline" className="w-full gap-2" disabled={ccParsing}
               onClick={() => ccPdfInputRef.current?.click()}>
               <Upload className="h-4 w-4" />
@@ -748,7 +823,7 @@ export default function BankImport() {
                     <tbody>
                       {ccItems.map((item, idx) => (
                         <tr key={idx} className="border-t">
-                          <td className="px-3 py-2">{item.date}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{item.date}</td>
                           <td className="px-3 py-2">{item.description}</td>
                           <td className="px-3 py-2 text-right font-mono">{formatCHF(item.amount)}</td>
                           <td className="px-3 py-2">
@@ -768,12 +843,21 @@ export default function BankImport() {
                     </tbody>
                     <tfoot className="bg-muted/30">
                       <tr>
-                        <td colSpan={2} className="px-3 py-2 font-medium">Total</td>
-                        <td className="px-3 py-2 text-right font-mono font-medium">
-                          {formatCHF(ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0))}
+                        <td colSpan={2} className="px-3 py-2 font-medium">Abrechnungstotal</td>
+                        <td className="px-3 py-2 text-right font-mono font-semibold">
+                          CHF {formatCHF(ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0))}
                         </td>
                         <td></td>
                       </tr>
+                      {ccPaidAmount && parseFloat(ccPaidAmount) !== ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0) && (
+                        <tr className="text-amber-700 bg-amber-50 dark:bg-amber-950/20">
+                          <td colSpan={2} className="px-3 py-1.5 text-xs">Vormonatsguthaben (Differenz)</td>
+                          <td className="px-3 py-1.5 text-right font-mono text-xs">
+                            CHF {formatCHF(Math.abs(ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0) - parseFloat(ccPaidAmount || "0")))}
+                          </td>
+                          <td></td>
+                        </tr>
+                      )}
                     </tfoot>
                   </table>
                 </div>
@@ -782,15 +866,18 @@ export default function BankImport() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCcDialog(null)}>Abbrechen</Button>
+            <Button variant="outline" onClick={() => { setCcDialog(null); setCcItems([]); setCcPaidAmount(""); }}>Abbrechen</Button>
             {ccItems.length > 0 && (
               <Button className="bg-green-600 hover:bg-green-700"
-                disabled={ccItems.some(i => !i.debitAccountId) || approveWithItemsMutation.isPending}
+                disabled={ccItems.some(i => !i.debitAccountId) || approveCcFromBankImportMutation.isPending}
                 onClick={() => {
-                  approveWithItemsMutation.mutate({
-                    bankTransactionId: ccDialog?.txId,
-                    statementDate: new Date().toISOString().split("T")[0],
-                    counterparty: ccDialog?.counterparty ?? "Kreditkarte",
+                  if (!ccDialog) return;
+                  approveCcFromBankImportMutation.mutate({
+                    bankTransactionId: ccDialog.txId,
+                    statementId: ccDialog.ccStatementId,
+                    statementDate: ccDialog.statementDate,
+                    counterparty: ccDialog.counterparty,
+                    paidAmount: ccPaidAmount || ccDialog.txAmount,
                     items: ccItems.map(i => ({
                       date: i.date,
                       description: i.description,
@@ -800,7 +887,7 @@ export default function BankImport() {
                   });
                 }}>
                 <Check className="h-4 w-4 mr-1" />
-                {approveWithItemsMutation.isPending ? "Wird verbucht..." : "Sammelbuchung erstellen"}
+                {approveCcFromBankImportMutation.isPending ? "Wird verbucht..." : "KK-Abrechnung verbuchen (2 Buchungen)"}
               </Button>
             )}
           </DialogFooter>

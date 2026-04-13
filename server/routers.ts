@@ -328,7 +328,9 @@ Regeln:
 - Lohn: Debit 4000/4001, Credit 1032
 - Miete: Debit 4100, Credit 1032
 - Zinsen: Debit 4220, Credit 1032
-- WICHTIG: Das Bankkonto ist IMMER 1032 (LUKB mw), NICHT 1031`;
+- WICHTIG: Das Bankkonto ist IMMER 1032 (LUKB mw), NICHT 1031
+- Gewerbe-Treuhand AG: Debit 3000 (Fremdhonorar), NICHT 4740 – dies sind Fremdhonorare für ausgelagerte Buchhaltungsmandate
+- Gewerbe-Treuhand AG Buchungstext: 'Fremdhonorar Gewerbe-Treuhand – [Kundenname] [Periode]' (Kundenname aus Beschreibung/Referenz)`;
 
           const response = await invokeLLM({
             messages: [{ role: "user", content: prompt }],

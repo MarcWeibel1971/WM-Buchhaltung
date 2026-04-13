@@ -201,3 +201,8 @@
 - [x] Bankimport Verbuchen: Bei KK-Transaktionen zwei Journal-Einträge erstellen (1082/1032 + Aufwand/1082)
 - [x] KK-Verbuchungs-Dialog: Zeigt Sammelbuchung mit Aufwandkonten aus KK-Abrechnung und ermöglicht direkte Verbuchung
 - [x] KK-Verbuchungs-Dialog: Feld "Effektiv bezahlter Betrag" (Bankbelastung) separat eingeben können (kann kleiner als Abrechnungstotal sein wegen Vormonatsguthaben)
+
+## Feature: Gewerbe-Treuhand Fremdhonorare
+- [x] Booking Rules: Gewerbe-Treuhand AG → Konto 3000 Fremdhonorar (statt 4740 Rechts- und Beratungsaufwand)
+- [x] LLM-Prompt: Bei Gewerbe-Treuhand Rechnungen den Kundennamen aus der Rechnung extrahieren und in Buchungstext integrieren
+- [x] Bestehende Gewerbe-Treuhand Transaktionen im Bankimport: Konto auf 3000 aktualisieren und Buchungstexte mit Kundennamen neu generieren

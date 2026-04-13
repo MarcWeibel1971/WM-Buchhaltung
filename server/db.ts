@@ -817,8 +817,26 @@ export function improveBookingSuggestionFromDocument(
     improvements.description = docMetadata.description;
   }
 
+  // Special handling for Gewerbe-Treuhand: extract customer name from description
+  // Description format: "Finanzbuchhaltung 2024 für Urs Manser" or "...für AESKULAP International AG"
+  if (docMetadata.counterparty && docMetadata.counterparty.includes('Gewerbe-Treuhand')) {
+    const desc = docMetadata.description || '';
+    const match = desc.match(/f[üu]r\s+(.+?)(?:\s+(?:Phase|Betrag|$))/i) ||
+                  desc.match(/betreffend\s+(.+?)(?:\s+(?:in Rechnung|$))/i) ||
+                  desc.match(/(.+?)(?:\s+Finanzbuchhaltung)/i);
+    const customerName = match ? match[1].trim() : null;
+    if (customerName) {
+      // Extract period from description or use current date
+      const periodMatch = desc.match(/(Jan(?:uar)?|Feb(?:ruar)?|M[äa]rz|Apr(?:il)?|Mai|Jun(?:i)?|Jul(?:i)?|Aug(?:ust)?|Sep(?:tember)?|Okt(?:ober)?|Nov(?:ember)?|Dez(?:ember)?)\s*(\d{4})/i) ||
+                          desc.match(/(\d{4})/g);
+      const period = periodMatch ? periodMatch[0] : '';
+      improvements.bookingText = `Fremdhonorar Gewerbe-Treuhand – ${customerName}${period ? ' ' + period : ''}`;
+      improvements.suggestedAccount = '3000'; // Fremdhonorar
+    }
+  }
+
   // Use suggested account from document
-  if (docMetadata.suggestedAccount) {
+  if (!improvements.suggestedAccount && docMetadata.suggestedAccount) {
     improvements.suggestedAccount = docMetadata.suggestedAccount;
   }
 

@@ -275,3 +275,23 @@
   - Ziffern 12–15 (Quellensteuer, Spesen, Nebenleistungen, Bemerkungen aus DB)
   - Footer I (Ort/Datum, Arbeitgeber-Adresse aus companySettings, UID)
 - [x] Frontend: Jahreslohnausweis-Tab – zwei Buttons: "Interner Lohnausweis" und "Offizieller Lohnausweis (Form. 11)"
+
+## Fix: Dialog-Breiten responsive
+
+- [x] dialog.tsx: Standard-Breite auf w-[min(95vw,56rem)] max-w-none responsive umgestellt
+- [x] BookingDetailDialog.tsx: Breite responsive, Tabelle mit overflow-x-auto
+- [x] Journal.tsx: Alle DialogContent-Breiten responsive
+- [x] BankImport.tsx: Alle DialogContent-Breiten responsive
+- [x] CreditCard.tsx: DialogContent-Breite responsive
+- [x] Payroll.tsx: DialogContent-Breite responsive
+- [x] Vat.tsx: Beide DialogContent-Breiten responsive
+- [x] Settings.tsx: Beide DialogContent-Breiten responsive
+
+## Feature: Eröffnungssalden manuell anpassen
+
+- [x] Backend: getOpeningBalances Endpunkt (alle Konten mit aktuellem Eröffnungssaldo)
+- [x] Backend: upsertOpeningBalances mit Aktiven=Passiven Validierung (TRPCError bei Differenz)
+- [x] Backend: Eröffnungsbilanz-Journalbuchung wird beim Speichern automatisch neu erstellt
+- [x] Frontend: Settings Tab "Eröffnungssalden" mit Aktiven/Passiven-Tabellen
+- [x] Frontend: Live-Anzeige Aktiven/Passiven-Summen und Differenz-Warnung
+- [x] Frontend: Speichern-Button deaktiviert wenn Aktiven ≠ Passiven

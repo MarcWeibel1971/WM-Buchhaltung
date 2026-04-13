@@ -69,7 +69,7 @@ export default function BookingDetailDialog({ entryId, open, onOpenChange }: Boo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="w-[min(95vw,56rem)] max-w-none max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">Buchungsliste</DialogTitle>
           <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
@@ -97,8 +97,8 @@ export default function BookingDetailDialog({ entryId, open, onOpenChange }: Boo
             </div>
 
             {/* Buchungsliste table – matches Abacus style */}
-            <div className="border border-border rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="border border-border rounded-lg overflow-x-auto">
+              <table className="w-full text-sm min-w-[36rem]">
                 <thead>
                   <tr className="bg-muted/50 text-xs font-semibold text-muted-foreground">
                     <th className="text-left px-3 py-2 w-16">Beleg</th>

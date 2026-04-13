@@ -348,7 +348,7 @@ export default function Journal() {
       {/* Bestätigungs-Dialog */}
       {confirmDialog && (
         <Dialog open={confirmDialog.open} onOpenChange={(open) => { if (!open) setConfirmDialog(null); }}>
-          <DialogContent className="max-w-sm">
+          <DialogContent className="w-[min(95vw,28rem)] max-w-none">
             <DialogHeader>
               <DialogTitle>{confirmDialog.title}</DialogTitle>
             </DialogHeader>
@@ -396,7 +396,7 @@ function EditEntryDialog({ entry, accounts, onClose, onSaved }: {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="w-[min(95vw,48rem)] max-w-none">
         <DialogHeader>
           <DialogTitle>Buchung bearbeiten – {entry.entryNumber}</DialogTitle>
         </DialogHeader>
@@ -516,7 +516,7 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className={isSingle ? "max-w-lg" : "max-w-2xl"}>
+      <DialogContent className={isSingle ? "w-[min(95vw,38rem)] max-w-none" : "w-[min(95vw,52rem)] max-w-none"}>
         <DialogHeader>
           <DialogTitle>
             {isSingle ? "Einzelbuchung erstellen" : "Sammelbuchung erstellen"}

@@ -865,7 +865,7 @@ function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }:
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-[min(95vw,38rem)] max-w-none">
         <DialogHeader>
           <DialogTitle>Lohnabrechnung erstellen</DialogTitle>
         </DialogHeader>

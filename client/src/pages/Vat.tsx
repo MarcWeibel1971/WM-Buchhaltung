@@ -168,7 +168,7 @@ function CreateVatDialog({ year, onClose, onSaved }: {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="w-[min(95vw,32rem)] max-w-none">
         <DialogHeader>
           <DialogTitle>MWST-Abrechnung erstellen</DialogTitle>
         </DialogHeader>
@@ -257,7 +257,7 @@ function VatDetailDialog({ period, onClose }: { period: any; onClose: () => void
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="w-[min(95vw,36rem)] max-w-none">
         <DialogHeader>
           <DialogTitle>MWST-Abrechnung {period.period} {period.year}</DialogTitle>
         </DialogHeader>

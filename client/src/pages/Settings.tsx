@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,9 +19,10 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Building2, Users, Shield, Landmark, BookOpen,
-  Pencil, Trash2, Plus, Check, X,
+  Building2, Users, Shield, Landmark, BookOpen, Scale,
+  Pencil, Trash2, Plus, Check, X, AlertTriangle,
 } from "lucide-react";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { toast } from "sonner";
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ const TABS = [
   { id: "employees", label: "Mitarbeiter", icon: Users },
   { id: "insurance", label: "Versicherungen", icon: Shield },
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
+  { id: "opening", label: "Eröffnungssalden", icon: Scale },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -91,6 +93,7 @@ export default function Settings() {
         {activeTab === "employees" && <EmployeesTab />}
         {activeTab === "insurance" && <InsuranceTab />}
         {activeTab === "rules" && <BookingRulesTab />}
+        {activeTab === "opening" && <OpeningBalancesTab />}
       </main>
     </div>
   );
@@ -534,7 +537,7 @@ function EmployeesTab() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[min(95vw,42rem)] max-w-none">
           <DialogHeader>
             <DialogTitle>{editEmp?.id ? "Mitarbeiter bearbeiten" : "Neuer Mitarbeiter"}</DialogTitle>
           </DialogHeader>
@@ -788,7 +791,7 @@ function InsuranceTab() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[min(95vw,36rem)] max-w-none">
           <DialogHeader>
             <DialogTitle>{editItem?.id ? "Versicherung bearbeiten" : "Versicherung hinzufügen"}</DialogTitle>
           </DialogHeader>
@@ -996,6 +999,203 @@ function BookingRulesTab() {
           </TableBody>
         </Table>
       </div>
+    </div>
+  );
+}
+
+// ─── Opening Balances Tab ─────────────────────────────────────────────────────
+
+function OpeningBalancesTab() {
+  const { fiscalYear } = useFiscalYear();
+  const [editYear, setEditYear] = useState(fiscalYear);
+  const [localBalances, setLocalBalances] = useState<Record<number, string>>({});
+  const [isDirty, setIsDirty] = useState(false);
+
+  const { data: rows, isLoading, refetch } = trpc.settings.getOpeningBalances.useQuery(
+    { fiscalYear: editYear },
+    { refetchOnWindowFocus: false }
+  );
+
+  const saveMut = trpc.settings.upsertOpeningBalances.useMutation({
+    onSuccess: () => {
+      toast.success("Eröffnungssalden gespeichert");
+      setIsDirty(false);
+      refetch();
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  // Sync local state when data loads
+  useState(() => {
+    if (rows) {
+      const init: Record<number, string> = {};
+      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
+      setLocalBalances(init);
+    }
+  });
+
+  // Re-init when rows change (year switch)
+  const prevYear = useRef(editYear);
+  useEffect(() => {
+    if (rows && editYear !== prevYear.current) {
+      prevYear.current = editYear;
+      const init: Record<number, string> = {};
+      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
+      setLocalBalances(init);
+      setIsDirty(false);
+    } else if (rows && !isDirty) {
+      const init: Record<number, string> = {};
+      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
+      setLocalBalances(init);
+    }
+  }, [rows, editYear]);
+
+  const getValue = (accountId: number) => localBalances[accountId] ?? "";
+
+  const handleChange = (accountId: number, val: string) => {
+    setLocalBalances(prev => ({ ...prev, [accountId]: val }));
+    setIsDirty(true);
+  };
+
+  // Compute totals
+  const assets = rows?.filter(r => r.accountType === "asset") ?? [];
+  const liabilities = rows?.filter(r => r.accountType === "liability" || r.accountType === "equity") ?? [];
+
+  const totalAssets = assets.reduce((sum, r) => {
+    const v = parseFloat(localBalances[r.accountId] || "0") || 0;
+    return sum + v;
+  }, 0);
+  const totalLiabilities = liabilities.reduce((sum, r) => {
+    const v = parseFloat(localBalances[r.accountId] || "0") || 0;
+    return sum + v;
+  }, 0);
+  const diff = Math.abs(totalAssets - totalLiabilities);
+  const isBalanced = diff < 0.01;
+
+  const handleSave = () => {
+    const balances = (rows ?? []).map(r => ({
+      accountId: r.accountId,
+      balance: parseFloat(localBalances[r.accountId] || "0") || 0,
+    }));
+    saveMut.mutate({ fiscalYear: editYear, balances });
+  };
+
+  const formatCHF = (n: number) =>
+    new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+
+  const renderAccountGroup = (
+    title: string,
+    accounts: typeof rows,
+    total: number
+  ) => (
+    <div className="mb-6">
+      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
+        {title}
+      </h3>
+      <div className="border border-border rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-muted/50 text-xs font-semibold text-muted-foreground">
+              <th className="text-left px-3 py-2 w-20">Konto</th>
+              <th className="text-left px-3 py-2">Bezeichnung</th>
+              <th className="text-right px-3 py-2 w-40">Saldo CHF</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts?.map(r => (
+              <tr key={r.accountId} className="border-t border-border/40 hover:bg-muted/20">
+                <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{r.accountNumber}</td>
+                <td className="px-3 py-1.5 text-sm">{r.accountName}</td>
+                <td className="px-3 py-1.5 text-right">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    className="h-7 text-right font-mono text-sm w-36 ml-auto"
+                    value={getValue(r.accountId)}
+                    placeholder="0.00"
+                    onChange={e => handleChange(r.accountId, e.target.value)}
+                  />
+                </td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-border bg-muted/30 font-semibold">
+              <td colSpan={2} className="px-3 py-2 text-sm">Total {title}</td>
+              <td className="px-3 py-2 text-right font-mono text-sm">{formatCHF(total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Eröffnungssalden</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Manuelle Erfassung der Eröffnungssalden für das erste Geschäftsjahr.
+            Aktiven müssen gleich Passiven sein.
+          </p>
+        </div>
+        <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
+          <SelectTrigger className="w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {[2026, 2025, 2024, 2023].map(y => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Balance indicator */}
+      {isDirty && (
+        <div className={`flex items-center gap-3 p-3 rounded-lg mb-4 text-sm font-medium ${
+          isBalanced
+            ? "bg-green-50 border border-green-200 text-green-800"
+            : "bg-amber-50 border border-amber-200 text-amber-800"
+        }`}>
+          {isBalanced ? (
+            <Check className="h-4 w-4 text-green-600 shrink-0" />
+          ) : (
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+          )}
+          <span>
+            Aktiven: {formatCHF(totalAssets)} | Passiven: {formatCHF(totalLiabilities)}
+            {!isBalanced && ` | Differenz: CHF ${formatCHF(diff)}`}
+          </span>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+        </div>
+      ) : (
+        <>
+          {renderAccountGroup("Aktiven", assets, totalAssets)}
+          {renderAccountGroup("Passiven (Fremdkapital & Eigenkapital)", liabilities, totalLiabilities)}
+
+          {/* Save button */}
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-xs text-muted-foreground">
+              Beim Speichern wird die Eröffnungsbilanz-Buchung im Journal automatisch aktualisiert.
+            </p>
+            <Button
+              onClick={handleSave}
+              disabled={!isDirty || !isBalanced || saveMut.isPending}
+              className="min-w-32"
+            >
+              {saveMut.isPending ? "Speichern..." : "Speichern"}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

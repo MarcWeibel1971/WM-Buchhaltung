@@ -204,7 +204,7 @@ export default function CreditCard() {
       {/* Approve Dialog */}
       {approveDialog && (
         <Dialog open onOpenChange={() => setApproveDialog(null)}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="w-[min(95vw,32rem)] max-w-none">
             <DialogHeader>
               <DialogTitle>Sammelbelastung verbuchen</DialogTitle>
             </DialogHeader>

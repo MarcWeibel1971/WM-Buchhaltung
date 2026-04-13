@@ -7,9 +7,10 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import {
-  companySettings, insuranceSettings, employees, bankAccounts, bookingRules, accounts
+  companySettings, insuranceSettings, employees, bankAccounts, bookingRules, accounts,
+  openingBalances, journalEntries, journalLines, fiscalYears
 } from "../drizzle/schema";
-import { eq, asc, desc } from "drizzle-orm";
+import { and, eq, asc, desc } from "drizzle-orm";
 
 // ─── Company Settings ─────────────────────────────────────────────────────────
 
@@ -354,5 +355,146 @@ export const settingsRouter = router({
         .set({ isActive: input.isActive })
         .where(eq(bookingRules.id, input.id));
       return { success: true };
+    }),
+
+  // ── Eröffnungssalden ──────────────────────────────────────────────────────────
+
+  getOpeningBalances: protectedProcedure
+    .input(z.object({ fiscalYear: z.number().int() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      // Get all accounts with their opening balances for the given fiscal year
+      const allAccounts = await db.select().from(accounts).orderBy(asc(accounts.number));
+      const obs = await db.select().from(openingBalances)
+        .where(eq(openingBalances.fiscalYear, input.fiscalYear));
+      return allAccounts.map(acc => {
+        const ob = obs.find(o => o.accountId === acc.id);
+        return {
+          accountId: acc.id,
+          accountNumber: acc.number,
+          accountName: acc.name,
+          accountType: acc.accountType,
+          balance: ob ? parseFloat(ob.balance as string) : 0,
+          hasBalance: !!ob,
+        };
+      });
+    }),
+
+  upsertOpeningBalances: protectedProcedure
+    .input(z.object({
+      fiscalYear: z.number().int(),
+      balances: z.array(z.object({
+        accountId: z.number().int(),
+        balance: z.number(),
+      })),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      // Validate: sum of asset accounts must equal sum of liability+equity accounts
+      const allAccounts = await db.select({ id: accounts.id, accountType: accounts.accountType })
+        .from(accounts);
+
+      let totalAssets = 0;
+      let totalLiabilities = 0;
+      for (const b of input.balances) {
+        if (b.balance === 0) continue;
+        const acc = allAccounts.find(a => a.id === b.accountId);
+        if (!acc) continue;
+        if (acc.accountType === 'asset') totalAssets += b.balance;
+        else if (acc.accountType === 'liability' || acc.accountType === 'equity') totalLiabilities += b.balance;
+      }
+
+      const diff = Math.abs(totalAssets - totalLiabilities);
+      if (diff > 0.01) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Aktiven (CHF ${totalAssets.toFixed(2)}) müssen gleich Passiven (CHF ${totalLiabilities.toFixed(2)}) sein. Differenz: CHF ${diff.toFixed(2)}`,
+        });
+      }
+
+      // Upsert each balance
+      for (const b of input.balances) {
+        const existing = await db.select({ id: openingBalances.id })
+          .from(openingBalances)
+          .where(and(
+            eq(openingBalances.accountId, b.accountId),
+            eq(openingBalances.fiscalYear, input.fiscalYear)
+          ))
+          .limit(1);
+
+        if (b.balance === 0) {
+          // Delete zero balances to keep DB clean
+          if (existing.length > 0) {
+            await db.delete(openingBalances)
+              .where(and(
+                eq(openingBalances.accountId, b.accountId),
+                eq(openingBalances.fiscalYear, input.fiscalYear)
+              ));
+          }
+        } else if (existing.length > 0) {
+          await db.update(openingBalances)
+            .set({ balance: String(b.balance) })
+            .where(eq(openingBalances.id, existing[0].id));
+        } else {
+          await db.insert(openingBalances).values({
+            accountId: b.accountId,
+            fiscalYear: input.fiscalYear,
+            balance: String(b.balance),
+          });
+        }
+      }
+
+      // Rebuild the Eröffnungsbilanz journal entry for this fiscal year
+      // Delete existing Eröffnungsbilanz entry
+      // Find existing Eröffnungsbilanz entries (description-based)
+      const existingEntries = await db.select({ id: journalEntries.id })
+        .from(journalEntries)
+        .where(and(
+          eq(journalEntries.fiscalYear, input.fiscalYear),
+          eq(journalEntries.source, 'system')
+        ));
+
+      // Only delete entries that are Eröffnungsbilanz (by description)
+      for (const e of existingEntries) {
+        const entry = await db.select({ description: journalEntries.description })
+          .from(journalEntries).where(eq(journalEntries.id, e.id)).limit(1);
+        if (entry[0]?.description?.includes('Eröffnungsbilanz')) {
+          await db.delete(journalLines).where(eq(journalLines.entryId, e.id));
+          await db.delete(journalEntries).where(eq(journalEntries.id, e.id));
+        }
+      }
+
+      // Create new Eröffnungsbilanz journal entry
+      const nonZeroBalances = input.balances.filter(b => b.balance !== 0);
+      if (nonZeroBalances.length > 0) {
+        const startDate = `${input.fiscalYear}-01-01`;
+        const [newEntry] = await db.insert(journalEntries).values({
+          bookingDate: startDate,
+          valueDate: startDate,
+          description: `Eröffnungsbilanz per 01.01.${input.fiscalYear}`,
+          status: 'approved',
+          source: 'system',
+          fiscalYear: input.fiscalYear,
+        }).$returningId();
+
+        for (const b of nonZeroBalances) {
+          const acc = allAccounts.find(a => a.id === b.accountId);
+          if (!acc) continue;
+          // Assets: debit side; Liabilities/Equity: credit side
+          const side = acc.accountType === 'asset' ? 'debit' : 'credit';
+          await db.insert(journalLines).values({
+            entryId: newEntry.id,
+            accountId: b.accountId,
+            side,
+            amount: String(Math.abs(b.balance)),
+            description: `Eröffnungssaldo ${b.accountId}`,
+          });
+        }
+      }
+
+      return { success: true, totalAssets, totalLiabilities };
     }),
 });

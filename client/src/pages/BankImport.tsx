@@ -661,7 +661,7 @@ export default function BankImport() {
 
       {/* ─── Edit Transaction Dialog ─── */}
       <Dialog open={!!editTx} onOpenChange={open => { if (!open) setEditTx(null); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="w-[min(95vw,38rem)] max-w-none">
           <DialogHeader>
             <DialogTitle>Transaktion bearbeiten</DialogTitle>
             <DialogDescription>Alle Felder der Transaktion anpassen</DialogDescription>
@@ -802,7 +802,7 @@ export default function BankImport() {
 
       {/* ─── Credit Card Statement Dialog ─── */}
       <Dialog open={!!ccDialog} onOpenChange={open => { if (!open) { setCcDialog(null); setCcItems([]); setCcPaidAmount(""); } }}>
-        <DialogContent className="sm:max-w-[95vw] w-full max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[min(98vw,72rem)] max-w-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Kreditkartenabrechnung verbuchen</DialogTitle>
             <DialogDescription>
@@ -938,7 +938,7 @@ export default function BankImport() {
 
       {/* ─── Invoice Preview Dialog ─── */}
       <Dialog open={!!previewDoc} onOpenChange={open => { if (!open) setPreviewDoc(null); }}>
-        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
+        <DialogContent className="w-[min(95vw,56rem)] max-w-none max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-blue-600" />

@@ -301,3 +301,11 @@
 - [x] Buchung-Bearbeiten-Dialog: Betrag-Synchronisation Soll⇔Haben (bei 2-Zeilen-Buchung: Änderung in einem Feld übernimmt Wert ins andere)
 - [x] Buchung-Bearbeiten-Dialog: Konten-Tauschen-Button ⇄ (tauscht Soll⇔Haben bei allen Zeilen)
 - [x] Kontoauszug-Seite: table-layout fixed mit colgroup, Buchungstext truncate+title, Datum+Beleg-Nr. zentriert
+
+## Feature: Lohnbuchhaltung aus Journal-Buchungen befüllen
+
+- [x] Backend: Journal-Buchungen mit 'Lohn' im Buchungstext analysieren und Mitarbeiter/Monat/Beträge extrahieren
+- [x] Backend: syncFromJournal Endpunkt – erstellt/aktualisiert payroll_entries aus Journal-Buchungen
+- [x] Backend: Bruttolohn aus Konto 4000/4001 (Soll), Nettolohn aus Personalkonto (Haben)
+- [x] Frontend: "Aus Journal synchronisieren" Button (mit Spinner) in Lohnbuchhaltung
+- [x] Frontend: Erfolgsmeldung zeigt Anzahl neue/aktualisierte/übersprungene Einträge

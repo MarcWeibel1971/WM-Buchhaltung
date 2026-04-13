@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { Plus, Check, FileText, Users, CalendarDays, Award } from "lucide-react";
+import { Plus, Check, FileText, Users, CalendarDays, Award, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -531,6 +531,14 @@ export default function Payroll() {
     onError: (e) => toast.error(e.message),
   });
 
+  const syncMutation = trpc.payroll.syncFromJournal.useMutation({
+    onSuccess: (res) => {
+      toast.success(`Synchronisiert: ${res.created} neue, ${res.updated} aktualisierte, ${res.skipped} übersprungene Einträge`);
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -539,6 +547,12 @@ export default function Payroll() {
           <p className="text-sm text-muted-foreground">Lohnabrechnung für mw und jm</p>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="gap-2"
+            onClick={() => syncMutation.mutate({ year })}
+            disabled={syncMutation.isPending}>
+            <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
+            Aus Journal synchronisieren
+          </Button>
           <Button size="sm" className="gap-2" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4" /> Lohnabrechnung
           </Button>

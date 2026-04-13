@@ -1391,6 +1391,154 @@ const payrollRouter = router({
       return { months, totals, year: input.year, employeeId: input.employeeId };
     }),
 
+  // Sync payroll entries from journal bookings (bank_import source with Lohn descriptions)
+  syncFromJournal: protectedProcedure
+    .input(z.object({ year: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Load all employees
+      const emps = await getEmployees();
+
+      // Find all journal entries with 'Lohn' in description for this fiscal year
+      const lohnEntries = await db
+        .select()
+        .from(journalEntries)
+        .where(
+          and(
+            eq(journalEntries.fiscalYear, input.year),
+            sql`${journalEntries.description} LIKE '%Lohn%'`
+          )
+        );
+
+      // For each entry, get its lines
+      const MONTH_NAMES_DE: Record<string, number> = {
+        januar: 1, februar: 2, märz: 3, maerz: 3, april: 4, mai: 5, juni: 6,
+        juli: 7, august: 8, september: 9, oktober: 10, november: 11, dezember: 12,
+      };
+
+      // Parse employee code and month from description like "Lohn MW März 2026"
+      function parsePayrollDesc(desc: string): { empCode: string | null; month: number | null; year: number | null } {
+        const m = desc.match(/Lohn\s+(\w+)\s+(\w+)\s+(\d{4})/i);
+        if (!m) return { empCode: null, month: null, year: null };
+        const empCode = m[1].toLowerCase();
+        const monthStr = m[2].toLowerCase();
+        const year = parseInt(m[3]);
+        const month = MONTH_NAMES_DE[monthStr] ?? null;
+        return { empCode, month, year };
+      }
+
+      // Group entries by employee+month, sum up debit amounts on salary accounts (4000, 4001)
+      const salaryAccounts = await db.select().from(accounts).where(
+        sql`${accounts.number} IN ('4000','4001','4002','4003','4004','4005')`
+      );
+      const salaryAccIds = new Set(salaryAccounts.map(a => a.id));
+
+      // Also look at credit amounts going to personal bank accounts (net salary)
+      const personalBankAccounts = await db.select().from(accounts).where(
+        sql`${accounts.number} IN ('1032','1033','1071','1081','1082','1083')`
+      );
+      const personalBankAccIds = new Set(personalBankAccounts.map(a => a.id));
+
+      type PayrollKey = string; // `${empCode}-${year}-${month}`
+      const grouped: Map<PayrollKey, {
+        empCode: string; year: number; month: number;
+        grossFromSalaryAcc: number; netFromBankAcc: number;
+        entryIds: number[];
+      }> = new Map();
+
+      for (const entry of lohnEntries) {
+        const { empCode, month, year } = parsePayrollDesc(entry.description ?? "");
+        if (!empCode || !month || !year) continue;
+
+        const key: PayrollKey = `${empCode}-${year}-${month}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, { empCode, year, month, grossFromSalaryAcc: 0, netFromBankAcc: 0, entryIds: [] });
+        }
+        const g = grouped.get(key)!;
+        g.entryIds.push(entry.id);
+
+        // Get lines for this entry
+        const lines = await db.select({
+          line: journalLines,
+        }).from(journalLines).where(eq(journalLines.entryId, entry.id));
+
+        for (const { line } of lines) {
+          const amt = parseFloat(line.amount as string);
+          if (line.side === "debit" && salaryAccIds.has(line.accountId)) {
+            g.grossFromSalaryAcc += amt;
+          }
+          if (line.side === "credit" && personalBankAccIds.has(line.accountId)) {
+            g.netFromBankAcc += amt;
+          }
+        }
+      }
+
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      for (const g of Array.from(grouped.values())) {
+        // Find matching employee
+        const emp = emps.find(e => e.code?.toLowerCase() === g.empCode);
+        if (!emp) { skipped++; continue; }
+
+        // Determine gross: prefer salary account debit, fall back to net (net = gross if no deductions recorded)
+        const gross = g.grossFromSalaryAcc > 0 ? g.grossFromSalaryAcc : g.netFromBankAcc;
+        if (gross <= 0) { skipped++; continue; }
+
+        // Check if payroll entry already exists for this employee/year/month
+        const existing = await db.select().from(payrollEntries).where(
+          and(
+            eq(payrollEntries.employeeId, emp.id),
+            eq(payrollEntries.year, g.year),
+            eq(payrollEntries.month, g.month)
+          )
+        ).limit(1);
+
+        const grossStr = gross.toFixed(2);
+        // Net: if we have salary account debit (gross), net = netFromBankAcc; else net = gross
+        const net = g.grossFromSalaryAcc > 0 && g.netFromBankAcc > 0 ? g.netFromBankAcc : gross;
+        const netStr = net.toFixed(2);
+
+        if (existing.length > 0) {
+          // Only update if status is draft
+          if (existing[0].status === "draft") {
+            await db.update(payrollEntries).set({
+              grossSalary: grossStr,
+              netSalary: netStr,
+              totalEmployerCost: grossStr,
+            }).where(eq(payrollEntries.id, existing[0].id));
+            updated++;
+          } else {
+            skipped++;
+          }
+        } else {
+          await db.insert(payrollEntries).values({
+            employeeId: emp.id,
+            year: g.year,
+            month: g.month,
+            grossSalary: grossStr,
+            ahvEmployee: "0",
+            ahvEmployer: "0",
+            bvgEmployee: "0",
+            bvgEmployer: "0",
+            ktgUvgEmployee: "0",
+            ktgUvgEmployer: "0",
+            netSalary: netStr,
+            totalEmployerCost: grossStr,
+            status: "approved",
+            notes: `Aus Journal importiert (${g.entryIds.length} Buchung${g.entryIds.length !== 1 ? "en" : ""})`,
+          });
+          created++;
+        }
+      }
+
+      return { created, updated, skipped, total: grouped.size };
+    }),
+
   approve: protectedProcedure
     .input(z.object({ payrollId: z.number() }))
     .mutation(async ({ input, ctx }) => {

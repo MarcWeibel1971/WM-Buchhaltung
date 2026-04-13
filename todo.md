@@ -192,3 +192,6 @@
 ## Neue Features (Benutzer-Feedback)
 - [x] Feature: Neue Buchung – Auswahl zwischen Einzelbuchung und Sammelbuchung
 - [x] Feature: Rechnungsvorschau bei gematchten Bankimport-Transaktionen (Dokumente-Matching)
+
+## Bugfix: Journal Löschen/Rückgängig
+- [x] Journal: Buchungen löschen und rükgängig machen (Delete/Revert-Buttons) reparieren

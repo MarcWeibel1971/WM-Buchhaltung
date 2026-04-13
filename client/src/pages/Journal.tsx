@@ -2,7 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ export default function Journal() {
   const [editEntry, setEditEntry] = useState<any>(null);
   const [showCreateDialog, setShowCreateDialog] = useState<false | "single" | "collective">(false);
   const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
   const limit = 20;
 
   const { fiscalYear } = useFiscalYear();
@@ -70,6 +71,14 @@ export default function Journal() {
   });
   const rejectMutation = trpc.journal.reject.useMutation({
     onSuccess: () => { toast.success("Buchung abgelehnt"); utils.journal.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMutation = trpc.journal.delete.useMutation({
+    onSuccess: () => { toast.success("Buchung gelöscht"); utils.journal.list.invalidate(); utils.reports.dashboard.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const revertMutation = trpc.journal.revert.useMutation({
+    onSuccess: () => { toast.success("Buchung zurück auf Ausstehend gesetzt"); utils.journal.list.invalidate(); utils.reports.dashboard.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
 
@@ -184,18 +193,20 @@ export default function Journal() {
                     <td><SourceBadge source={entry.source ?? "manual"} /></td>
                     <td><StatusBadge status={entry.status} /></td>
                     <td className="text-right">
-                      {entry.status === "pending" && (
-                        <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                        {entry.status === "pending" && (<>
                           <Button
                             size="sm" variant="ghost"
                             className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                            title="Genehmigen"
                             onClick={() => approveMutation.mutate({ entryId: entry.id })}
                           >
                             <Check className="h-4 w-4" />
                           </Button>
                           <Button
                             size="sm" variant="ghost"
-                            className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
+                            className="h-7 w-7 p-0 text-orange-500 hover:text-orange-600 hover:bg-orange-50"
+                            title="Ablehnen"
                             onClick={() => rejectMutation.mutate({ entryId: entry.id })}
                           >
                             <X className="h-4 w-4" />
@@ -203,12 +214,41 @@ export default function Journal() {
                           <Button
                             size="sm" variant="ghost"
                             className="h-7 w-7 p-0 text-muted-foreground"
+                            title="Bearbeiten"
                             onClick={() => setEditEntry(entry)}
                           >
                             <Edit2 className="h-4 w-4" />
                           </Button>
-                        </div>
-                      )}
+                        </>)}
+                        {entry.status === "approved" && (
+                          <Button
+                            size="sm" variant="ghost"
+                            className="h-7 w-7 p-0 text-amber-500 hover:text-amber-600 hover:bg-amber-50"
+                            title="Zurück auf Ausstehend setzen"
+                            onClick={() => setConfirmDialog({
+                              open: true,
+                              title: "Buchung rücksetzen",
+                              message: `Buchung "${entry.description}" zurück auf Ausstehend setzen?`,
+                              onConfirm: () => revertMutation.mutate({ entryId: entry.id }),
+                            })}
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Button
+                          size="sm" variant="ghost"
+                          className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
+                          title="Buchung löschen"
+                          onClick={() => setConfirmDialog({
+                            open: true,
+                            title: "Buchung löschen",
+                            message: `Buchung "${entry.description}" wirklich löschen? Verknüpfte Bankimport-Transaktionen werden auf Ausstehend zurückgesetzt.`,
+                            onConfirm: () => deleteMutation.mutate({ entryId: entry.id }),
+                          })}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                   {/* Expanded detail row */}
@@ -304,6 +344,30 @@ export default function Journal() {
         open={detailEntryId !== null}
         onOpenChange={(open) => { if (!open) setDetailEntryId(null); }}
       />
+
+      {/* Bestätigungs-Dialog */}
+      {confirmDialog && (
+        <Dialog open={confirmDialog.open} onOpenChange={(open) => { if (!open) setConfirmDialog(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>{confirmDialog.title}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">{confirmDialog.message}</p>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setConfirmDialog(null)}>Abbrechen</Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  confirmDialog.onConfirm();
+                  setConfirmDialog(null);
+                }}
+              >
+                Bestätigen
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

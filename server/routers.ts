@@ -189,6 +189,40 @@ const journalRouter = router({
       if (input.lines) await updateJournalEntryLines(input.entryId, input.lines);
       return { success: true };
     }),
+  // Delete a journal entry (and revert linked bank/CC transactions)
+  delete: protectedProcedure
+    .input(z.object({ entryId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Revert any linked bank transactions back to pending
+      const linkedTxs = await db.select().from(bankTransactions)
+        .where(eq(bankTransactions.journalEntryId, input.entryId));
+      for (const tx of linkedTxs) {
+        await revertBankTransaction(tx.id);
+      }
+      // Revert any linked CC statements back to pending
+      const linkedStmts = await db.select().from(creditCardStatements)
+        .where(eq(creditCardStatements.journalEntryId, input.entryId));
+      for (const stmt of linkedStmts) {
+        await revertCcStatement(stmt.id);
+      }
+      await deleteJournalEntry(input.entryId);
+      return { success: true };
+    }),
+  // Revert an approved journal entry back to pending (keep the entry, just change status)
+  revert: protectedProcedure
+    .input(z.object({ entryId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await db.update(journalEntries)
+        .set({ status: "pending", approvedBy: null, approvedAt: null })
+        .where(eq(journalEntries.id, input.entryId));
+      return { success: true };
+    }),
 });
 
 // ─── Bank Import Router ───────────────────────────────────────────────────────

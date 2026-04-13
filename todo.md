@@ -295,3 +295,9 @@
 - [x] Frontend: Settings Tab "Eröffnungssalden" mit Aktiven/Passiven-Tabellen
 - [x] Frontend: Live-Anzeige Aktiven/Passiven-Summen und Differenz-Warnung
 - [x] Frontend: Speichern-Button deaktiviert wenn Aktiven ≠ Passiven
+
+## Fix: Buchung-Bearbeiten-Dialog + Kontoauszug-Layout
+
+- [x] Buchung-Bearbeiten-Dialog: Betrag-Synchronisation Soll⇔Haben (bei 2-Zeilen-Buchung: Änderung in einem Feld übernimmt Wert ins andere)
+- [x] Buchung-Bearbeiten-Dialog: Konten-Tauschen-Button ⇄ (tauscht Soll⇔Haben bei allen Zeilen)
+- [x] Kontoauszug-Seite: table-layout fixed mit colgroup, Buchungstext truncate+title, Datum+Beleg-Nr. zentriert

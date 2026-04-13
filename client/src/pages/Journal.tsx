@@ -394,6 +394,33 @@ function EditEntryDialog({ entry, accounts, onClose, onSaved }: {
   const creditTotal = lines.filter(l => l.side === "credit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
   const balanced = Math.abs(debitTotal - creditTotal) < 0.01;
 
+  // For simple 2-line bookings: sync amount between debit and credit
+  const isSimple = lines.length === 2;
+
+  const handleAmountChange = (i: number, val: string) => {
+    if (isSimple) {
+      // Sync the other line's amount
+      const otherIdx = i === 0 ? 1 : 0;
+      const newLines = [...lines];
+      newLines[i] = { ...lines[i], amount: val };
+      newLines[otherIdx] = { ...lines[otherIdx], amount: val };
+      setLines(newLines);
+    } else {
+      const newLines = [...lines];
+      newLines[i] = { ...lines[i], amount: val };
+      setLines(newLines);
+    }
+  };
+
+  const handleSwapAccounts = () => {
+    if (lines.length < 2) return;
+    const newLines = lines.map(l => ({
+      ...l,
+      side: l.side === "debit" ? "credit" as const : "debit" as const,
+    }));
+    setLines(newLines);
+  };
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="w-[min(95vw,48rem)] max-w-none">
@@ -433,18 +460,28 @@ function EditEntryDialog({ entry, accounts, onClose, onSaved }: {
                 <Input
                   className="w-32 font-mono text-right"
                   value={line.amount}
-                  onChange={e => {
-                    const newLines = [...lines]; newLines[i] = { ...line, amount: e.target.value }; setLines(newLines);
-                  }}
+                  onChange={e => handleAmountChange(i, e.target.value)}
                 />
               </div>
             ))}
           </div>
-          {!balanced && (
-            <p className="text-xs text-red-500">
-              Soll ({debitTotal.toFixed(2)}) ≠ Haben ({creditTotal.toFixed(2)})
-            </p>
-          )}
+          {/* Konten tauschen + Balance-Anzeige */}
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSwapAccounts}
+              className="gap-2 text-xs"
+            >
+              ⇄ Konten tauschen
+            </Button>
+            {!balanced && (
+              <p className="text-xs text-red-500">
+                Soll ({debitTotal.toFixed(2)}) ≠ Haben ({creditTotal.toFixed(2)})
+              </p>
+            )}
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Abbrechen</Button>

@@ -150,21 +150,29 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
       {/* Transaction table */}
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden" ref={printRef}>
         <div className="overflow-x-auto">
-          <table className="accounting-table">
+          <table className="accounting-table" style={{ tableLayout: "fixed", width: "100%" }}>
+            <colgroup>
+              <col style={{ width: "8rem" }} />{/* Datum */}
+              <col style={{ width: "auto" }} />{/* Buchungstext – flexibel */}
+              <col style={{ width: "7rem" }} />{/* Beleg-Nr. */}
+              <col style={{ width: "9rem" }} />{/* Soll CHF */}
+              <col style={{ width: "9rem" }} />{/* Haben CHF */}
+              <col style={{ width: "9rem" }} />{/* Saldo CHF */}
+            </colgroup>
             <thead>
               <tr>
-                <th className="w-24">Datum</th>
+                <th className="text-center">Datum</th>
                 <th>Buchungstext</th>
-                <th className="w-24">Beleg-Nr.</th>
-                <th className="text-right w-28">Soll CHF</th>
-                <th className="text-right w-28">Haben CHF</th>
-                <th className="text-right w-32">Saldo CHF</th>
+                <th className="text-center">Beleg-Nr.</th>
+                <th className="text-right">Soll CHF</th>
+                <th className="text-right">Haben CHF</th>
+                <th className="text-right">Saldo CHF</th>
               </tr>
             </thead>
             <tbody>
               {/* Opening balance row */}
               <tr className="bg-muted/30">
-                <td className="font-mono text-xs">01.01.{fiscalYear}</td>
+                <td className="font-mono text-xs text-center">01.01.{fiscalYear}</td>
                 <td className="text-sm font-medium italic">Eröffnungssaldo</td>
                 <td></td>
                 <td></td>
@@ -181,9 +189,9 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
                 </tr>
               ) : linesWithBalance.map((item: any, idx: number) => (
                 <tr key={idx} className="cursor-pointer hover:bg-muted/20" onClick={() => setDetailEntryId(item.entry.id)}>
-                  <td className="font-mono text-xs">{item.entry.bookingDate ? new Date(item.entry.bookingDate + 'T00:00:00').toLocaleDateString('de-CH') : '–'}</td>
-                  <td className="text-sm">{item.entry.description}</td>
-                  <td className="font-mono text-xs text-muted-foreground">{item.entry.id}</td>
+                  <td className="font-mono text-xs text-center">{item.entry.bookingDate ? new Date(item.entry.bookingDate + 'T00:00:00').toLocaleDateString('de-CH') : '–'}</td>
+                  <td className="text-sm truncate" title={item.entry.description}>{item.entry.description}</td>
+                  <td className="font-mono text-xs text-muted-foreground text-center">{item.entry.id}</td>
                   <td className="text-right font-mono text-sm">
                     {item.line.side === "debit" ? formatCHF(parseFloat(item.line.amount)) : ""}
                   </td>

@@ -235,7 +235,42 @@ const bankImportRouter = router({
 
   getTransactionsByStatus: publicProcedure
     .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional() }))
-    .query(({ input }) => getBankTransactionsByStatus(input.status, input.bankAccountId)),
+    .query(async ({ input }) => {
+      const txs = await getBankTransactionsByStatus(input.status, input.bankAccountId);
+      // For transfer transactions, enrich with partner bank account name and accounting account IDs
+      const db = await getDb();
+      if (!db) return txs;
+      const transferTxs = txs.filter(t => t.transferPartnerId);
+      if (transferTxs.length === 0) return txs;
+      const partnerIds = transferTxs.map(t => t.transferPartnerId!);
+      const partners = await db.select({ id: bankTransactions.id, bankAccountId: bankTransactions.bankAccountId })
+        .from(bankTransactions).where(inArray(bankTransactions.id, partnerIds));
+      // Get all bank accounts involved (own + partner)
+      const allBaIds = Array.from(new Set([
+        ...transferTxs.map(t => t.bankAccountId),
+        ...partners.map(p => p.bankAccountId),
+      ]));
+      const bas = await db.select({ id: bankAccounts.id, name: bankAccounts.name, accountId: bankAccounts.accountId })
+        .from(bankAccounts).where(inArray(bankAccounts.id, allBaIds));
+      const partnerMap = new Map(partners.map(p => [p.id, bas.find(b => b.id === p.bankAccountId)]));
+      const ownBaMap = new Map(bas.map(b => [b.id, b]));
+      return txs.map(t => {
+        if (!t.isTransfer || !t.transferPartnerId) return { ...t, transferPartnerBankName: null };
+        const partnerBa = partnerMap.get(t.transferPartnerId);
+        const ownBa = ownBaMap.get(t.bankAccountId);
+        const amtA = parseFloat(t.amount as string);
+        // Determine debit/credit based on sign
+        const debitAccountId = amtA >= 0 ? ownBa?.accountId : partnerBa?.accountId;
+        const creditAccountId = amtA < 0 ? ownBa?.accountId : partnerBa?.accountId;
+        return {
+          ...t,
+          transferPartnerBankName: partnerBa?.name ?? null,
+          // Override suggested accounts for transfers
+          suggestedDebitAccountId: debitAccountId ?? t.suggestedDebitAccountId,
+          suggestedCreditAccountId: creditAccountId ?? t.suggestedCreditAccountId,
+        };
+      });
+    }),
 
   importTransactions: protectedProcedure
     .input(z.object({

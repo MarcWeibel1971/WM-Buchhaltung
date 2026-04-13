@@ -519,7 +519,11 @@ export default function BankImport() {
                       <div className="truncate" title={tx.counterparty ?? ""}>
                         {tx.counterparty ?? "–"}
                         {isCC && <span className="ml-1 text-xs text-orange-600 font-medium">(KK)</span>}
-                        {isTransfer && <span className="ml-1 text-xs text-blue-600 font-medium">(Übertrag)</span>}
+                        {isTransfer && (
+                          <span className="ml-1 text-xs text-blue-600 font-medium">
+                            (Übertrag{(tx as any).transferPartnerBankName ? `: ${(tx as any).transferPartnerBankName}` : ""})
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-muted-foreground">{partnerLabel}</div>
                     </td>

@@ -1,7 +1,8 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { Plus, Check, FileText, Calculator } from "lucide-react";
+import { Plus, Check, FileText, Calculator, Download } from "lucide-react";
+import { jsPDF } from "jspdf";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -212,9 +213,47 @@ function CreateVatDialog({ year, onClose, onSaved }: {
 }
 
 function VatDetailDialog({ period, onClose }: { period: any; onClose: () => void }) {
+  const { data: company } = trpc.settings.getCompanySettings.useQuery();
   const taxDue = parseFloat(period.vatDue81||"0") + parseFloat(period.vatDue26||"0") + parseFloat(period.vatDue38||"0");
   const inputTax = parseFloat(period.inputTax||"0");
   const netTax = taxDue - inputTax;
+
+  const exportVatPdf = () => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    let y = 20;
+    const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+    const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    const vatNr = company?.vatNumber ? `MWST-Nr.: ${company.vatNumber}` : '';
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+    doc.text(companyName, pageW / 2, y, { align: 'center' }); y += 6;
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(100,100,100);
+    if (companyAddress) { doc.text(companyAddress, pageW / 2, y, { align: 'center' }); y += 4; }
+    if (vatNr) { doc.text(vatNr, pageW / 2, y, { align: 'center' }); y += 4; }
+    doc.setTextColor(0,0,0); y += 4;
+    doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+    doc.text(`MWST-ABRECHNUNG ${period.period} ${period.year}`, pageW / 2, y, { align: 'center' }); y += 10;
+    const lines: Array<[string, string, boolean]> = [
+      [`Umsatz 8.1%`, `CHF ${formatCHF(period.turnover81||'0')}`, false],
+      [`MWST 8.1%`, `CHF ${formatCHF(period.vatDue81||'0')}`, false],
+      [`MWST 2.6%`, `CHF ${formatCHF(period.vatDue26||'0')}`, false],
+      [`MWST 3.8%`, `CHF ${formatCHF(period.vatDue38||'0')}`, false],
+      [`Total MWST geschuldet`, `CHF ${formatCHF(taxDue)}`, true],
+      [`Vorsteuer`, `CHF ${formatCHF(inputTax)}`, false],
+      [netTax > 0 ? 'Zahllast' : 'Guthaben', `CHF ${formatCHF(Math.abs(netTax))}`, true],
+    ];
+    doc.setFontSize(9);
+    lines.forEach(([label, value, bold]) => {
+      if (bold) { doc.setFont('helvetica','bold'); doc.setFillColor(240,240,240); doc.rect(14, y-4, pageW-28, 7, 'F'); }
+      else doc.setFont('helvetica','normal');
+      doc.text(label, 15, y);
+      doc.text(value, pageW-15, y, { align: 'right' });
+      y += 6;
+    });
+    y += 6; doc.setFontSize(8); doc.setTextColor(150,150,150);
+    doc.text(`Erstellt am ${new Date().toLocaleDateString('de-CH')}`, pageW/2, y, { align: 'center' });
+    doc.save(`MWST_${period.period}_${period.year}.pdf`);
+  };
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -258,6 +297,9 @@ function VatDetailDialog({ period, onClose }: { period: any; onClose: () => void
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Schliessen</Button>
+          <Button variant="default" className="gap-2" onClick={exportVatPdf}>
+            <Download className="h-4 w-4" /> PDF Export
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

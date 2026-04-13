@@ -231,3 +231,21 @@
 - [x] Frontend: Versicherungsparameter (AHV, BVG, UVG, KTG, FAK) mit Beitragssätzen
 - [x] Frontend: Buchungsregeln-Übersicht mit Bearbeiten/Löschen
 - [x] Navigation: "Einstellungen" in Layout.tsx Sidebar hinzugefügt
+
+## Verbesserungen (Runde 2)
+
+### Mitarbeiter-Lohnkonto aus Kontenplan
+- [x] Backend: getEmployees Endpunkt mit Konto-Anreicherung (salaryAccountId, grossSalaryAccountId)
+- [x] Frontend: Settings/Mitarbeiter – Kontenplan-Dropdown für Lohnkonto (Netto) und Bruttolohnkonto
+- [x] Frontend: Kontenauswahl mit Kontonummer + Name
+
+### Lohnbuchhaltung mit Versicherungsparametern aus DB
+- [x] Backend: Versicherungsparameter aus insurance_settings via settings.getInsuranceSettings
+- [x] Frontend: Lohnberechnung mit dynamischen Sätzen (AHV, BVG, KTG/UVG) aus DB, Fallback auf Schweizer Richtwerte
+- [x] Frontend: Bruttolohn-Änderung löst automatische Neuberechnung aus
+
+### Firmendaten auf Ausdrucken
+- [x] Frontend: Lohnausweis PDF mit Firmenname, Adresse, UID (jsPDF, client-side)
+- [x] Frontend: Bilanz-PDF-Export mit Firmenname, Adresse, UID, MWST-Nr.
+- [x] Frontend: Erfolgsrechnung-PDF-Export mit Firmendaten
+- [x] Frontend: MWST-Abrechnung Detail-Dialog mit PDF-Export-Button und Firmendaten

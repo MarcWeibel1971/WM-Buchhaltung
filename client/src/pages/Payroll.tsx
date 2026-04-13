@@ -7,6 +7,113 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { jsPDF } from "jspdf";
+
+function generateLohnausweis(p: any, emp: any, company?: any) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  // Company header
+  const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+  const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const companyUid = company?.uid ? `UID: ${company.uid}` : '';
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(companyName, 15, y);
+  y += 6;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 100, 100);
+  if (companyAddress) { doc.text(companyAddress, 15, y); y += 4; }
+  if (companyUid) { doc.text(companyUid, 15, y); y += 4; }
+  doc.setTextColor(0, 0, 0);
+  y += 4;
+
+  // Title
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  doc.text('LOHNAUSWEIS', pageW / 2, y, { align: 'center' });
+  y += 6;
+  const monthName = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'][p.month - 1];
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${monthName} ${p.year}`, pageW / 2, y, { align: 'center' });
+  y += 10;
+
+  // Employee info
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Arbeitnehmer', 15, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${emp?.firstName ?? ''} ${emp?.lastName ?? ''}`, 60, y);
+  y += 5;
+  if (emp?.ahvNumber) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('AHV-Nummer', 15, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(emp.ahvNumber, 60, y);
+    y += 5;
+  }
+  y += 5;
+
+  // Salary table
+  const tableY = y;
+  doc.setFillColor(240, 240, 240);
+  doc.rect(14, tableY - 4, pageW - 28, 7, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.text('Position', 15, tableY);
+  doc.text('CHF', pageW - 15, tableY, { align: 'right' });
+  y += 7;
+
+  const rows: Array<[string, string]> = [
+    ['Bruttolohn', formatCHF(p.grossSalary)],
+    ['– AHV Arbeitnehmer', formatCHF(p.ahvEmployee)],
+    ['– BVG Arbeitnehmer', formatCHF(p.bvgEmployee)],
+  ];
+  if (parseFloat(p.ktgUvgEmployee ?? '0') > 0) rows.push(['– KTG/UVG Arbeitnehmer', formatCHF(p.ktgUvgEmployee)]);
+
+  doc.setFont('helvetica', 'normal');
+  rows.forEach(([label, amount]) => {
+    doc.text(label, 15, y);
+    doc.text(amount, pageW - 15, y, { align: 'right' });
+    y += 5;
+  });
+
+  // Net salary
+  y += 2;
+  doc.setFillColor(220, 240, 220);
+  doc.rect(14, y - 4, pageW - 28, 7, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.text('Nettolohn', 15, y);
+  doc.text(formatCHF(p.netSalary), pageW - 15, y, { align: 'right' });
+  y += 10;
+
+  // Employer costs
+  doc.setFont('helvetica', 'bold');
+  doc.text('Arbeitgeberkosten (informativ)', 15, y);
+  y += 5;
+  doc.setFont('helvetica', 'normal');
+  const empRows: Array<[string, string]> = [
+    ['AHV Arbeitgeber', formatCHF(p.ahvEmployer)],
+    ['BVG Arbeitgeber', formatCHF(p.bvgEmployer)],
+  ];
+  if (parseFloat(p.ktgUvgEmployer ?? '0') > 0) empRows.push(['KTG/UVG Arbeitgeber', formatCHF(p.ktgUvgEmployer)]);
+  empRows.forEach(([label, amount]) => {
+    doc.text(label, 15, y);
+    doc.text(amount, pageW - 15, y, { align: 'right' });
+    y += 5;
+  });
+
+  // Footer
+  y += 10;
+  doc.setFontSize(8);
+  doc.setTextColor(150, 150, 150);
+  doc.text(`Erstellt am ${new Date().toLocaleDateString('de-CH')}`, pageW / 2, y, { align: 'center' });
+
+  doc.save(`Lohnausweis_${emp?.code ?? 'MA'}_${p.year}_${String(p.month).padStart(2,'0')}.pdf`);
+}
 
 function formatCHF(val: string | number) {
   const n = typeof val === "string" ? parseFloat(val) : val;
@@ -21,6 +128,8 @@ export default function Payroll() {
 
   const { data: employees } = trpc.payroll.getEmployees.useQuery();
   const { data: payrollList, refetch } = trpc.payroll.list.useQuery({ year });
+  const { data: insuranceSettings } = trpc.settings.getInsuranceSettings.useQuery();
+  const { data: company } = trpc.settings.getCompanySettings.useQuery();
   const utils = trpc.useUtils();
 
   const approveMutation = trpc.payroll.approve.useMutation({
@@ -114,7 +223,11 @@ export default function Payroll() {
                       </Button>
                     )}
                     {p.status === "approved" && (
-                      <Button size="sm" variant="ghost" className="h-7 text-xs gap-1">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                        onClick={() => {
+                          const emp = employees?.find(e => e.id === p.employeeId);
+                          generateLohnausweis(p, emp, company);
+                        }}>
                         <FileText className="h-3 w-3" /> Lohnausweis
                       </Button>
                     )}
@@ -129,6 +242,7 @@ export default function Payroll() {
       {showCreate && (
         <CreatePayrollDialog
           employees={employees ?? []}
+          insuranceSettings={insuranceSettings ?? []}
           onClose={() => setShowCreate(false)}
           onSaved={() => { setShowCreate(false); refetch(); }}
         />
@@ -137,8 +251,8 @@ export default function Payroll() {
   );
 }
 
-function CreatePayrollDialog({ employees, onClose, onSaved }: {
-  employees: any[]; onClose: () => void; onSaved: () => void;
+function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }: {
+  employees: any[]; insuranceSettings: any[]; onClose: () => void; onSaved: () => void;
 }) {
   const [employeeId, setEmployeeId] = useState<number>(0);
   const [year, setYear] = useState(new Date().getFullYear());
@@ -153,19 +267,33 @@ function CreatePayrollDialog({ employees, onClose, onSaved }: {
 
   const selectedEmp = employees.find(e => e.id === employeeId);
 
-  // Auto-fill from employee data
+  // Auto-fill from employee data using DB insurance settings
   const fillFromEmployee = (emp: any) => {
     if (!emp) return;
     const gross = 10000; // Default, user will adjust
     setGrossSalary(gross.toFixed(2));
-    // AHV: ~5.3% each side
-    const ahv = (gross * 0.053).toFixed(2);
-    setAhvEmployee(ahv);
-    setAhvEmployer(ahv);
-    // BVG: rough estimate
-    const bvg = (gross * 0.08).toFixed(2);
-    setBvgEmployee(bvg);
-    setBvgEmployer(bvg);
+    recalcInsurance(gross, emp);
+  };
+
+  const recalcInsurance = (grossVal: number, emp?: any) => {
+    // AHV from DB or fallback 5.3%
+    const ahvSetting = insuranceSettings.find((s: any) => s.insuranceType === 'ahv' && s.isActive);
+    const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate ?? '0.053') : 0.053;
+    const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate ?? '0.053') : 0.053;
+    setAhvEmployee((grossVal * ahvEmpRate).toFixed(2));
+    setAhvEmployer((grossVal * ahvEmprRate).toFixed(2));
+    // BVG from DB or fallback 8%
+    const bvgSetting = insuranceSettings.find((s: any) => s.insuranceType === 'bvg' && s.isActive);
+    const bvgEmpRate = bvgSetting ? parseFloat(bvgSetting.employeeRate ?? '0.08') : 0.08;
+    const bvgEmprRate = bvgSetting ? parseFloat(bvgSetting.employerRate ?? '0.08') : 0.08;
+    setBvgEmployee((grossVal * bvgEmpRate).toFixed(2));
+    setBvgEmployer((grossVal * bvgEmprRate).toFixed(2));
+    // KTG from DB or fallback 0
+    const ktgSetting = insuranceSettings.find((s: any) => (s.insuranceType === 'ktg' || s.insuranceType === 'uvg') && s.isActive);
+    const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate ?? '0') : 0;
+    const ktgEmprRate = ktgSetting ? parseFloat(ktgSetting.employerRate ?? '0') : 0;
+    setKtgEmployee((grossVal * ktgEmpRate).toFixed(2));
+    setKtgEmployer((grossVal * ktgEmprRate).toFixed(2));
   };
 
   const createMutation = trpc.payroll.create.useMutation({
@@ -220,7 +348,11 @@ function CreatePayrollDialog({ employees, onClose, onSaved }: {
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Bruttolohn CHF</label>
-              <Input className="font-mono text-right" value={grossSalary} onChange={e => setGrossSalary(e.target.value)} placeholder="0.00" />
+              <Input className="font-mono text-right" value={grossSalary} onChange={e => {
+                setGrossSalary(e.target.value);
+                const g = parseFloat(e.target.value);
+                if (!isNaN(g) && g > 0) recalcInsurance(g);
+              }} placeholder="0.00" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">AHV Arbeitnehmer CHF</label>

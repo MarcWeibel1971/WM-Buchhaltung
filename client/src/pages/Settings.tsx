@@ -408,6 +408,11 @@ function BankTab() {
 
 function EmployeesTab() {
   const { data: emps, isLoading, refetch } = trpc.settings.getEmployees.useQuery();
+  const { data: allAccounts } = trpc.accounts.list.useQuery();
+  // Only salary-relevant accounts (4xxx Personalaufwand, 2xxx Verbindlichkeiten)
+  const salaryAccounts = (allAccounts ?? []).filter(a =>
+    a.number.startsWith('4') || a.number.startsWith('2') || a.number.startsWith('1')
+  );
   const upsert = trpc.settings.upsertEmployee.useMutation({
     onSuccess: () => { toast.success("Gespeichert"); refetch(); setDialogOpen(false); },
     onError: (e) => toast.error(e.message),
@@ -433,6 +438,8 @@ function EmployeesTab() {
       address: e.address ?? "",
       dateOfBirth: e.dateOfBirth ?? "",
       employmentStart: e.employmentStart ?? "",
+      salaryAccountId: e.salaryAccountId ? String(e.salaryAccountId) : "",
+      grossSalaryAccountId: e.grossSalaryAccountId ? String(e.grossSalaryAccountId) : "",
     });
     setDialogOpen(true);
   };
@@ -448,6 +455,8 @@ function EmployeesTab() {
       address: editEmp.address || undefined,
       dateOfBirth: editEmp.dateOfBirth || undefined,
       employmentStart: editEmp.employmentStart || undefined,
+      salaryAccountId: (editEmp.salaryAccountId && editEmp.salaryAccountId !== '0') ? parseInt(editEmp.salaryAccountId) : undefined,
+      grossSalaryAccountId: (editEmp.grossSalaryAccountId && editEmp.grossSalaryAccountId !== '0') ? parseInt(editEmp.grossSalaryAccountId) : undefined,
     });
   };
 
@@ -549,6 +558,41 @@ function EmployeesTab() {
               <div className="col-span-2">
                 <Label>Adresse</Label>
                 <Textarea value={editEmp.address} onChange={e => setEditEmp(f => ({ ...f!, address: e.target.value }))} className="mt-1" rows={2} />
+              </div>
+              <div className="col-span-2 border-t pt-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lohnkonten</p>
+              </div>
+              <div className="col-span-2">
+                <Label>Nettolohn-Konto (Haben bei Verbuchung)</Label>
+                <Select value={editEmp.salaryAccountId || "0"} onValueChange={v => setEditEmp(f => ({ ...f!, salaryAccountId: v }))}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Konto wählen..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">— kein Konto —</SelectItem>
+                    {salaryAccounts.map(a => (
+                      <SelectItem key={a.id} value={String(a.id)}>
+                        <span className="font-mono text-xs">{a.number}</span> {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="col-span-2">
+                <Label>Bruttolohn-Konto (Soll bei Verbuchung)</Label>
+                <Select value={editEmp.grossSalaryAccountId || "0"} onValueChange={v => setEditEmp(f => ({ ...f!, grossSalaryAccountId: v }))}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Konto wählen..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">— kein Konto —</SelectItem>
+                    {salaryAccounts.map(a => (
+                      <SelectItem key={a.id} value={String(a.id)}>
+                        <span className="font-mono text-xs">{a.number}</span> {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           )}

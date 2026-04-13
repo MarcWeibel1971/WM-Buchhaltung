@@ -6,17 +6,38 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { jsPDF } from "jspdf";
 
-function exportToPdf(title: string, year: number, rows: Array<{label: string; amount: number; indent?: number; bold?: boolean}>) {
+function exportToPdf(title: string, year: number, rows: Array<{label: string; amount: number; indent?: number; bold?: boolean}>, company?: { companyName?: string | null; legalForm?: string | null; street?: string | null; zipCode?: string | null; city?: string | null; uid?: string | null; vatNumber?: string | null }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   let y = 20;
   
   // Header
+  const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+  const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const companyUid = company?.uid ? `UID: ${company.uid}` : '';
+  const companyVat = company?.vatNumber ? `MWST-Nr.: ${company.vatNumber}` : '';
+  
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('WM Weibel Mueller AG', pageW / 2, y, { align: 'center' });
-  y += 8;
+  doc.text(companyName, pageW / 2, y, { align: 'center' });
+  y += 7;
+  if (companyAddress) {
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    doc.text(companyAddress, pageW / 2, y, { align: 'center' });
+    y += 5;
+  }
+  if (companyUid || companyVat) {
+    doc.setFontSize(8);
+    const uidVatLine = [companyUid, companyVat].filter(Boolean).join('  |  ');
+    doc.text(uidVatLine, pageW / 2, y, { align: 'center' });
+    y += 5;
+  }
+  doc.setTextColor(0, 0, 0);
+  y += 3;
   doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
   doc.text(`${title} ${year}`, pageW / 2, y, { align: 'center' });
   y += 6;
   doc.setFontSize(9);
@@ -74,6 +95,7 @@ export default function Reports() {
   const { data: bsPrev } = trpc.reports.balanceSheet.useQuery({ fiscalYear: prevYear });
   const { data: is } = trpc.reports.incomeStatement.useQuery({ fiscalYear: year });
   const { data: isPrev } = trpc.reports.incomeStatement.useQuery({ fiscalYear: prevYear });
+  const { data: company } = trpc.settings.getCompanySettings.useQuery();
 
   const totalAssets = bs?.assets.reduce((s, a) => s + a.balance, 0) ?? 0;
   const totalLiabilities = bs?.liabilities.reduce((s, a) => s + a.balance, 0) ?? 0;
@@ -107,7 +129,7 @@ export default function Reports() {
               ...(bs?.equity ?? []).map(a => ({ label: `${a.account.number} ${a.account.name}`, amount: a.balance, indent: 1 })),
               { label: 'Total Passiven', amount: totalLiabilities + totalEquity, bold: true },
             ];
-            exportToPdf('Bilanz', year, rows);
+            exportToPdf('Bilanz', year, rows, company ?? undefined);
           }}>
             <Download className="h-4 w-4" /> PDF Export
           </Button>
@@ -173,7 +195,7 @@ export default function Reports() {
                     { label: '', amount: 0 },
                     { label: profit >= 0 ? 'Jahresgewinn' : 'Jahresverlust', amount: profit, bold: true },
                   ];
-                  exportToPdf('Erfolgsrechnung', year, rows);
+                  exportToPdf('Erfolgsrechnung', year, rows, company ?? undefined);
                 }}>
                   <Download className="h-3 w-3" /> PDF
                 </Button>

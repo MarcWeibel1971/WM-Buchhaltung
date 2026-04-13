@@ -9,13 +9,14 @@ import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
   getJournalEntries, getJournalEntryWithLines, createJournalEntry,
   approveJournalEntry, rejectJournalEntry, updateJournalEntryLines,
-  getBankAccounts, getPendingBankTransactions, saveBankTransaction, approveBankTransaction, updateBankTransaction, getBankTransactionsByIds,
+  getBankAccounts, getPendingBankTransactions, getBankTransactionsByStatus, saveBankTransaction, approveBankTransaction, updateBankTransaction, getBankTransactionsByIds,
   getEmployees, getPayrollEntries,
   getBalanceSheet, getIncomeStatement,
   getVatPeriods, getCreditCardStatements, getDashboardStats,
   getDb,
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
+  deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
@@ -198,6 +199,10 @@ const bankImportRouter = router({
     .input(z.object({ bankAccountId: z.number().optional() }))
     .query(({ input }) => getPendingBankTransactions(input.bankAccountId)),
 
+  getTransactionsByStatus: publicProcedure
+    .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional() }))
+    .query(({ input }) => getBankTransactionsByStatus(input.status, input.bankAccountId)),
+
   importTransactions: protectedProcedure
     .input(z.object({
       bankAccountId: z.number(),
@@ -284,11 +289,12 @@ Antworte NUR mit JSON:
 }
 
 Regeln:
-- Eingang (positiv): Kreditkonto = Ertragskonto (6xxx) oder Aktivkonto, Debitkonto = Bankkonto (1031/1032/1033)
-- Ausgang (negativ): Debitkonto = Aufwandskonto (3xxx-4xxx), Kreditkonto = Bankkonto
-- Lohn: Debit 4000/4001, Credit 1031/1032/1033
-- Miete: Debit 4100, Credit 1031
-- Zinsen: Debit 4220, Credit 1031`;
+- Eingang (positiv): Kreditkonto = Ertragskonto (6xxx) oder Aktivkonto, Debitkonto = Bankkonto (1032)
+- Ausgang (negativ): Debitkonto = Aufwandskonto (3xxx-4xxx), Kreditkonto = Bankkonto (1032)
+- Lohn: Debit 4000/4001, Credit 1032
+- Miete: Debit 4100, Credit 1032
+- Zinsen: Debit 4220, Credit 1032
+- WICHTIG: Das Bankkonto ist IMMER 1032 (LUKB mw), NICHT 1031`;
 
           const response = await invokeLLM({
             messages: [{ role: "user", content: prompt }],
@@ -402,6 +408,25 @@ Regeln:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       await db.update(bankTransactions).set({ status: "ignored" }).where(eq(bankTransactions.id, input.transactionId));
+      return { success: true };
+    }),
+
+  // ── Revert a booked transaction back to pending ──
+  unapproveTransaction: protectedProcedure
+    .input(z.object({ transactionId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+      if (tx.status !== "matched") throw new TRPCError({ code: "BAD_REQUEST", message: "Transaktion ist nicht verbucht" });
+      // Delete the linked journal entry
+      if (tx.journalEntryId) {
+        await deleteJournalEntry(tx.journalEntryId);
+      }
+      // Revert transaction to pending
+      await revertBankTransaction(input.transactionId);
       return { success: true };
     }),
 
@@ -880,6 +905,44 @@ Antwort NUR als JSON-Array, keine Erklärung:
 
       return { success: true, entryId, totalAmount: totalAmount.toFixed(2), itemCount: input.items.length };
     }),
+
+  // ── Revert a booked CC statement back to pending ──
+  unapproveStatement: protectedProcedure
+    .input(z.object({ statementId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
+      if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
+      if (stmt.status !== "approved") throw new TRPCError({ code: "BAD_REQUEST", message: "Abrechnung ist nicht verbucht" });
+      // Delete the linked journal entry
+      if (stmt.journalEntryId) {
+        await deleteJournalEntry(stmt.journalEntryId);
+      }
+      // Revert CC statement to pending
+      await revertCcStatement(input.statementId);
+      // Also revert linked bank transaction if any
+      const [linkedTx] = await db.select().from(bankTransactions).where(eq(bankTransactions.journalEntryId, stmt.journalEntryId!)).limit(1);
+      if (linkedTx) {
+        await revertBankTransaction(linkedTx.id);
+      }
+      return { success: true };
+    }),
+
+  // ── Delete a pending CC statement ──
+  deleteStatement: protectedProcedure
+    .input(z.object({ statementId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
+      if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
+      if (stmt.status === "approved") throw new TRPCError({ code: "BAD_REQUEST", message: "Verbuchte Abrechnung kann nicht gel\u00f6scht werden. Zuerst Verbuchung r\u00fcckg\u00e4ngig machen." });
+      await deleteCcStatement(input.statementId);
+      return { success: true };
+    }),
 });
 
 // ─── Payroll Router ───────────────────────────────────────────────────────────
@@ -968,7 +1031,7 @@ const payrollRouter = router({
       const ahvAcc = await getAccountByNumber("4010");
       const bvgAcc = await getAccountByNumber("4040");
       const ktgAcc = await getAccountByNumber("4025");
-      const bankAcc = await getAccountByNumber("1031"); // LUKB Kontokorrent
+      const bankAcc = await getAccountByNumber("1032"); // LUKB mw
       const kkAcc = emp.code === "mw"
         ? await getAccountByNumber("1081")
         : await getAccountByNumber("1071");

@@ -1,13 +1,12 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CheckSquare, Square, CreditCard, RefreshCw, BookOpen } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2 } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { parseStatement } from "../../../shared/bankParser";
@@ -37,6 +36,7 @@ type EditableTx = {
 export default function BankImport() {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [pendingFilter, setPendingFilter] = useState<number | undefined>(undefined);
+  const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">("pending");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const ccPdfInputRef = useRef<HTMLInputElement>(null);
@@ -63,7 +63,9 @@ export default function BankImport() {
   const [ccItems, setCcItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string }>>([]);
 
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
-  const { data: pendingTxs, refetch: refetchPending } = trpc.bankImport.getPendingTransactions.useQuery({ bankAccountId: pendingFilter });
+  const { data: transactions, refetch: refetchTxs } = trpc.bankImport.getTransactionsByStatus.useQuery(
+    { status: statusFilter, bankAccountId: pendingFilter }
+  );
   const { data: accounts } = trpc.accounts.list.useQuery();
   const { data: allDocs } = trpc.documents.list.useQuery({ limit: 500 });
 
@@ -72,7 +74,7 @@ export default function BankImport() {
   const importMutation = trpc.bankImport.importTransactions.useMutation({
     onSuccess: (data) => {
       toast.success(`${data.imported} Transaktionen importiert, ${data.duplicates} Duplikate übersprungen`);
-      refetchPending();
+      refetchTxs();
       setImporting(false);
     },
     onError: (e) => { toast.error(e.message); setImporting(false); },
@@ -82,7 +84,7 @@ export default function BankImport() {
     onSuccess: (data) => {
       const ok = data.results.filter(r => r.success).length;
       toast.success(`${ok} von ${data.results.length} Transaktionen kategorisiert`);
-      refetchPending();
+      refetchTxs();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -91,7 +93,7 @@ export default function BankImport() {
     onSuccess: (data) => {
       const ok = data.results.filter(r => r.success).length;
       toast.success(`${ok} Buchungstexte generiert`);
-      refetchPending();
+      refetchTxs();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -99,7 +101,7 @@ export default function BankImport() {
   const approveMutation = trpc.bankImport.approveTransaction.useMutation({
     onSuccess: () => {
       toast.success("Transaktion verbucht");
-      refetchPending();
+      refetchTxs();
       utils.reports.dashboard.invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -109,7 +111,7 @@ export default function BankImport() {
     onSuccess: (data) => {
       toast.success(`${data.approved} Transaktionen verbucht, ${data.failed} fehlgeschlagen`);
       setSelectedTxIds(new Set());
-      refetchPending();
+      refetchTxs();
       utils.reports.dashboard.invalidate();
     },
     onError: (e) => toast.error(e.message),
@@ -119,19 +121,59 @@ export default function BankImport() {
     onSuccess: () => {
       toast.success("Transaktion aktualisiert");
       setEditTx(null);
-      refetchPending();
+      refetchTxs();
     },
     onError: (e) => toast.error(e.message),
   });
 
   const ignoreMutation = trpc.bankImport.ignoreTransaction.useMutation({
-    onSuccess: () => { toast.success("Transaktion ignoriert"); refetchPending(); },
+    onSuccess: () => { toast.success("Transaktion ignoriert"); refetchTxs(); },
+  });
+
+  const unapproveMutation = trpc.bankImport.unapproveTransaction.useMutation({
+    onSuccess: () => {
+      toast.success("Verbuchung rückgängig gemacht – Transaktion ist wieder ausstehend");
+      refetchTxs();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   const refreshMutation = trpc.bankImport.refreshSuggestions.useMutation({
     onSuccess: (data) => {
       toast.success(data.message);
-      refetchPending();
+      refetchTxs();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const parsePdfMutation = trpc.creditCard.parsePdf.useMutation({
+    onSuccess: (data) => {
+      if (!data.items?.length) { toast.error("Keine Positionen in der Abrechnung erkannt"); return; }
+      const mappedItems = data.items.map((item: any) => {
+        let debitAccountId = "";
+        if (item.suggestedAccount) {
+          const accNum = item.suggestedAccount.match(/^(\d{4})/);
+          if (accNum) {
+            const found = accounts?.find(a => a.number === accNum[1]);
+            if (found) debitAccountId = String(found.id);
+          }
+        }
+        return { date: item.date, description: item.description, amount: item.amount, debitAccountId };
+      });
+      setCcItems(mappedItems);
+      toast.success(`${data.items.length} Positionen erkannt`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const approveWithItemsMutation = trpc.creditCard.approveWithItems.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Sammelbuchung erstellt: ${data.itemCount} Positionen, CHF ${formatCHF(data.totalAmount)}`);
+      setCcDialog(null);
+      setCcItems([]);
+      refetchTxs();
+      utils.reports.dashboard.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -160,9 +202,38 @@ export default function BankImport() {
     } catch (e: any) { toast.error(e.message); } finally { setImportingPdf(false); }
   }, [selectedBankAccountId, importMutation]);
 
-  // Determine which pending transactions need categorization
-  const pendingIds = useMemo(() => (pendingTxs ?? []).filter(tx => !tx.suggestedDebitAccountId).map(tx => tx.id), [pendingTxs]);
-  const allPendingIds = useMemo(() => (pendingTxs ?? []).map(tx => tx.id), [pendingTxs]);
+  // Credit card PDF upload and parse via dedicated LLM endpoint
+  const handleCcPdfUpload = async (file: File) => {
+    setCcParsing(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const resp = await fetch("/api/upload/document", { method: "POST", body: formData, credentials: "include" });
+      const result = await resp.json();
+      if (!resp.ok) throw new Error(result.error ?? "Upload fehlgeschlagen");
+      toast.info("Kreditkartenabrechnung wird von KI analysiert...");
+      const docUrl = result.document?.s3Url ?? result.url;
+      if (!docUrl) throw new Error("Keine URL vom Upload erhalten");
+      parsePdfMutation.mutate({ documentUrl: docUrl });
+    } catch (e: any) { toast.error(e.message); } finally { setCcParsing(false); }
+  };
+
+  // Detect if a transaction is a credit card charge (Corner Banca)
+  const isCreditCardTx = (tx: any) => {
+    const cp = (tx.counterparty ?? "").toLowerCase();
+    return cp.includes("corner") || cp.includes("banca") || cp.includes("visa") || cp.includes("mastercard") || cp.includes("kreditkarte");
+  };
+
+  // Pending-only helpers
+  const pendingTxs = useMemo(() => (transactions ?? []).filter(tx => tx.status === "pending"), [transactions]);
+  const pendingIds = useMemo(() => pendingTxs.filter(tx => !tx.suggestedDebitAccountId).map(tx => tx.id), [pendingTxs]);
+  const allPendingIds = useMemo(() => pendingTxs.map(tx => tx.id), [pendingTxs]);
+
+  // Selected transactions that are ready to approve (have both accounts, pending only)
+  const readyToApprove = useMemo(() =>
+    pendingTxs.filter(tx => selectedTxIds.has(tx.id) && tx.suggestedDebitAccountId && tx.suggestedCreditAccountId),
+    [pendingTxs, selectedTxIds]
+  );
 
   // Selection helpers
   const toggleSelect = (id: number) => {
@@ -173,10 +244,10 @@ export default function BankImport() {
     });
   };
   const toggleSelectAll = () => {
-    if (selectedTxIds.size === (pendingTxs?.length ?? 0)) {
+    if (selectedTxIds.size === pendingTxs.length) {
       setSelectedTxIds(new Set());
     } else {
-      setSelectedTxIds(new Set(pendingTxs?.map(tx => tx.id) ?? []));
+      setSelectedTxIds(new Set(pendingTxs.map(tx => tx.id)));
     }
   };
 
@@ -208,7 +279,7 @@ export default function BankImport() {
 
   // Bulk approve selected transactions
   const handleBulkApprove = () => {
-    const txsToApprove = (pendingTxs ?? []).filter(tx =>
+    const txsToApprove = pendingTxs.filter(tx =>
       selectedTxIds.has(tx.id) && tx.suggestedDebitAccountId && tx.suggestedCreditAccountId
     );
     if (!txsToApprove.length) { toast.error("Keine ausgewählten Transaktionen mit vollständigen Kontovorschlägen"); return; }
@@ -222,76 +293,8 @@ export default function BankImport() {
     });
   };
 
-  const parsePdfMutation = trpc.creditCard.parsePdf.useMutation({
-    onSuccess: (data) => {
-      if (!data.items?.length) { toast.error("Keine Positionen in der Abrechnung erkannt"); return; }
-      // Match suggested accounts to actual account IDs
-      const mappedItems = data.items.map((item: any) => {
-        let debitAccountId = "";
-        if (item.suggestedAccount) {
-          const accNum = item.suggestedAccount.match(/^(\d{4})/);
-          if (accNum) {
-            const found = accounts?.find(a => a.number === accNum[1]);
-            if (found) debitAccountId = String(found.id);
-          }
-        }
-        return { date: item.date, description: item.description, amount: item.amount, debitAccountId };
-      });
-      setCcItems(mappedItems);
-      toast.success(`${data.items.length} Positionen erkannt`);
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const approveWithItemsMutation = trpc.creditCard.approveWithItems.useMutation({
-    onSuccess: (data) => {
-      toast.success(`Sammelbuchung erstellt: ${data.itemCount} Positionen, CHF ${formatCHF(data.totalAmount)}`);
-      setCcDialog(null);
-      setCcItems([]);
-      refetchPending();
-      utils.reports.dashboard.invalidate();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  // Credit card PDF upload and parse via dedicated LLM endpoint
-  const handleCcPdfUpload = async (file: File) => {
-    setCcParsing(true);
-    try {
-      // First upload the PDF to S3
-      const formData = new FormData();
-      formData.append("file", file);
-      const resp = await fetch("/api/upload/document", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      const result = await resp.json();
-      if (!resp.ok) throw new Error(result.error ?? "Upload fehlgeschlagen");
-
-      // Then parse via dedicated credit card LLM endpoint
-      toast.info("Kreditkartenabrechnung wird von KI analysiert...");
-      const docUrl = result.document?.s3Url ?? result.url;
-      if (!docUrl) throw new Error("Keine URL vom Upload erhalten");
-      parsePdfMutation.mutate({ documentUrl: docUrl });
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setCcParsing(false);
-    }
-  };
-
-  // Detect if a transaction is a credit card charge (Corner Banca)
-  const isCreditCardTx = (tx: any) => {
-    const cp = (tx.counterparty ?? "").toLowerCase();
-    return cp.includes("corner") || cp.includes("banca") || cp.includes("visa") || cp.includes("mastercard") || cp.includes("kreditkarte");
-  };
-
-  // Selected transactions that are ready to approve (have both accounts)
-  const readyToApprove = useMemo(() =>
-    (pendingTxs ?? []).filter(tx => selectedTxIds.has(tx.id) && tx.suggestedDebitAccountId && tx.suggestedCreditAccountId),
-    [pendingTxs, selectedTxIds]
-  );
+  const isPending = statusFilter === "pending";
+  const isMatched = statusFilter === "matched";
 
   return (
     <div className="p-6 space-y-6">
@@ -343,14 +346,27 @@ export default function BankImport() {
         </p>
       </div>
 
-      {/* Pending transactions */}
+      {/* Transactions list */}
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-wrap gap-2">
           <div>
-            <h3 className="font-semibold">Ausstehende Transaktionen</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">{pendingTxs?.length ?? 0} zu verarbeiten</p>
+            <h3 className="font-semibold">
+              {statusFilter === "pending" ? "Ausstehende Transaktionen" :
+               statusFilter === "matched" ? "Verbuchte Transaktionen" : "Alle Transaktionen"}
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">{transactions?.length ?? 0} Transaktionen</p>
           </div>
           <div className="flex gap-2 flex-wrap">
+            {/* Status filter */}
+            <Select value={statusFilter} onValueChange={v => { setStatusFilter(v as any); setSelectedTxIds(new Set()); }}>
+              <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pending">Ausstehend</SelectItem>
+                <SelectItem value="matched">Verbucht</SelectItem>
+                <SelectItem value="all">Alle</SelectItem>
+              </SelectContent>
+            </Select>
+            {/* Bank account filter */}
             <Select value={String(pendingFilter ?? "all")} onValueChange={v => setPendingFilter(v === "all" ? undefined : parseInt(v))}>
               <SelectTrigger className="w-40 h-8 text-xs"><SelectValue placeholder="Alle Konten" /></SelectTrigger>
               <SelectContent>
@@ -360,7 +376,8 @@ export default function BankImport() {
                 ))}
               </SelectContent>
             </Select>
-            {pendingIds.length > 0 && (
+            {/* Pending-only actions */}
+            {isPending && pendingIds.length > 0 && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
                 disabled={categorizeMutation.isPending}
                 onClick={() => categorizeMutation.mutate({ transactionIds: pendingIds })}>
@@ -368,7 +385,7 @@ export default function BankImport() {
                 {categorizeMutation.isPending ? "KI läuft..." : `KI kategorisieren (${pendingIds.length})`}
               </Button>
             )}
-            {allPendingIds.length > 0 && (
+            {isPending && allPendingIds.length > 0 && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
                 disabled={bookingTextMutation.isPending}
                 onClick={() => bookingTextMutation.mutate({ transactionIds: allPendingIds })}>
@@ -376,7 +393,7 @@ export default function BankImport() {
                 {bookingTextMutation.isPending ? "Texte werden generiert..." : "Buchungstexte generieren"}
               </Button>
             )}
-            {allPendingIds.length > 0 && (
+            {isPending && allPendingIds.length > 0 && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
                 disabled={refreshMutation.isPending}
                 onClick={() => refreshMutation.mutate({ bankAccountId: pendingFilter })}>
@@ -384,7 +401,7 @@ export default function BankImport() {
                 {refreshMutation.isPending ? "Aktualisiere..." : "Refresh (gelernt)"}
               </Button>
             )}
-            {selectedTxIds.size > 0 && readyToApprove.length > 0 && (
+            {isPending && selectedTxIds.size > 0 && readyToApprove.length > 0 && (
               <Button size="sm" className="gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
                 disabled={bulkApproveMutation.isPending}
                 onClick={handleBulkApprove}>
@@ -399,43 +416,55 @@ export default function BankImport() {
           <table className="accounting-table">
             <thead>
               <tr>
-                <th className="w-10">
-                  <Checkbox
-                    checked={pendingTxs?.length ? selectedTxIds.size === pendingTxs.length : false}
-                    onCheckedChange={toggleSelectAll}
-                  />
-                </th>
+                {isPending && (
+                  <th className="w-10">
+                    <Checkbox
+                      checked={pendingTxs.length > 0 && selectedTxIds.size === pendingTxs.length}
+                      onCheckedChange={toggleSelectAll}
+                    />
+                  </th>
+                )}
                 <th>Datum</th>
                 <th>Buchungstext</th>
                 <th>Lieferant / Kunde</th>
-                <th>Soll-Konto (Vorschlag)</th>
-                <th>Haben-Konto (Vorschlag)</th>
+                <th>Soll-Konto</th>
+                <th>Haben-Konto</th>
                 <th className="text-right">Betrag CHF</th>
-                <th className="text-right">KI</th>
+                <th className="text-right">Status</th>
                 <th className="text-right">Aktionen</th>
               </tr>
             </thead>
             <tbody>
-              {!pendingTxs?.length ? (
+              {!transactions?.length ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-12 text-muted-foreground">
-                    <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
-                    Alle Transaktionen verarbeitet
+                  <td colSpan={isPending ? 9 : 8} className="text-center py-12 text-muted-foreground">
+                    {isPending ? (
+                      <>
+                        <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
+                        Alle Transaktionen verarbeitet
+                      </>
+                    ) : (
+                      "Keine Transaktionen gefunden"
+                    )}
                   </td>
                 </tr>
-              ) : pendingTxs.map(tx => {
+              ) : transactions.map(tx => {
                 const amount = parseFloat(tx.amount as string);
                 const debitAcc = accounts?.find(a => a.id === tx.suggestedDebitAccountId);
                 const creditAcc = accounts?.find(a => a.id === tx.suggestedCreditAccountId);
                 const isCC = isCreditCardTx(tx);
                 const isSelected = selectedTxIds.has(tx.id);
                 const partnerLabel = amount < 0 ? "Kreditor" : "Debitor";
+                const txIsPending = tx.status === "pending";
+                const txIsMatched = tx.status === "matched";
 
                 return (
                   <tr key={tx.id} className={isSelected ? "bg-blue-50 dark:bg-blue-950" : ""}>
-                    <td>
-                      <Checkbox checked={isSelected} onCheckedChange={() => toggleSelect(tx.id)} />
-                    </td>
+                    {isPending && (
+                      <td>
+                        <Checkbox checked={isSelected} onCheckedChange={() => toggleSelect(tx.id)} />
+                      </td>
+                    )}
                     <td className="text-sm whitespace-nowrap">
                       {tx.transactionDate ? new Date(tx.transactionDate as string).toLocaleDateString("de-CH") : "–"}
                     </td>
@@ -463,52 +492,78 @@ export default function BankImport() {
                       {amount >= 0 ? "" : "-"}{formatCHF(Math.abs(amount))}
                     </td>
                     <td className="text-right text-xs">
-                      <span className="inline-flex items-center gap-1">
-                        {tx.aiConfidence ? (
-                          <>
-                            {tx.aiConfidence}%
-                            {tx.aiReasoning?.startsWith("Gelernte Regel") && (
-                              <span title="Gelernte Regel"><BookOpen className="h-3 w-3 text-amber-600" /></span>
-                            )}
-                          </>
-                        ) : "–"}
-                        {(tx as any).matchedDocumentId && (
-                          <span title="Rechnung gematched" className="inline-flex items-center text-green-600">
-                            <FileText className="h-3 w-3" />
-                          </span>
-                        )}
-                      </span>
+                      {txIsPending && (
+                        <span className="inline-flex items-center gap-1">
+                          {tx.aiConfidence ? (
+                            <>
+                              {tx.aiConfidence}%
+                              {tx.aiReasoning?.startsWith("Gelernte Regel") && (
+                                <span title="Gelernte Regel"><BookOpen className="h-3 w-3 text-amber-600" /></span>
+                              )}
+                            </>
+                          ) : "–"}
+                          {(tx as any).matchedDocumentId && (
+                            <span title="Rechnung gematched" className="inline-flex items-center text-green-600">
+                              <FileText className="h-3 w-3" />
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      {txIsMatched && (
+                        <span className="inline-flex items-center gap-1 text-green-600 font-medium">
+                          <Check className="h-3 w-3" /> Verbucht
+                        </span>
+                      )}
+                      {tx.status === "ignored" && (
+                        <span className="text-muted-foreground">Ignoriert</span>
+                      )}
                     </td>
                     <td className="text-right">
                       <div className="flex gap-1 justify-end flex-nowrap">
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Bearbeiten"
-                          onClick={() => openEditDialog(tx)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        {isCC && (
-                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-orange-600" title="Kreditkartenbeleg verbuchen"
+                        {txIsPending && (
+                          <>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Bearbeiten"
+                              onClick={() => openEditDialog(tx)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            {isCC && (
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-orange-600" title="Kreditkartenbeleg verbuchen"
+                                onClick={() => {
+                                  setCcDialog({ txId: tx.id, counterparty: tx.counterparty ?? "Kreditkarte" });
+                                  setCcItems([]);
+                                }}>
+                                <CreditCard className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {debitAcc && creditAcc && (
+                              <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
+                                onClick={() => approveMutation.mutate({
+                                  transactionId: tx.id,
+                                  debitAccountId: debitAcc.id,
+                                  creditAccountId: creditAcc.id,
+                                  description: tx.description ?? undefined,
+                                })}>
+                                <Check className="h-3 w-3 mr-1" />Verbuchen
+                              </Button>
+                            )}
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600" title="Ignorieren"
+                              onClick={() => ignoreMutation.mutate({ transactionId: tx.id })}>
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
+                        {txIsMatched && (
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1 border-orange-300 text-orange-700 hover:bg-orange-50"
+                            disabled={unapproveMutation.isPending}
                             onClick={() => {
-                              setCcDialog({ txId: tx.id, counterparty: tx.counterparty ?? "Kreditkarte" });
-                              setCcItems([]);
+                              if (confirm("Verbuchung rückgängig machen? Der Journal-Eintrag wird gelöscht und die Transaktion wird wieder ausstehend.")) {
+                                unapproveMutation.mutate({ transactionId: tx.id });
+                              }
                             }}>
-                            <CreditCard className="h-3.5 w-3.5" />
+                            <Undo2 className="h-3 w-3" />
+                            Rückgängig
                           </Button>
                         )}
-                        {debitAcc && creditAcc && (
-                          <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
-                            onClick={() => approveMutation.mutate({
-                              transactionId: tx.id,
-                              debitAccountId: debitAcc.id,
-                              creditAccountId: creditAcc.id,
-                              description: tx.description ?? undefined,
-                            })}>
-                            <Check className="h-3 w-3 mr-1" />Verbuchen
-                          </Button>
-                        )}
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600" title="Ignorieren"
-                          onClick={() => ignoreMutation.mutate({ transactionId: tx.id })}>
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
                       </div>
                     </td>
                   </tr>

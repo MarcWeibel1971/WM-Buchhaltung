@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef } from "react";
-import { Upload, Check, FileText, CreditCard as CreditCardIcon } from "lucide-react";
+import { Upload, Check, FileText, CreditCard as CreditCardIcon, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -33,6 +33,23 @@ export default function CreditCard() {
       utils.reports.dashboard.invalidate();
     },
     onError: (e) => toast.error(e.message),
+  });
+
+  const deleteMutation = trpc.creditCard.deleteStatement.useMutation({
+    onSuccess: () => {
+      toast.success("KK-Abrechnung gelöscht");
+      refetch();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const unapproveMutation = trpc.creditCard.unapproveStatement.useMutation({
+    onSuccess: () => {
+      toast.success("Verbuchung rückgängig gemacht – Abrechnung ist wieder ausstehend");
+      refetch();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   const handleFileUpload = async (file: File) => {
@@ -140,12 +157,42 @@ export default function CreditCard() {
                       : <span className="badge-approved">Verbucht</span>}
                   </td>
                   <td className="text-right">
-                    {stmt.status === "pending" && (
-                      <Button size="sm" variant="default" className="h-7 text-xs gap-1"
-                        onClick={() => setApproveDialog(stmt)}>
-                        <Check className="h-3 w-3" /> Verbuchen
-                      </Button>
-                    )}
+                    <div className="flex gap-1 justify-end">
+                      {stmt.status === "pending" && (
+                        <>
+                          <Button size="sm" variant="default" className="h-7 text-xs gap-1"
+                            onClick={() => setApproveDialog(stmt)}>
+                            <Check className="h-3 w-3" /> Verbuchen
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600" title="Löschen"
+                            disabled={deleteMutation.isPending}
+                            onClick={() => {
+                              if (confirm("KK-Abrechnung wirklich löschen?")) {
+                                deleteMutation.mutate({ statementId: stmt.id });
+                              }
+                            }}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      )}
+                      {stmt.status === "approved" && (
+                        <>
+                          <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+                            <Check className="h-3 w-3" /> Verbucht
+                          </span>
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1 border-orange-300 text-orange-700 hover:bg-orange-50"
+                            disabled={unapproveMutation.isPending}
+                            onClick={() => {
+                              if (confirm("Verbuchung rückgängig machen? Der Journal-Eintrag wird gelöscht.")) {
+                                unapproveMutation.mutate({ statementId: stmt.id });
+                              }
+                            }}>
+                            <Undo2 className="h-3 w-3" />
+                            Rückgängig
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

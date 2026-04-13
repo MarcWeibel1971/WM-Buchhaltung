@@ -350,6 +350,19 @@ export async function getPendingBankTransactions(bankAccountId?: number) {
     .orderBy(desc(bankTransactions.transactionDate));
 }
 
+export async function getBankTransactionsByStatus(status: "pending" | "matched" | "all", bankAccountId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions: any[] = [];
+  if (status === "pending") conditions.push(eq(bankTransactions.status, "pending"));
+  else if (status === "matched") conditions.push(eq(bankTransactions.status, "matched"));
+  // "all" = no status filter
+  if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
+  return db.select().from(bankTransactions)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(bankTransactions.transactionDate));
+}
+
 export async function saveBankTransaction(data: Omit<typeof bankTransactions.$inferInsert, "id" | "createdAt">) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -842,4 +855,40 @@ export async function unmatchDocument(documentId: number): Promise<void> {
       .set({ matchedDocumentId: null, matchScore: null })
       .where(eq(bankTransactions.id, doc.bankTransactionId));
   }
+}
+
+// ─── Delete Journal Entry (for reverting bookings) ───────────────────────────
+export async function deleteJournalEntry(entryId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Delete lines first (FK), then entry
+  await db.delete(journalLines).where(eq(journalLines.entryId, entryId));
+  await db.delete(journalEntries).where(eq(journalEntries.id, entryId));
+}
+
+// ─── Revert bank transaction to pending ──────────────────────────────────────
+export async function revertBankTransaction(txId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(bankTransactions).set({
+    status: "pending",
+    journalEntryId: null,
+  }).where(eq(bankTransactions.id, txId));
+}
+
+// ─── Delete CC statement and its items ───────────────────────────────────────
+export async function deleteCcStatement(statementId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(creditCardStatements).where(eq(creditCardStatements.id, statementId));
+}
+
+// ─── Revert CC statement to pending ──────────────────────────────────────────
+export async function revertCcStatement(statementId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(creditCardStatements).set({
+    status: "pending",
+    journalEntryId: null,
+  }).where(eq(creditCardStatements.id, statementId));
 }

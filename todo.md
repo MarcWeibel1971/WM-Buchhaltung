@@ -249,3 +249,13 @@
 - [x] Frontend: Bilanz-PDF-Export mit Firmenname, Adresse, UID, MWST-Nr.
 - [x] Frontend: Erfolgsrechnung-PDF-Export mit Firmendaten
 - [x] Frontend: MWST-Abrechnung Detail-Dialog mit PDF-Export-Button und Firmendaten
+
+## Feature: Jahreslohnabrechnung
+
+- [x] Backend: annualPayroll-Endpunkt – alle Monatslöhne eines Mitarbeiters pro Jahr summieren
+- [x] Backend: Bruttolohn-Rückrechnung aus Nettolohn + AHV + BVG + KTG (Netto + AN-Abzüge = Brutto)
+- [x] Frontend: Lohnbuchhaltung – Tab "Jahreslohnausweis" neben Monatsliste (Tabs-Komponente)
+- [x] Frontend: Jahreslohnausweis zeigt alle Monate mit Brutto/Abzüge/Netto pro Monat + Jahrestotal
+- [x] Frontend: 4 Summary-Cards: Jahresbruttolohn, Total AN-Abzüge, Jahresnettolohn, Total AG-Lohnkosten
+- [x] Frontend: PDF-Export Jahreslohnausweis (Firmenname, Mitarbeiter, Monatstabelle, Jahrestotale)
+- [x] Frontend: Monatslohnausweis-PDF zeigt Bruttolohn korrekt

@@ -1318,6 +1318,79 @@ const payrollRouter = router({
       return { payrollId: (result as any).insertId };
     }),
 
+  // Annual payroll summary: sum all months for a given employee and year
+  annualSummary: publicProcedure
+    .input(z.object({ year: z.number(), employeeId: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const rows = await db
+        .select()
+        .from(payrollEntries)
+        .where(
+          and(
+            eq(payrollEntries.year, input.year),
+            eq(payrollEntries.employeeId, input.employeeId)
+          )
+        )
+        .orderBy(payrollEntries.month);
+
+      // Build month-by-month breakdown
+      const months = rows.map(r => {
+        const gross = parseFloat(r.grossSalary as string);
+        const ahvEmp = parseFloat((r.ahvEmployee as string) ?? "0");
+        const ahvEmpr = parseFloat((r.ahvEmployer as string) ?? "0");
+        const bvgEmp = parseFloat((r.bvgEmployee as string) ?? "0");
+        const bvgEmpr = parseFloat((r.bvgEmployer as string) ?? "0");
+        const ktgEmp = parseFloat((r.ktgUvgEmployee as string) ?? "0");
+        const ktgEmpr = parseFloat((r.ktgUvgEmployer as string) ?? "0");
+        const net = parseFloat(r.netSalary as string);
+        // Bruttolohn-Rückrechnung: Netto + AN-Abzüge = Brutto (Kontrolle)
+        const grossFromNet = net + ahvEmp + bvgEmp + ktgEmp;
+        return {
+          id: r.id,
+          month: r.month,
+          status: r.status,
+          grossSalary: gross,
+          ahvEmployee: ahvEmp,
+          ahvEmployer: ahvEmpr,
+          bvgEmployee: bvgEmp,
+          bvgEmployer: bvgEmpr,
+          ktgUvgEmployee: ktgEmp,
+          ktgUvgEmployer: ktgEmpr,
+          netSalary: net,
+          totalEmployerCost: parseFloat((r.totalEmployerCost as string) ?? "0"),
+          // Bruttolohn aus Netto zurückgerechnet (Netto + AN-Abzüge)
+          grossFromNet,
+          // Total AN-Abzüge
+          totalDeductions: ahvEmp + bvgEmp + ktgEmp,
+          // Total AG-Kosten über Brutto hinaus
+          totalEmployerAdditions: ahvEmpr + bvgEmpr + ktgEmpr,
+        };
+      });
+
+      // Jahrestotale
+      const totals = months.reduce(
+        (acc, m) => ({
+          grossSalary: acc.grossSalary + m.grossSalary,
+          ahvEmployee: acc.ahvEmployee + m.ahvEmployee,
+          ahvEmployer: acc.ahvEmployer + m.ahvEmployer,
+          bvgEmployee: acc.bvgEmployee + m.bvgEmployee,
+          bvgEmployer: acc.bvgEmployer + m.bvgEmployer,
+          ktgUvgEmployee: acc.ktgUvgEmployee + m.ktgUvgEmployee,
+          ktgUvgEmployer: acc.ktgUvgEmployer + m.ktgUvgEmployer,
+          netSalary: acc.netSalary + m.netSalary,
+          totalDeductions: acc.totalDeductions + m.totalDeductions,
+          totalEmployerCost: acc.totalEmployerCost + m.totalEmployerCost,
+          totalEmployerAdditions: acc.totalEmployerAdditions + m.totalEmployerAdditions,
+        }),
+        { grossSalary: 0, ahvEmployee: 0, ahvEmployer: 0, bvgEmployee: 0, bvgEmployer: 0, ktgUvgEmployee: 0, ktgUvgEmployer: 0, netSalary: 0, totalDeductions: 0, totalEmployerCost: 0, totalEmployerAdditions: 0 }
+      );
+
+      return { months, totals, year: input.year, employeeId: input.employeeId };
+    }),
+
   approve: protectedProcedure
     .input(z.object({ payrollId: z.number() }))
     .mutation(async ({ input, ctx }) => {

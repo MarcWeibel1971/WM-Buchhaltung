@@ -357,3 +357,70 @@ export const bookingRules = mysqlTable("booking_rules", {
 });
 export type BookingRule = typeof bookingRules.$inferSelect;
 export type InsertBookingRule = typeof bookingRules.$inferInsert;
+
+// ─── Company Settings (Unternehmensdaten) ────────────────────────────────────
+export const companySettings = mysqlTable("company_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  // Company name
+  companyName: varchar("companyName", { length: 200 }).notNull().default("WM Weibel Mueller AG"),
+  // Legal form
+  legalForm: varchar("legalForm", { length: 50 }).default("AG"),
+  // Address
+  street: varchar("street", { length: 200 }),
+  zipCode: varchar("zipCode", { length: 10 }),
+  city: varchar("city", { length: 100 }),
+  canton: varchar("canton", { length: 50 }),
+  country: varchar("country", { length: 50 }).default("Schweiz"),
+  // UID / Handelsregisternummer
+  uid: varchar("uid", { length: 20 }),
+  // MWST number
+  vatNumber: varchar("vatNumber", { length: 30 }),
+  // MWST method: effective, saldo, pauschal
+  vatMethod: mysqlEnum("vatMethod", ["effective", "saldo", "pauschal"]).default("effective"),
+  // MWST period: quarterly, semi-annual
+  vatPeriod: mysqlEnum("vatPeriod", ["quarterly", "semi-annual"]).default("quarterly"),
+  // Fiscal year start (month: 1-12)
+  fiscalYearStartMonth: int("fiscalYearStartMonth").default(1),
+  // Phone
+  phone: varchar("phone", { length: 30 }),
+  // Email
+  email: varchar("email", { length: 200 }),
+  // Website
+  website: varchar("website", { length: 200 }),
+  // HR number
+  hrNumber: varchar("hrNumber", { length: 50 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CompanySettings = typeof companySettings.$inferSelect;
+
+// ─── Insurance Settings (Versicherungsparameter) ─────────────────────────────
+export const insuranceSettings = mysqlTable("insurance_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  // Insurance type: uvg, ktg, bvg, ahv
+  insuranceType: mysqlEnum("insuranceType", ["uvg", "ktg", "bvg", "ahv", "fak"]).notNull(),
+  // Insurance company name
+  insurerName: varchar("insurerName", { length: 200 }),
+  // Policy number
+  policyNumber: varchar("policyNumber", { length: 100 }),
+  // Employee contribution rate (%)
+  employeeRate: decimal("employeeRate", { precision: 6, scale: 4 }).default("0"),
+  // Employer contribution rate (%)
+  employerRate: decimal("employerRate", { precision: 6, scale: 4 }).default("0"),
+  // Maximum insured salary (UVG: 148'200 CHF)
+  maxInsuredSalary: decimal("maxInsuredSalary", { precision: 15, scale: 2 }),
+  // Minimum insured salary
+  minInsuredSalary: decimal("minInsuredSalary", { precision: 15, scale: 2 }),
+  // Valid from date
+  validFrom: date("validFrom", { mode: 'string' }),
+  // Valid to date (null = current)
+  validTo: date("validTo", { mode: 'string' }),
+  // Notes
+  notes: text("notes"),
+  // Is active?
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type InsuranceSetting = typeof insuranceSettings.$inferSelect;
+

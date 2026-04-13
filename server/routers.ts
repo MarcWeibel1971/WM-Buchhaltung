@@ -19,6 +19,7 @@ import {
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts } from "../drizzle/schema";
+import { settingsRouter } from "./settingsRouter";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -1544,6 +1545,7 @@ export const appRouter = router({
   reports: reportsRouter,
   vat: vatRouter,
   documents: documentsRouter,
+  settings: settingsRouter,
 });
 
 export type AppRouter = typeof appRouter;

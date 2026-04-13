@@ -1,0 +1,40 @@
+CREATE TABLE `company_settings` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`companyName` varchar(200) NOT NULL DEFAULT 'WM Weibel Mueller AG',
+	`legalForm` varchar(50) DEFAULT 'AG',
+	`street` varchar(200),
+	`zipCode` varchar(10),
+	`city` varchar(100),
+	`canton` varchar(50),
+	`country` varchar(50) DEFAULT 'Schweiz',
+	`uid` varchar(20),
+	`vatNumber` varchar(30),
+	`vatMethod` enum('effective','saldo','pauschal') DEFAULT 'effective',
+	`vatPeriod` enum('quarterly','semi-annual') DEFAULT 'quarterly',
+	`fiscalYearStartMonth` int DEFAULT 1,
+	`phone` varchar(30),
+	`email` varchar(200),
+	`website` varchar(200),
+	`hrNumber` varchar(50),
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `company_settings_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `insurance_settings` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`insuranceType` enum('uvg','ktg','bvg','ahv','fak') NOT NULL,
+	`insurerName` varchar(200),
+	`policyNumber` varchar(100),
+	`employeeRate` decimal(6,4) DEFAULT '0',
+	`employerRate` decimal(6,4) DEFAULT '0',
+	`maxInsuredSalary` decimal(15,2),
+	`minInsuredSalary` decimal(15,2),
+	`validFrom` date,
+	`validTo` date,
+	`notes` text,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `insurance_settings_id` PRIMARY KEY(`id`)
+);

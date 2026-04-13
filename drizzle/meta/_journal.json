@@ -43,6 +43,13 @@
       "when": 1776089208792,
       "tag": "0005_greedy_lord_tyger",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1776092177047,
+      "tag": "0006_amusing_alice",
+      "breakpoints": true
     }
   ]
 }

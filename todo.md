@@ -214,8 +214,20 @@
 - [x] Frontend: Kontoüberträge werden korrekt als interne Buchungen (1031/1032, 1031/1033 etc.) dargestellt
 
 ## Feature: IBAN im Kontenplan und Bankimport-Konto-Validierung
-- [ ] Schema: IBAN-Feld zu bank_accounts Tabelle hinzufügen und DB migrieren
-- [ ] Kontenplan-UI: IBAN-Feld bei Bankkonten anzeigen und editierbar machen
-- [ ] Bankimport: Beim Import die IBAN des Kontoauszugs mit dem Bankkonto matchen und Buchhalter-Konto erzwingen
-- [ ] Kategorisierung: LLM-Prompt und refreshSuggestions sollen das erzwungene Bankkonto als Soll/Haben-Konto verwenden
-- [ ] Bestehende Transaktionen: Konto-Zuordnung für alle drei Konten prüfen und korrigieren
+- [x] Schema: IBAN-Feld zu bank_accounts Tabelle hinzugefügt und DB migriert
+- [x] Bankimport: LLM-Prompt dynamisch mit korrektem Bankkonto basierend auf bankAccountId/IBAN
+- [x] Bestehende Transaktionen: 85 Transaktionen von Konto 1031/1033 mit falschem Bankkonto (1032) korrigiert
+- [x] Backend: updateBankAccount Endpunkt für IBAN-Bearbeitung hinzugefügt
+- [x] Frontend: IBAN in Bankkonten-Auswahl angezeigt
+
+## Einstellungen-Bereich
+- [x] DB: Tabellen company_settings, insurance_settings erstellt und migriert
+- [x] Backend: settingsRouter (Unternehmensdaten CRUD) implementiert
+- [x] Backend: insuranceRouter (Versicherungsparameter CRUD) implementiert
+- [x] Frontend: /settings Seite mit Tab-Navigation (Unternehmen, Bankkonten, Mitarbeiter, Versicherungen, Buchungsregeln)
+- [x] Frontend: Unternehmensdaten-Formular (Name, Rechtsform, Adresse, UID, MWST-Nr., Geschäftsjahr)
+- [x] Frontend: Bankkonten-Verwaltung mit IBAN-Bearbeitung
+- [x] Frontend: Mitarbeiterstamm-Liste mit Hinzufügen/Bearbeiten/Löschen
+- [x] Frontend: Versicherungsparameter (AHV, BVG, UVG, KTG, FAK) mit Beitragssätzen
+- [x] Frontend: Buchungsregeln-Übersicht mit Bearbeiten/Löschen
+- [x] Navigation: "Einstellungen" in Layout.tsx Sidebar hinzugefügt

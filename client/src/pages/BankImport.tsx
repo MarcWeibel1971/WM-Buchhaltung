@@ -349,7 +349,7 @@ export default function BankImport() {
               <SelectContent>
                 {bankAccounts?.map(ba => (
                   <SelectItem key={ba.bankAccount.id} value={String(ba.bankAccount.id)}>
-                    {ba.bankAccount.name} ({ba.account.number})
+                    {ba.bankAccount.name} ({ba.account.number}){ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>

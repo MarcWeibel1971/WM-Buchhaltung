@@ -228,6 +228,24 @@ const journalRouter = router({
 // ─── Bank Import Router ───────────────────────────────────────────────────────
 const bankImportRouter = router({
   getBankAccounts: publicProcedure.query(() => getBankAccounts()),
+  updateBankAccount: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      name: z.string().optional(),
+      iban: z.string().nullable().optional(),
+      bank: z.string().nullable().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const updateData: Record<string, any> = {};
+      if (input.name !== undefined) updateData.name = input.name;
+      if (input.iban !== undefined) updateData.iban = input.iban;
+      if (input.bank !== undefined) updateData.bank = input.bank;
+      await db.update(bankAccounts).set(updateData).where(eq(bankAccounts.id, input.id));
+      return { success: true };
+    }),
 
   getPendingTransactions: publicProcedure
     .input(z.object({ bankAccountId: z.number().optional() }))
@@ -328,27 +346,32 @@ const bankImportRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const allAccounts = await getAllAccounts();
+          const allAccounts = await getAllAccounts();
       const accountList = allAccounts.map(a => `${a.number}: ${a.name} (${a.accountType})`).join("\n");
-
       const transactions = await db.select().from(bankTransactions)
         .where(inArray(bankTransactions.id, input.transactionIds));
-
+      // Load bank accounts for IBAN-based account mapping
+      const allBankAccounts = await db.select({ id: bankAccounts.id, accountId: bankAccounts.accountId, name: bankAccounts.name, iban: bankAccounts.iban })
+        .from(bankAccounts);
+      const bankAccountMap = new Map(allBankAccounts.map(ba => [ba.id, ba]));
       const results = [];
       for (const tx of transactions) {
         try {
+          // Determine the correct bank account number for this transaction
+          const ownBankAccount = bankAccountMap.get(tx.bankAccountId);
+          const ownAccountObj = ownBankAccount ? allAccounts.find(a => a.id === ownBankAccount.accountId) : null;
+          const ownAccountNumber = ownAccountObj?.number ?? "1032";
+          const ownAccountName = ownAccountObj?.name ?? "LUKB mw";
           const prompt = `Du bist ein Schweizer Buchhalter für die WM Weibel Mueller AG (Finanzberatung, Luzern).
 Analysiere diese Banktransaktion und schlage die passenden Buchungskonten vor.
-
 Transaktion:
 - Datum: ${tx.transactionDate}
 - Betrag: CHF ${tx.amount} (positiv = Eingang, negativ = Ausgang)
 - Beschreibung: ${tx.description}
 - Gegenpartei: ${tx.counterparty ?? "unbekannt"}
-
+- Bankkonto (IBAN): ${ownBankAccount?.iban ?? "unbekannt"} = Konto ${ownAccountNumber} (${ownAccountName})
 Kontenplan (Auszug):
 ${accountList}
-
 Antworte NUR mit JSON:
 {
   "debitAccountNumber": "XXXX",
@@ -356,14 +379,13 @@ Antworte NUR mit JSON:
   "confidence": 0-100,
   "reasoning": "kurze Begründung auf Deutsch"
 }
-
 Regeln:
-- Eingang (positiv): Kreditkonto = Ertragskonto (6xxx) oder Aktivkonto, Debitkonto = Bankkonto (1032)
-- Ausgang (negativ): Debitkonto = Aufwandskonto (3xxx-4xxx), Kreditkonto = Bankkonto (1032)
-- Lohn: Debit 4000/4001, Credit 1032
-- Miete: Debit 4100, Credit 1032
-- Zinsen: Debit 4220, Credit 1032
-- WICHTIG: Das Bankkonto ist IMMER 1032 (LUKB mw), NICHT 1031
+- WICHTIG: Das Bankkonto dieser Transaktion ist IMMER ${ownAccountNumber} (${ownAccountName}), NICHT ein anderes Bankkonto!
+- Eingang (positiv): Kreditkonto = Ertragskonto (6xxx) oder Aktivkonto, Debitkonto = ${ownAccountNumber}
+- Ausgang (negativ): Debitkonto = Aufwandskonto (3xxx-4xxx), Kreditkonto = ${ownAccountNumber}
+- Lohn: Debit 4000/4001, Credit ${ownAccountNumber}
+- Miete: Debit 4100, Credit ${ownAccountNumber}
+- Zinsen: Debit 4220, Credit ${ownAccountNumber}
 - Gewerbe-Treuhand AG: Debit 3000 (Fremdhonorar), NICHT 4740 – dies sind Fremdhonorare für ausgelagerte Buchhaltungsmandate
 - Gewerbe-Treuhand AG Buchungstext: 'Fremdhonorar Gewerbe-Treuhand – [Kundenname] [Periode]' (Kundenname aus Beschreibung/Referenz)`;
 

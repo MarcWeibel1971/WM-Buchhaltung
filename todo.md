@@ -212,3 +212,10 @@
 - [x] Backend: approveTransfer Endpunkt - Kontoübertrag als Journal-Eintrag verbuchen (Soll/Haben = die zwei Bankkonten)
 - [x] Frontend: Bankimport zeigt erkannte Kontoüberträge mit Matching-Partner und "Übertrag verbuchen"-Button
 - [x] Frontend: Kontoüberträge werden korrekt als interne Buchungen (1031/1032, 1031/1033 etc.) dargestellt
+
+## Feature: IBAN im Kontenplan und Bankimport-Konto-Validierung
+- [ ] Schema: IBAN-Feld zu bank_accounts Tabelle hinzufügen und DB migrieren
+- [ ] Kontenplan-UI: IBAN-Feld bei Bankkonten anzeigen und editierbar machen
+- [ ] Bankimport: Beim Import die IBAN des Kontoauszugs mit dem Bankkonto matchen und Buchhalter-Konto erzwingen
+- [ ] Kategorisierung: LLM-Prompt und refreshSuggestions sollen das erzwungene Bankkonto als Soll/Haben-Konto verwenden
+- [ ] Bestehende Transaktionen: Konto-Zuordnung für alle drei Konten prüfen und korrigieren

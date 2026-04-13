@@ -309,3 +309,14 @@
 - [x] Backend: Bruttolohn aus Konto 4000/4001 (Soll), Nettolohn aus Personalkonto (Haben)
 - [x] Frontend: "Aus Journal synchronisieren" Button (mit Spinner) in Lohnbuchhaltung
 - [x] Frontend: Erfolgsmeldung zeigt Anzahl neue/aktualisierte/übersprungene Einträge
+
+## Fix: BVG CHF-Beträge + Bruttolohn Bottom-Up
+
+- [x] Schema: insurance_settings um bvgEmployeeMonthly und bvgEmployerMonthly Felder erweitert (Migration 0008)
+- [x] Backend: settingsRouter upsertInsuranceSetting speichert BVG-Monatsbeträge korrekt
+- [x] Frontend: InsurancesTab – BVG-Formular zeigt CHF/Monat Felder statt %-Felder
+- [x] Frontend: InsurancesTab – Tabelle zeigt BVG als "CHF x.xx/Mt." statt Prozentsatz
+- [x] Frontend: CreatePayrollDialog – BVG-Abzug verwendet feste CHF-Monatsbeträge aus DB
+- [x] Frontend: CreatePayrollDialog – Nettolohn-Eingabefeld (Bottom-Up): Netto eingeben → Brutto wird berechnet
+- [x] Frontend: CreatePayrollDialog – Bruttolohn-Eingabefeld weiterhin möglich (Top-Down)
+- [x] Frontend: AHV-Rate-Parsing korrigiert (DB-Wert ist Dezimalzahl, durch 100 dividiert für Prozentrechnung)

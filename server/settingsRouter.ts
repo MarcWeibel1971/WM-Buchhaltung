@@ -43,6 +43,9 @@ const insuranceSettingInput = z.object({
   employerRate: z.number().min(0).max(100).optional(),
   maxInsuredSalary: z.number().min(0).optional(),
   minInsuredSalary: z.number().min(0).optional(),
+  // BVG: fixed monthly CHF amounts per employee (not percentage)
+  bvgEmployeeMonthly: z.number().min(0).optional(),
+  bvgEmployerMonthly: z.number().min(0).optional(),
   validFrom: z.string().optional(),
   validTo: z.string().optional(),
   notes: z.string().optional(),
@@ -184,13 +187,15 @@ export const settingsRouter = router({
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      const { id, employeeRate, employerRate, maxInsuredSalary, minInsuredSalary, ...rest } = input;
+      const { id, employeeRate, employerRate, maxInsuredSalary, minInsuredSalary, bvgEmployeeMonthly, bvgEmployerMonthly, ...rest } = input;
       const data = {
         ...rest,
         employeeRate: employeeRate !== undefined ? String(employeeRate) : undefined,
         employerRate: employerRate !== undefined ? String(employerRate) : undefined,
         maxInsuredSalary: maxInsuredSalary !== undefined ? String(maxInsuredSalary) : undefined,
         minInsuredSalary: minInsuredSalary !== undefined ? String(minInsuredSalary) : undefined,
+        bvgEmployeeMonthly: bvgEmployeeMonthly !== undefined ? String(bvgEmployeeMonthly) : undefined,
+        bvgEmployerMonthly: bvgEmployerMonthly !== undefined ? String(bvgEmployerMonthly) : undefined,
       };
       if (id) {
         await db.update(insuranceSettings).set(data).where(eq(insuranceSettings.id, id));
@@ -203,6 +208,8 @@ export const settingsRouter = router({
           employerRate: data.employerRate,
           maxInsuredSalary: data.maxInsuredSalary,
           minInsuredSalary: data.minInsuredSalary,
+          bvgEmployeeMonthly: data.bvgEmployeeMonthly,
+          bvgEmployerMonthly: data.bvgEmployerMonthly,
           validFrom: data.validFrom,
           validTo: data.validTo,
           notes: data.notes,

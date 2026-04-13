@@ -419,6 +419,9 @@ export const insuranceSettings = mysqlTable("insurance_settings", {
   maxInsuredSalary: decimal("maxInsuredSalary", { precision: 15, scale: 2 }),
   // Minimum insured salary
   minInsuredSalary: decimal("minInsuredSalary", { precision: 15, scale: 2 }),
+  // BVG: fixed monthly CHF amounts (not percentage-based)
+  bvgEmployeeMonthly: decimal("bvgEmployeeMonthly", { precision: 15, scale: 2 }),
+  bvgEmployerMonthly: decimal("bvgEmployerMonthly", { precision: 15, scale: 2 }),
   // Valid from date
   validFrom: date("validFrom", { mode: 'string' }),
   // Valid to date (null = current)

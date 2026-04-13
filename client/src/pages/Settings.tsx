@@ -663,6 +663,8 @@ function InsuranceTab() {
     employerRate: "",
     maxInsuredSalary: "",
     minInsuredSalary: "",
+    bvgEmployeeMonthly: "",
+    bvgEmployerMonthly: "",
     validFrom: "",
     notes: "",
   });
@@ -678,6 +680,8 @@ function InsuranceTab() {
       employerRate: s.employerRate ?? "",
       maxInsuredSalary: s.maxInsuredSalary ?? "",
       minInsuredSalary: s.minInsuredSalary ?? "",
+      bvgEmployeeMonthly: (s as any).bvgEmployeeMonthly ?? "",
+      bvgEmployerMonthly: (s as any).bvgEmployerMonthly ?? "",
       validFrom: s.validFrom ?? "",
       notes: s.notes ?? "",
     });
@@ -686,15 +690,19 @@ function InsuranceTab() {
 
   const save = () => {
     if (!editItem) return;
+    const isBvg = editItem.insuranceType === 'bvg';
     upsert.mutate({
       id: editItem.id ? parseInt(editItem.id) : undefined,
       insuranceType: editItem.insuranceType as "uvg" | "ktg" | "bvg" | "ahv" | "fak",
       insurerName: editItem.insurerName || undefined,
       policyNumber: editItem.policyNumber || undefined,
-      employeeRate: editItem.employeeRate ? parseFloat(editItem.employeeRate) : undefined,
-      employerRate: editItem.employerRate ? parseFloat(editItem.employerRate) : undefined,
+      // For BVG: rates are informational only; monthly CHF amounts are used for calculation
+      employeeRate: !isBvg && editItem.employeeRate ? parseFloat(editItem.employeeRate) : undefined,
+      employerRate: !isBvg && editItem.employerRate ? parseFloat(editItem.employerRate) : undefined,
       maxInsuredSalary: editItem.maxInsuredSalary ? parseFloat(editItem.maxInsuredSalary) : undefined,
       minInsuredSalary: editItem.minInsuredSalary ? parseFloat(editItem.minInsuredSalary) : undefined,
+      bvgEmployeeMonthly: isBvg && editItem.bvgEmployeeMonthly ? parseFloat(editItem.bvgEmployeeMonthly) : undefined,
+      bvgEmployerMonthly: isBvg && editItem.bvgEmployerMonthly ? parseFloat(editItem.bvgEmployerMonthly) : undefined,
       validFrom: editItem.validFrom || undefined,
       notes: editItem.notes || undefined,
     });
@@ -705,7 +713,7 @@ function InsuranceTab() {
     ahv: { employeeRate: "5.3", employerRate: "5.3", maxInsuredSalary: "", note: "AHV/IV/EO 2026: je 5.3%" },
     uvg: { employeeRate: "0.66", employerRate: "2.97", maxInsuredSalary: "148200", note: "UVG 2026: AN 0.66%, AG 2.97%, max. CHF 148'200" },
     ktg: { employeeRate: "0.5", employerRate: "0.5", maxInsuredSalary: "", note: "KTG: typisch je 0.5% (je nach Versicherer)" },
-    bvg: { employeeRate: "7.5", employerRate: "7.5", maxInsuredSalary: "88200", note: "BVG 2026: min. je 7.5%, koordinierter Lohn max. CHF 88'200" },
+    bvg: { employeeRate: "7.5", employerRate: "7.5", maxInsuredSalary: "88200", note: "BVG 2026: monatliche CHF-Beträge pro Mitarbeiter (je nach Alter/Lohnklasse)" },
     fak: { employeeRate: "0", employerRate: "2.0", maxInsuredSalary: "", note: "FAK: nur AG-Beitrag, ca. 2%" },
   };
 
@@ -764,8 +772,16 @@ function InsuranceTab() {
                   </span>
                 </TableCell>
                 <TableCell className="text-sm">{s.insurerName ?? "—"}</TableCell>
-                <TableCell className="text-right font-mono text-sm">{s.employeeRate ? `${parseFloat(s.employeeRate).toFixed(2)}%` : "—"}</TableCell>
-                <TableCell className="text-right font-mono text-sm">{s.employerRate ? `${parseFloat(s.employerRate).toFixed(2)}%` : "—"}</TableCell>
+                <TableCell className="text-right font-mono text-sm">
+                  {s.insuranceType === 'bvg'
+                    ? ((s as any).bvgEmployeeMonthly ? `CHF ${parseFloat((s as any).bvgEmployeeMonthly).toFixed(2)}/Mt.` : "—")
+                    : (s.employeeRate ? `${parseFloat(s.employeeRate).toFixed(2)}%` : "—")}
+                </TableCell>
+                <TableCell className="text-right font-mono text-sm">
+                  {s.insuranceType === 'bvg'
+                    ? ((s as any).bvgEmployerMonthly ? `CHF ${parseFloat((s as any).bvgEmployerMonthly).toFixed(2)}/Mt.` : "—")
+                    : (s.employerRate ? `${parseFloat(s.employerRate).toFixed(2)}%` : "—")}
+                </TableCell>
                 <TableCell className="text-right font-mono text-sm">{s.maxInsuredSalary ? `CHF ${parseFloat(s.maxInsuredSalary).toLocaleString("de-CH")}` : "—"}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
@@ -816,14 +832,31 @@ function InsuranceTab() {
                 <Label>Policen-Nr.</Label>
                 <Input value={editItem.policyNumber} onChange={e => setEditItem(f => ({ ...f!, policyNumber: e.target.value }))} className="mt-1" />
               </div>
-              <div>
-                <Label>AN-Beitrag %</Label>
-                <Input type="number" step="0.01" value={editItem.employeeRate} onChange={e => setEditItem(f => ({ ...f!, employeeRate: e.target.value }))} className="mt-1" placeholder="5.30" />
-              </div>
-              <div>
-                <Label>AG-Beitrag %</Label>
-                <Input type="number" step="0.01" value={editItem.employerRate} onChange={e => setEditItem(f => ({ ...f!, employerRate: e.target.value }))} className="mt-1" placeholder="5.30" />
-              </div>
+              {editItem.insuranceType === 'bvg' ? (
+                <>
+                  <div>
+                    <Label>AN-Beitrag CHF/Monat</Label>
+                    <Input type="number" step="0.05" value={editItem.bvgEmployeeMonthly} onChange={e => setEditItem(f => ({ ...f!, bvgEmployeeMonthly: e.target.value }))} className="mt-1" placeholder="z.B. 450.00" />
+                    <p className="text-xs text-muted-foreground mt-1">Fester monatlicher Betrag (je nach Alter/Lohnklasse)</p>
+                  </div>
+                  <div>
+                    <Label>AG-Beitrag CHF/Monat</Label>
+                    <Input type="number" step="0.05" value={editItem.bvgEmployerMonthly} onChange={e => setEditItem(f => ({ ...f!, bvgEmployerMonthly: e.target.value }))} className="mt-1" placeholder="z.B. 450.00" />
+                    <p className="text-xs text-muted-foreground mt-1">Mindestens gleich hoch wie AN-Beitrag</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <Label>AN-Beitrag %</Label>
+                    <Input type="number" step="0.01" value={editItem.employeeRate} onChange={e => setEditItem(f => ({ ...f!, employeeRate: e.target.value }))} className="mt-1" placeholder="5.30" />
+                  </div>
+                  <div>
+                    <Label>AG-Beitrag %</Label>
+                    <Input type="number" step="0.01" value={editItem.employerRate} onChange={e => setEditItem(f => ({ ...f!, employerRate: e.target.value }))} className="mt-1" placeholder="5.30" />
+                  </div>
+                </>
+              )}
               <div>
                 <Label>Max. versicherter Lohn</Label>
                 <Input type="number" value={editItem.maxInsuredSalary} onChange={e => setEditItem(f => ({ ...f!, maxInsuredSalary: e.target.value }))} className="mt-1" placeholder="148200" />

@@ -844,29 +844,56 @@ function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }:
     if (!emp) return;
     const gross = 10000; // Default, user will adjust
     setGrossSalary(gross.toFixed(2));
-    recalcInsurance(gross, emp);
+    recalcInsurance(gross);
   };
 
-  const recalcInsurance = (grossVal: number, emp?: any) => {
-    // AHV from DB or fallback 5.3%
+  // Bottom-Up: given gross, calculate all deductions
+  const recalcFromGross = (grossVal: number) => {
+    // AHV: percentage of gross (fallback 5.3%)
     const ahvSetting = insuranceSettings.find((s: any) => s.insuranceType === 'ahv' && s.isActive);
-    const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate ?? '0.053') : 0.053;
-    const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate ?? '0.053') : 0.053;
+    const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate ?? '0.053') / 100 : 0.053;
+    const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate ?? '0.053') / 100 : 0.053;
     setAhvEmployee((grossVal * ahvEmpRate).toFixed(2));
     setAhvEmployer((grossVal * ahvEmprRate).toFixed(2));
-    // BVG from DB or fallback 8%
+    // BVG: fixed monthly CHF amounts (not percentage!)
     const bvgSetting = insuranceSettings.find((s: any) => s.insuranceType === 'bvg' && s.isActive);
-    const bvgEmpRate = bvgSetting ? parseFloat(bvgSetting.employeeRate ?? '0.08') : 0.08;
-    const bvgEmprRate = bvgSetting ? parseFloat(bvgSetting.employerRate ?? '0.08') : 0.08;
-    setBvgEmployee((grossVal * bvgEmpRate).toFixed(2));
-    setBvgEmployer((grossVal * bvgEmprRate).toFixed(2));
-    // KTG from DB or fallback 0
+    const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly) : 0;
+    const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly) : 0;
+    setBvgEmployee(bvgEmpMonthly.toFixed(2));
+    setBvgEmployer(bvgEmprMonthly.toFixed(2));
+    // KTG/UVG: percentage of gross
     const ktgSetting = insuranceSettings.find((s: any) => (s.insuranceType === 'ktg' || s.insuranceType === 'uvg') && s.isActive);
-    const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate ?? '0') : 0;
-    const ktgEmprRate = ktgSetting ? parseFloat(ktgSetting.employerRate ?? '0') : 0;
+    const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate ?? '0') / 100 : 0;
+    const ktgEmprRate = ktgSetting ? parseFloat(ktgSetting.employerRate ?? '0') / 100 : 0;
     setKtgEmployee((grossVal * ktgEmpRate).toFixed(2));
     setKtgEmployer((grossVal * ktgEmprRate).toFixed(2));
   };
+
+  // Bottom-Up: given net salary, back-calculate gross
+  // Gross = (Net + BVG_AN_monthly + KTG_AN_monthly) / (1 - AHV_AN_rate)
+  const recalcFromNet = (netVal: number) => {
+    const ahvSetting = insuranceSettings.find((s: any) => s.insuranceType === 'ahv' && s.isActive);
+    const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate ?? '0.053') / 100 : 0.053;
+    const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate ?? '0.053') / 100 : 0.053;
+    const bvgSetting = insuranceSettings.find((s: any) => s.insuranceType === 'bvg' && s.isActive);
+    const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly) : 0;
+    const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly) : 0;
+    const ktgSetting = insuranceSettings.find((s: any) => (s.insuranceType === 'ktg' || s.insuranceType === 'uvg') && s.isActive);
+    const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate ?? '0') / 100 : 0;
+    const ktgEmprRate = ktgSetting ? parseFloat(ktgSetting.employerRate ?? '0') / 100 : 0;
+    // Gross = (Net + fixed_deductions) / (1 - percentage_deduction_rates)
+    const grossVal = (netVal + bvgEmpMonthly) / (1 - ahvEmpRate - ktgEmpRate);
+    setGrossSalary(grossVal.toFixed(2));
+    setAhvEmployee((grossVal * ahvEmpRate).toFixed(2));
+    setAhvEmployer((grossVal * ahvEmprRate).toFixed(2));
+    setBvgEmployee(bvgEmpMonthly.toFixed(2));
+    setBvgEmployer(bvgEmprMonthly.toFixed(2));
+    setKtgEmployee((grossVal * ktgEmpRate).toFixed(2));
+    setKtgEmployer((grossVal * ktgEmprRate).toFixed(2));
+  };
+
+  // Keep old name for compatibility
+  const recalcInsurance = recalcFromGross;
 
   const createMutation = trpc.payroll.create.useMutation({
     onSuccess: onSaved,
@@ -918,13 +945,22 @@ function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }:
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Nettolohn CHF <span className="text-blue-600">(Bottom-Up)</span></label>
+              <Input className="font-mono text-right border-blue-300 focus:border-blue-500" placeholder="0.00" onChange={e => {
+                const n = parseFloat(e.target.value);
+                if (!isNaN(n) && n > 0) recalcFromNet(n);
+              }} />
+              <p className="text-xs text-muted-foreground mt-1">Netto eingeben → Brutto wird berechnet</p>
+            </div>
+            <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Bruttolohn CHF</label>
               <Input className="font-mono text-right" value={grossSalary} onChange={e => {
                 setGrossSalary(e.target.value);
                 const g = parseFloat(e.target.value);
-                if (!isNaN(g) && g > 0) recalcInsurance(g);
+                if (!isNaN(g) && g > 0) recalcFromGross(g);
               }} placeholder="0.00" />
+              <p className="text-xs text-muted-foreground mt-1">Oder direkt Brutto eingeben</p>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">AHV Arbeitnehmer CHF</label>
@@ -935,17 +971,17 @@ function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }:
               <Input className="font-mono text-right" value={ahvEmployer} onChange={e => setAhvEmployer(e.target.value)} placeholder="0.00" />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">BVG Arbeitnehmer CHF</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">BVG Arbeitnehmer CHF/Mt.</label>
               <Input className="font-mono text-right" value={bvgEmployee} onChange={e => setBvgEmployee(e.target.value)} placeholder="0.00" />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">BVG Arbeitgeber CHF</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">BVG Arbeitgeber CHF/Mt.</label>
               <Input className="font-mono text-right" value={bvgEmployer} onChange={e => setBvgEmployer(e.target.value)} placeholder="0.00" />
             </div>
           </div>
 
           <div className="bg-muted/50 rounded-lg p-3 flex justify-between text-sm">
-            <span className="font-medium">Nettolohn</span>
+            <span className="font-medium">Nettolohn (berechnet)</span>
             <span className="font-mono font-bold">CHF {net}</span>
           </div>
         </div>

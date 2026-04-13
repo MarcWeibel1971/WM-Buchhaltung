@@ -2,7 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useRef } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -88,6 +88,53 @@ export default function Journal() {
 
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
+
+  // Sort state for journal table
+  const [jSortCol, setJSortCol] = useState<string>("nr");
+  const [jSortDir, setJSortDir] = useState<"asc" | "desc">("desc");
+  const toggleJSort = (col: string) => {
+    if (jSortCol === col) { setJSortDir(d => d === "asc" ? "desc" : "asc"); }
+    else { setJSortCol(col); setJSortDir(col === "amount" || col === "nr" ? "desc" : "asc"); }
+  };
+  const JSortIcon = ({ col }: { col: string }) => {
+    if (jSortCol !== col) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-30" />;
+    return jSortDir === "asc" ? <ArrowUp className="h-3 w-3 ml-1" /> : <ArrowDown className="h-3 w-3 ml-1" />;
+  };
+
+  const sortedEntries = useMemo(() => {
+    if (!entries.length) return entries;
+    const arr = [...entries];
+    const dir = jSortDir === "asc" ? 1 : -1;
+    arr.sort((a: any, b: any) => {
+      switch (jSortCol) {
+        case "nr":
+          return ((a.entryNumber ?? 0) - (b.entryNumber ?? 0)) * dir;
+        case "date": {
+          const da = a.bookingDate ? new Date(a.bookingDate).getTime() : 0;
+          const db = b.bookingDate ? new Date(b.bookingDate).getTime() : 0;
+          return (da - db) * dir;
+        }
+        case "type":
+          return ((a.isCollective ? 1 : 0) - (b.isCollective ? 1 : 0)) * dir;
+        case "description":
+          return ((a.description ?? "").localeCompare(b.description ?? "", "de")) * dir;
+        case "debit":
+          return ((a.debitAccountLabel ?? "").localeCompare(b.debitAccountLabel ?? "", "de")) * dir;
+        case "credit":
+          return ((a.creditAccountLabel ?? "").localeCompare(b.creditAccountLabel ?? "", "de")) * dir;
+        case "amount":
+          return ((a.totalAmount ?? 0) - (b.totalAmount ?? 0)) * dir;
+        case "source":
+          return ((a.source ?? "").localeCompare(b.source ?? "", "de")) * dir;
+        case "status": {
+          const order: Record<string, number> = { pending: 0, approved: 1, rejected: 2 };
+          return ((order[a.status ?? ""] ?? 3) - (order[b.status ?? ""] ?? 3)) * dir;
+        }
+        default: return 0;
+      }
+    });
+    return arr;
+  }, [entries, jSortCol, jSortDir]);
 
   // Cross-page: load all IDs for current filter
   const allIdsFilter = useMemo(() => ({
@@ -304,26 +351,44 @@ export default function Journal() {
                     onCheckedChange={toggleSelectAll}
                   />
                 </th>
-                <th>Nr.</th>
-                <th>Datum</th>
-                <th>Typ</th>
-                <th>Beschreibung</th>
-                <th>Konto (Soll)</th>
-                <th>Gegenkonto (Haben)</th>
-                <th className="text-right">Betrag CHF</th>
-                <th>Quelle</th>
-                <th>Status</th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("nr")}>
+                  <span className="inline-flex items-center">Nr.<JSortIcon col="nr" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("date")}>
+                  <span className="inline-flex items-center">Datum<JSortIcon col="date" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("type")}>
+                  <span className="inline-flex items-center">Typ<JSortIcon col="type" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("description")}>
+                  <span className="inline-flex items-center">Beschreibung<JSortIcon col="description" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("debit")}>
+                  <span className="inline-flex items-center">Konto (Soll)<JSortIcon col="debit" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("credit")}>
+                  <span className="inline-flex items-center">Gegenkonto (Haben)<JSortIcon col="credit" /></span>
+                </th>
+                <th className="text-right cursor-pointer select-none" onClick={() => toggleJSort("amount")}>
+                  <span className="inline-flex items-center justify-end">Betrag CHF<JSortIcon col="amount" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("source")}>
+                  <span className="inline-flex items-center">Quelle<JSortIcon col="source" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleJSort("status")}>
+                  <span className="inline-flex items-center">Status<JSortIcon col="status" /></span>
+                </th>
                 <th className="text-right">Aktionen</th>
               </tr>
             </thead>
             <tbody>
-              {entries.length === 0 ? (
+              {sortedEntries.length === 0 ? (
                 <tr>
                   <td colSpan={11} className="text-center py-12 text-muted-foreground">
                     Keine Buchungen gefunden
                   </td>
                 </tr>
-              ) : entries.map((entry: any) => (
+              ) : sortedEntries.map((entry: any) => (
                 <>
                   <tr
                     key={entry.id}

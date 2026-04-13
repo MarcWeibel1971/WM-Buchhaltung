@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useRef, useCallback, useMemo } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye } from "lucide-react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -60,11 +60,31 @@ export default function BankImport() {
   // Invoice preview dialog state
   const [previewDoc, setPreviewDoc] = useState<any>(null);
 
+  // Sort state for bank transactions table
+  const [sortCol, setSortCol] = useState<string>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const toggleSort = (col: string) => {
+    if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
+    else { setSortCol(col); setSortDir(col === "amount" ? "desc" : "asc"); }
+  };
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortCol !== col) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-30" />;
+    return sortDir === "asc" ? <ArrowUp className="h-3 w-3 ml-1" /> : <ArrowDown className="h-3 w-3 ml-1" />;
+  };
+
   // Credit card dialog state
-  const [ccDialog, setCcDialog] = useState<{ txId: number; counterparty: string; txAmount: string; statementDate: string; ccStatementId?: number } | null>(null);
+  const [ccDialog, setCcDialog] = useState<{ txId: number; counterparty: string; txAmount: string; statementDate: string; ccStatementId?: number; matchedDocUrl?: string } | null>(null);
   const [ccParsing, setCcParsing] = useState(false);
   const [ccItems, setCcItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string }>>([])
   const [ccPaidAmount, setCcPaidAmount] = useState<string>("");
+
+  // Auto-parse matched document when CC dialog opens with a pre-linked document
+  useEffect(() => {
+    if (ccDialog?.matchedDocUrl && ccItems.length === 0 && !parsePdfMutation.isPending) {
+      toast.info("Kreditkartenabrechnung wird von KI analysiert...");
+      parsePdfMutation.mutate({ documentUrl: ccDialog.matchedDocUrl });
+    }
+  }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   const { data: transactions, refetch: refetchTxs } = trpc.bankImport.getTransactionsByStatus.useQuery(
@@ -270,6 +290,44 @@ export default function BankImport() {
     [pendingTxs, selectedTxIds]
   );
 
+  // Sorted transactions
+  const sortedTransactions = useMemo(() => {
+    if (!transactions?.length) return transactions ?? [];
+    const arr = [...transactions];
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
+      switch (sortCol) {
+        case "date": {
+          const da = a.transactionDate ? new Date(a.transactionDate as string).getTime() : 0;
+          const db = b.transactionDate ? new Date(b.transactionDate as string).getTime() : 0;
+          return (da - db) * dir;
+        }
+        case "description":
+          return ((a.description ?? "").localeCompare(b.description ?? "", "de")) * dir;
+        case "counterparty":
+          return ((a.counterparty ?? "").localeCompare(b.counterparty ?? "", "de")) * dir;
+        case "debit": {
+          const accA = accounts?.find(ac => ac.id === a.suggestedDebitAccountId);
+          const accB = accounts?.find(ac => ac.id === b.suggestedDebitAccountId);
+          return ((accA?.number ?? "9999").localeCompare(accB?.number ?? "9999")) * dir;
+        }
+        case "credit": {
+          const accA = accounts?.find(ac => ac.id === a.suggestedCreditAccountId);
+          const accB = accounts?.find(ac => ac.id === b.suggestedCreditAccountId);
+          return ((accA?.number ?? "9999").localeCompare(accB?.number ?? "9999")) * dir;
+        }
+        case "amount":
+          return (parseFloat(a.amount as string) - parseFloat(b.amount as string)) * dir;
+        case "status": {
+          const order: Record<string, number> = { pending: 0, matched: 1, ignored: 2 };
+          return ((order[a.status ?? ""] ?? 3) - (order[b.status ?? ""] ?? 3)) * dir;
+        }
+        default: return 0;
+      }
+    });
+    return arr;
+  }, [transactions, sortCol, sortDir, accounts]);
+
   // Selection helpers
   const toggleSelect = (id: number) => {
     setSelectedTxIds(prev => {
@@ -467,18 +525,32 @@ export default function BankImport() {
                     />
                   </th>
                 )}
-                <th>Datum</th>
-                <th>Buchungstext</th>
-                <th>Lieferant / Kunde</th>
-                <th>Soll-Konto</th>
-                <th>Haben-Konto</th>
-                <th className="text-right">Betrag CHF</th>
-                <th className="text-right">Status</th>
+                <th className="cursor-pointer select-none" onClick={() => toggleSort("date")}>
+                  <span className="inline-flex items-center">Datum<SortIcon col="date" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleSort("description")}>
+                  <span className="inline-flex items-center">Buchungstext<SortIcon col="description" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleSort("counterparty")}>
+                  <span className="inline-flex items-center">Lieferant / Kunde<SortIcon col="counterparty" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleSort("debit")}>
+                  <span className="inline-flex items-center">Soll-Konto<SortIcon col="debit" /></span>
+                </th>
+                <th className="cursor-pointer select-none" onClick={() => toggleSort("credit")}>
+                  <span className="inline-flex items-center">Haben-Konto<SortIcon col="credit" /></span>
+                </th>
+                <th className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>
+                  <span className="inline-flex items-center justify-end">Betrag CHF<SortIcon col="amount" /></span>
+                </th>
+                <th className="text-right cursor-pointer select-none" onClick={() => toggleSort("status")}>
+                  <span className="inline-flex items-center justify-end">Status<SortIcon col="status" /></span>
+                </th>
                 <th className="text-right">Aktionen</th>
               </tr>
             </thead>
             <tbody>
-              {!transactions?.length ? (
+              {!sortedTransactions?.length ? (
                 <tr>
                   <td colSpan={isPending ? 9 : 8} className="text-center py-12 text-muted-foreground">
                     {isPending ? (
@@ -491,7 +563,7 @@ export default function BankImport() {
                     )}
                   </td>
                 </tr>
-              ) : transactions.map(tx => {
+              ) : sortedTransactions.map(tx => {
                 const amount = parseFloat(tx.amount as string);
                 const debitAcc = accounts?.find(a => a.id === tx.suggestedDebitAccountId);
                 const creditAcc = accounts?.find(a => a.id === tx.suggestedCreditAccountId);
@@ -770,6 +842,7 @@ export default function BankImport() {
                               counterparty: editTx.counterparty ?? "Kreditkarte",
                               txAmount: txAmt,
                               statementDate: stmtDate,
+                              matchedDocUrl: matchedDoc.s3Url ?? undefined,
                             });
                             setCcItems([]);
                             setCcPaidAmount(txAmt);
@@ -804,11 +877,11 @@ export default function BankImport() {
       <Dialog open={!!ccDialog} onOpenChange={open => { if (!open) { setCcDialog(null); setCcItems([]); setCcPaidAmount(""); } }}>
         <DialogContent className="w-[min(98vw,72rem)] max-w-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Kreditkartenabrechnung verbuchen</DialogTitle>
+            <DialogTitle>{ccDialog?.matchedDocUrl ? "Verbuchungsvorschlag – Kreditkartenabrechnung" : "Kreditkartenabrechnung verbuchen"}</DialogTitle>
             <DialogDescription>
-              PDF hochladen → KI erkennt Positionen → zwei Journal-Einträge werden erstellt:
-              (1) 1082 Durchlaufkonto / 1032 LUKB mw – effektiv bezahlter Betrag;
-              (2) Aufwandkonten / 1082 Durchlaufkonto – Abrechnungstotal (Sammelbuchung).
+              {ccDialog?.matchedDocUrl
+                ? "Die verknüpfte Kreditkartenabrechnung wird automatisch analysiert. Zwei Journal-Einträge werden erstellt: (1) 1082 Durchlaufkonto / 1032 LUKB mw – effektiv bezahlter Betrag; (2) Aufwandkonten / 1082 Durchlaufkonto – Abrechnungstotal (Sammelbuchung)."
+                : "PDF hochladen → KI erkennt Positionen → zwei Journal-Einträge werden erstellt: (1) 1082 Durchlaufkonto / 1032 LUKB mw – effektiv bezahlter Betrag; (2) Aufwandkonten / 1082 Durchlaufkonto – Abrechnungstotal (Sammelbuchung)."}
             </DialogDescription>
           </DialogHeader>
 
@@ -843,11 +916,19 @@ export default function BankImport() {
               </div>
             </div>
 
-            <Button variant="outline" className="w-full gap-2" disabled={ccParsing}
-              onClick={() => ccPdfInputRef.current?.click()}>
-              <Upload className="h-4 w-4" />
-              {ccParsing ? "Abrechnung wird analysiert..." : "Kreditkartenabrechnung (PDF) hochladen"}
-            </Button>
+            {ccDialog?.matchedDocUrl && ccItems.length === 0 && (
+              <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />
+                <span className="text-sm text-blue-700 dark:text-blue-400">Verknüpfte Abrechnung wird automatisch analysiert...</span>
+              </div>
+            )}
+            {!ccDialog?.matchedDocUrl && (
+              <Button variant="outline" className="w-full gap-2" disabled={ccParsing}
+                onClick={() => ccPdfInputRef.current?.click()}>
+                <Upload className="h-4 w-4" />
+                {ccParsing ? "Abrechnung wird analysiert..." : "Kreditkartenabrechnung (PDF) hochladen"}
+              </Button>
+            )}
 
             {ccItems.length > 0 && (
               <div>

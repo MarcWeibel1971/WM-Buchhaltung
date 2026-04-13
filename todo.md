@@ -364,3 +364,13 @@
 - [x] Backend: revertBankTransaction setzt Status korrekt auf 'pending'
 - [x] DB-Fix: 156 verwaiste Banktransaktionen auf 'pending' zurückgesetzt
 - [x] Verifizierung: 158 Banktransaktionen erscheinen wieder im Bankimport
+
+## Bugfix: Verbuchungsvorschlag bei gematchter KK-Abrechnung überspringt Upload nicht
+
+- [x] Frontend: "Verbuchungsvorschlag aufrufen" bei gematchter KK-Abrechnung soll Upload-Schritt überspringen
+- [x] Frontend: Dialog direkt mit Verbuchungsvorschlag öffnen, wenn Beleg bereits verknüpft ist
+
+## Feature: Spalten-Sortierung für Bankimport und Journal
+
+- [x] Frontend: Bankimport – Sortierung für alle Spalten (Datum, Buchungstext, Lieferant, Soll-Konto, Haben-Konto, Betrag, Status)
+- [x] Frontend: Journal – Sortierung für alle Spalten (Nr, Datum, Typ, Beschreibung, Konto, Gegenkonto, Betrag, Quelle, Status)

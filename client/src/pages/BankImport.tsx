@@ -195,6 +195,24 @@ export default function BankImport() {
     onError: (e) => toast.error(e.message),
   });
 
+  const approveTransferMutation = trpc.bankImport.approveTransfer.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Kontoübertrag verbucht: ${data.entryNumber}`);
+      refetchTxs();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const detectTransfersMutation = trpc.bankImport.detectTransfers.useMutation({
+    onSuccess: (data) => {
+      if (data.found === 0) toast.info("Keine neuen Kontoüberträge erkannt");
+      else toast.success(`${data.found} Kontoüberträge erkannt und markiert`);
+      refetchTxs();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const handleFileUpload = useCallback(async (file: File) => {
     if (!selectedBankAccountId) { toast.error("Bitte zuerst ein Bankkonto auswählen"); return; }
     setImporting(true);
@@ -418,6 +436,14 @@ export default function BankImport() {
                 {refreshMutation.isPending ? "Aktualisiere..." : "Refresh (gelernt)"}
               </Button>
             )}
+            {isPending && (
+              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+                disabled={detectTransfersMutation.isPending}
+                onClick={() => detectTransfersMutation.mutate()}>
+                <RefreshCw className={`h-3 w-3 ${detectTransfersMutation.isPending ? "animate-spin" : ""}`} />
+                {detectTransfersMutation.isPending ? "Erkenne..." : "Kontoüberträge erkennen"}
+              </Button>
+            )}
             {isPending && selectedTxIds.size > 0 && readyToApprove.length > 0 && (
               <Button size="sm" className="gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
                 disabled={bulkApproveMutation.isPending}
@@ -470,6 +496,7 @@ export default function BankImport() {
                 const debitAcc = accounts?.find(a => a.id === tx.suggestedDebitAccountId);
                 const creditAcc = accounts?.find(a => a.id === tx.suggestedCreditAccountId);
                 const isCC = isCreditCardTx(tx);
+                const isTransfer = (tx as any).isTransfer === true || (tx as any).isTransfer === 1;
                 const isSelected = selectedTxIds.has(tx.id);
                 const partnerLabel = amount < 0 ? "Kreditor" : "Debitor";
                 const txIsPending = tx.status === "pending";
@@ -492,6 +519,7 @@ export default function BankImport() {
                       <div className="truncate" title={tx.counterparty ?? ""}>
                         {tx.counterparty ?? "–"}
                         {isCC && <span className="ml-1 text-xs text-orange-600 font-medium">(KK)</span>}
+                        {isTransfer && <span className="ml-1 text-xs text-blue-600 font-medium">(Übertrag)</span>}
                       </div>
                       <div className="text-xs text-muted-foreground">{partnerLabel}</div>
                     </td>
@@ -562,7 +590,7 @@ export default function BankImport() {
                               onClick={() => openEditDialog(tx)}>
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            {isCC && (
+                            {isCC && !isTransfer && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-orange-600" title="Kreditkartenbeleg verbuchen"
                                 onClick={() => {
                                   const txAmt = Math.abs(parseFloat(tx.amount as string)).toFixed(2);
@@ -578,7 +606,17 @@ export default function BankImport() {
                                 <CreditCard className="h-3.5 w-3.5" />
                               </Button>
                             )}
-                            {debitAcc && creditAcc && (
+                            {isTransfer && (
+                              <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-blue-600 hover:bg-blue-700"
+                                disabled={approveTransferMutation.isPending}
+                                onClick={() => approveTransferMutation.mutate({
+                                  txId: tx.id,
+                                  bookingText: tx.description ?? undefined,
+                                })}>
+                                <Check className="h-3 w-3 mr-1" />Übertrag verbuchen
+                              </Button>
+                            )}
+                            {!isTransfer && debitAcc && creditAcc && (
                               <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
                                 onClick={() => approveMutation.mutate({
                                   transactionId: tx.id,

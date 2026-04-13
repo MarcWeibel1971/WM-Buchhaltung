@@ -206,3 +206,9 @@
 - [x] Booking Rules: Gewerbe-Treuhand AG → Konto 3000 Fremdhonorar (statt 4740 Rechts- und Beratungsaufwand)
 - [x] LLM-Prompt: Bei Gewerbe-Treuhand Rechnungen den Kundennamen aus der Rechnung extrahieren und in Buchungstext integrieren
 - [x] Bestehende Gewerbe-Treuhand Transaktionen im Bankimport: Konto auf 3000 aktualisieren und Buchungstexte mit Kundennamen neu generieren
+
+## Feature: Kontoüberträge zwischen LUKB-Konten
+- [ ] Backend: detectTransfers Endpunkt - automatische Erkennung von Kontoüberträgen (gleicher Betrag, entgegengesetztes Vorzeichen, max. 2 Tage Differenz)
+- [ ] Backend: approveTransfer Endpunkt - Kontoübertrag als Journal-Eintrag verbuchen (Soll/Haben = die zwei Bankkonten)
+- [ ] Frontend: Bankimport zeigt erkannte Kontoüberträge mit Matching-Partner und "Übertrag verbuchen"-Button
+- [ ] Frontend: Kontoüberträge werden korrekt als interne Buchungen (1031/1032, 1031/1033 etc.) dargestellt

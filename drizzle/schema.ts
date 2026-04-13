@@ -174,6 +174,10 @@ export const bankTransactions = mysqlTable("bank_transactions", {
   suggestedBookingText: varchar("suggestedBookingText", { length: 500 }),
   // Duplicate check hash
   txHash: varchar("txHash", { length: 64 }).unique(),
+  // Transfer partner (for internal account transfers)
+  transferPartnerId: int("transferPartnerId"),
+  // Is this an internal transfer between bank accounts?
+  isTransfer: boolean("isTransfer").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type BankTransaction = typeof bankTransactions.$inferSelect;

@@ -36,6 +36,13 @@
       "when": 1776022664854,
       "tag": "0004_complete_zuras",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1776089208792,
+      "tag": "0005_greedy_lord_tyger",
+      "breakpoints": true
     }
   ]
 }

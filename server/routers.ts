@@ -18,7 +18,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -691,6 +691,131 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
     }),
 
   // ── List all learned booking rules ──
+  // ── Detect internal transfers between bank accounts ──
+  detectTransfers: protectedProcedure
+    .mutation(async ({ ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const dbRaw = await getDb();
+      if (!dbRaw) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const db = dbRaw;
+      // Get all pending transactions from all bank accounts
+      const allPending = await db.select({
+        id: bankTransactions.id,
+        bankAccountId: bankTransactions.bankAccountId,
+        transactionDate: bankTransactions.transactionDate,
+        amount: bankTransactions.amount,
+        description: bankTransactions.description,
+        isTransfer: bankTransactions.isTransfer,
+      }).from(bankTransactions)
+        .where(and(eq(bankTransactions.status, 'pending')));
+
+      // Find matching pairs: same absolute amount, opposite sign, within 2 days, different bank accounts
+      const found: Array<{idA: number, idB: number, amount: number}> = [];
+      const usedIds = new Set<number>();
+      for (let i = 0; i < allPending.length; i++) {
+        for (let j = i + 1; j < allPending.length; j++) {
+          const a = allPending[i], b = allPending[j];
+          if (usedIds.has(a.id) || usedIds.has(b.id)) continue;
+          if (a.bankAccountId === b.bankAccountId) continue;
+          const amtA = parseFloat(a.amount as string);
+          const amtB = parseFloat(b.amount as string);
+          if (Math.abs(Math.abs(amtA) - Math.abs(amtB)) > 0.01) continue;
+          if (Math.sign(amtA) === Math.sign(amtB)) continue;
+          const diffDays = Math.abs(new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime()) / (1000*60*60*24);
+          if (diffDays > 2) continue;
+          found.push({ idA: a.id, idB: b.id, amount: Math.abs(amtA) });
+          usedIds.add(a.id);
+          usedIds.add(b.id);
+        }
+      }
+
+      // Mark found pairs as transfers
+      let marked = 0;
+      for (const { idA, idB } of found) {
+        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idB }).where(eq(bankTransactions.id, idA));
+        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idA }).where(eq(bankTransactions.id, idB));
+        marked += 2;
+      }
+
+      return { found: found.length, marked, pairs: found };
+    }),
+
+  // ── Approve an internal transfer: creates ONE journal entry ──
+  approveTransfer: protectedProcedure
+    .input(z.object({
+      txId: z.number(),          // The transaction we're approving
+      bookingText: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const dbRaw2 = await getDb();
+      if (!dbRaw2) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const db = dbRaw2;
+
+      // Get this transaction
+      const [txA] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.txId));
+      if (!txA) throw new TRPCError({ code: "NOT_FOUND", message: "Transaktion nicht gefunden" });
+      if (!txA.isTransfer || !txA.transferPartnerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Keine Transfer-Transaktion" });
+
+      // Get partner transaction
+      const [txB] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, txA.transferPartnerId));
+      if (!txB) throw new TRPCError({ code: "NOT_FOUND", message: "Partner-Transaktion nicht gefunden" });
+
+      // Check if already booked (either one)
+      if (txA.status === 'matched' || txB.status === 'matched') {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Übertrag bereits verbucht" });
+      }
+
+      // Get bank accounts to find accounting account IDs
+      const [baA] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, txA.bankAccountId));
+      const [baB] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, txB.bankAccountId));
+      if (!baA || !baB) throw new TRPCError({ code: "NOT_FOUND", message: "Bankkonto nicht gefunden" });
+
+      const amtA = parseFloat(txA.amount as string);
+      // Determine debit/credit: the outgoing transaction (negative amount) is the credit side (Haben)
+      // The incoming transaction (positive amount) is the debit side (Soll)
+      let debitAccountId: number, creditAccountId: number;
+      if (amtA < 0) {
+        // txA is outgoing: credit = baA, debit = baB
+        creditAccountId = baA.accountId;
+        debitAccountId = baB.accountId;
+      } else {
+        // txA is incoming: debit = baA, credit = baB
+        debitAccountId = baA.accountId;
+        creditAccountId = baB.accountId;
+      }
+
+      const amount = Math.abs(amtA);
+      const bookingDate = txA.transactionDate as string;
+      const description = input.bookingText ?? txA.description ?? `Kontoübertrag ${amount.toFixed(2)}`;
+
+      // Create journal entry
+      const entryNumber = `2026-T${String(Date.now()).slice(-5)}`;
+      const db2 = db!;
+      const [entryResult] = await db2.insert(journalEntries).values({
+        entryNumber,
+        bookingDate,
+        description,
+        status: 'approved',
+        source: 'bank_import',
+        fiscalYear: new Date(bookingDate).getFullYear(),
+        approvedBy: ctx.user.id,
+      });
+      const newEntryId = (entryResult as any).insertId;
+
+      // Create journal lines (entryId is the field name in journalLines)
+      await db2.insert(journalLines).values([
+        { entryId: newEntryId, accountId: debitAccountId, side: 'debit', amount: amount.toFixed(2) as any, description },
+        { entryId: newEntryId, accountId: creditAccountId, side: 'credit', amount: amount.toFixed(2) as any, description },
+      ]);
+
+      // Mark both transactions as matched
+      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txA.id));
+      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txB.id));
+
+      return { success: true, entryId: newEntryId, entryNumber };
+    }),
+
   listRules: protectedProcedure
     .query(async ({ ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });

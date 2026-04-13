@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { Plus, Check, FileText, Users, CalendarDays, Award, RefreshCw } from "lucide-react";
+import { Plus, Check, FileText, Users, CalendarDays, Award, RefreshCw, Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -535,6 +535,16 @@ export default function Payroll() {
     onSuccess: (res) => {
       toast.success(`Synchronisiert: ${res.created} neue, ${res.updated} aktualisierte, ${res.skipped} übersprungene Einträge`);
       refetch();
+      utils.payroll.annualSummary.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const recalcMutation = trpc.payroll.recalculate.useMutation({
+    onSuccess: (res) => {
+      toast.success(`${res.recalculated} von ${res.total} Einträgen neu berechnet (Brutto/Abzüge)`);
+      refetch();
+      utils.payroll.annualSummary.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -547,6 +557,12 @@ export default function Payroll() {
           <p className="text-sm text-muted-foreground">Lohnabrechnung für mw und jm</p>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="gap-2"
+            onClick={() => recalcMutation.mutate({ year })}
+            disabled={recalcMutation.isPending}>
+            <Calculator className={`h-4 w-4 ${recalcMutation.isPending ? 'animate-spin' : ''}`} />
+            Abzüge neu berechnen
+          </Button>
           <Button size="sm" variant="outline" className="gap-2"
             onClick={() => syncMutation.mutate({ year })}
             disabled={syncMutation.isPending}>

@@ -339,3 +339,28 @@
 - [x] Frontend: Seitenübergreifende Selektion – Banner "Alle Y Buchungen auswählen" nach Alle-markieren
 - [x] Frontend: Banner "Alle X Buchungen sind ausgewählt" mit Option "Nur diese Seite behalten"
 - [x] Backend: getAllIds Endpunkt – alle IDs der aktuellen Abfrage (Filter/Suche) zurückgeben
+
+## Fix: Bruttolohn-Rückrechnung korrigieren
+
+- [x] Recherche: Schweizer Lohnabzüge korrekt (AHV/IV/EO, ALV, BVG, KTG/UVG)
+- [x] Backend: syncFromJournal – Bruttolohn korrekt aus Journal-Buchungen extrahieren
+- [x] Backend: Bottom-Up Berechnung: Brutto = (Netto + BVG_AN) / (1 - AHV_Rate - KTG_Rate)
+- [x] Frontend: Jahreslohnausweis zeigt Brutto > Netto mit korrekten Abzügen
+
+## Bugfix: Bruttolohn-Berechnung (Brutto muss > Netto sein)
+
+- [x] Backend: syncFromJournal auch aus bank_transactions synchronisieren (Journal ist leer)
+- [x] Backend: Versicherungsparameter (AHV, BVG, KTG) aus insurance_settings laden
+- [x] Backend: Bruttolohn-Rückrechnung: Brutto = (Netto + BVG_AN) / (1 - AHV_Rate - KTG_Rate)
+- [x] Backend: Alle Abzüge (AHV AN/AG, BVG AN/AG, KTG AN/AG) korrekt berechnen und speichern
+- [x] Backend: totalEmployerCost = Brutto + AG-Anteile (AHV_AG + BVG_AG + KTG_AG)
+- [x] Backend: recalculatePayroll Endpunkt – bestehende Einträge mit korrekten Abzügen neu berechnen
+- [x] Tests: Vitest für Bruttolohn-Rückrechnung und Abzugsberechnung
+- [x] Verifizierung: Brutto > Netto für alle Payroll-Einträge in der DB
+
+## Bugfix: Gelöschte Journal-Buchungen geben Banktransaktionen nicht frei
+
+- [x] Backend: bulkDelete setzt zugehörige Banktransaktionen auf 'pending' zurück (war der Bug!)
+- [x] Backend: revertBankTransaction setzt Status korrekt auf 'pending'
+- [x] DB-Fix: 156 verwaiste Banktransaktionen auf 'pending' zurückgesetzt
+- [x] Verifizierung: 158 Banktransaktionen erscheinen wieder im Bankimport

@@ -18,7 +18,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { eq, and, desc, asc, sql, inArray, like } from "drizzle-orm";
 import crypto from "crypto";
@@ -245,15 +245,29 @@ const journalRouter = router({
       return { approved, skipped };
     }),
 
-  // Bulk delete multiple journal entries
+  // Bulk delete multiple journal entries (with proper bank/CC transaction revert)
   bulkDelete: protectedProcedure
     .input(z.object({ entryIds: z.array(z.number()) }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       let deleted = 0;
       let skipped = 0;
       for (const id of input.entryIds) {
         try {
+          // Revert linked bank transactions back to pending
+          const linkedTxs = await db.select().from(bankTransactions)
+            .where(eq(bankTransactions.journalEntryId, id));
+          for (const tx of linkedTxs) {
+            await revertBankTransaction(tx.id);
+          }
+          // Revert linked CC statements back to pending
+          const linkedStmts = await db.select().from(creditCardStatements)
+            .where(eq(creditCardStatements.journalEntryId, id));
+          for (const stmt of linkedStmts) {
+            await revertCcStatement(stmt.id);
+          }
           await deleteJournalEntry(id);
           deleted++;
         } catch {
@@ -1468,7 +1482,7 @@ const payrollRouter = router({
       return { months, totals, year: input.year, employeeId: input.employeeId };
     }),
 
-  // Sync payroll entries from journal bookings (bank_import source with Lohn descriptions)
+  // Sync payroll entries from journal bookings AND bank transactions with Lohn descriptions
   syncFromJournal: protectedProcedure
     .input(z.object({ year: z.number() }))
     .mutation(async ({ input, ctx }) => {
@@ -1479,24 +1493,73 @@ const payrollRouter = router({
       // Load all employees
       const emps = await getEmployees();
 
-      // Find all journal entries with 'Lohn' in description for this fiscal year
-      const lohnEntries = await db
-        .select()
-        .from(journalEntries)
-        .where(
-          and(
-            eq(journalEntries.fiscalYear, input.year),
-            sql`${journalEntries.description} LIKE '%Lohn%'`
-          )
-        );
+      // ── Load insurance settings for deduction calculation ──
+      const allInsurance = await db.select().from(insuranceSettings).where(eq(insuranceSettings.isActive, true));
+      const ahvSetting = allInsurance.find(s => s.insuranceType === 'ahv');
+      const bvgSetting = allInsurance.find(s => s.insuranceType === 'bvg');
+      const ktgSetting = allInsurance.find(s => s.insuranceType === 'ktg' || s.insuranceType === 'uvg');
 
-      // For each entry, get its lines
+      // AHV/IV/EO/ALV rates (stored as e.g. 6.4000 meaning 6.4%)
+      const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
+      const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
+      // BVG: fixed monthly CHF amounts
+      const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
+      const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
+      // KTG/UVG rates
+      const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate as string ?? '0') / 100 : 0;
+      const ktgEmprRate = ktgSetting ? parseFloat(ktgSetting.employerRate as string ?? '0') / 100 : 0;
+
+      /** Calculate all deductions from a net salary (bottom-up) */
+      function calcFromNet(netVal: number) {
+        // Brutto = (Netto + BVG_AN_fix) / (1 - AHV_AN_rate - KTG_AN_rate)
+        const grossVal = (netVal + bvgEmpMonthly) / (1 - ahvEmpRate - ktgEmpRate);
+        const ahvEmp = Math.round(grossVal * ahvEmpRate * 100) / 100;
+        const ahvEmpr = Math.round(grossVal * ahvEmprRate * 100) / 100;
+        const ktgEmp = Math.round(grossVal * ktgEmpRate * 100) / 100;
+        const ktgEmpr = Math.round(grossVal * ktgEmprRate * 100) / 100;
+        const totalEmployerCost = grossVal + ahvEmpr + bvgEmprMonthly + ktgEmpr;
+        return {
+          gross: Math.round(grossVal * 100) / 100,
+          ahvEmployee: ahvEmp,
+          ahvEmployer: ahvEmpr,
+          bvgEmployee: bvgEmpMonthly,
+          bvgEmployer: bvgEmprMonthly,
+          ktgUvgEmployee: ktgEmp,
+          ktgUvgEmployer: ktgEmpr,
+          net: netVal,
+          totalEmployerCost: Math.round(totalEmployerCost * 100) / 100,
+        };
+      }
+
+      /** Calculate all deductions from a gross salary (top-down) */
+      function calcFromGross(grossVal: number) {
+        const ahvEmp = Math.round(grossVal * ahvEmpRate * 100) / 100;
+        const ahvEmpr = Math.round(grossVal * ahvEmprRate * 100) / 100;
+        const ktgEmp = Math.round(grossVal * ktgEmpRate * 100) / 100;
+        const ktgEmpr = Math.round(grossVal * ktgEmprRate * 100) / 100;
+        const netVal = grossVal - ahvEmp - bvgEmpMonthly - ktgEmp;
+        const totalEmployerCost = grossVal + ahvEmpr + bvgEmprMonthly + ktgEmpr;
+        return {
+          gross: grossVal,
+          ahvEmployee: ahvEmp,
+          ahvEmployer: ahvEmpr,
+          bvgEmployee: bvgEmpMonthly,
+          bvgEmployer: bvgEmprMonthly,
+          ktgUvgEmployee: ktgEmp,
+          ktgUvgEmployer: ktgEmpr,
+          net: Math.round(netVal * 100) / 100,
+          totalEmployerCost: Math.round(totalEmployerCost * 100) / 100,
+        };
+      }
+
       const MONTH_NAMES_DE: Record<string, number> = {
         januar: 1, februar: 2, märz: 3, maerz: 3, april: 4, mai: 5, juni: 6,
         juli: 7, august: 8, september: 9, oktober: 10, november: 11, dezember: 12,
+        jan: 1, feb: 2, mar: 3, apr: 4, mai2: 5, jun: 6,
+        jul: 7, aug: 8, sep: 9, okt: 10, nov: 11, dez: 12,
       };
 
-      // Parse employee code and month from description like "Lohn MW März 2026"
+      // Parse employee code and month from description like "Lohn MW März 2026" or "Lohn MW Januar 2026"
       function parsePayrollDesc(desc: string): { empCode: string | null; month: number | null; year: number | null } {
         const m = desc.match(/Lohn\s+(\w+)\s+(\w+)\s+(\d{4})/i);
         if (!m) return { empCode: null, month: null, year: null };
@@ -1507,49 +1570,86 @@ const payrollRouter = router({
         return { empCode, month, year };
       }
 
-      // Group entries by employee+month, sum up debit amounts on salary accounts (4000, 4001)
+      // ── Source 1: Journal entries (if any exist) ──
+      const lohnEntries = await db
+        .select()
+        .from(journalEntries)
+        .where(
+          and(
+            eq(journalEntries.fiscalYear, input.year),
+            sql`${journalEntries.description} LIKE '%Lohn%'`
+          )
+        );
+
       const salaryAccounts = await db.select().from(accounts).where(
         sql`${accounts.number} IN ('4000','4001','4002','4003','4004','4005')`
       );
       const salaryAccIds = new Set(salaryAccounts.map(a => a.id));
 
-      // Also look at credit amounts going to personal bank accounts (net salary)
       const personalBankAccounts = await db.select().from(accounts).where(
         sql`${accounts.number} IN ('1032','1033','1071','1081','1082','1083')`
       );
       const personalBankAccIds = new Set(personalBankAccounts.map(a => a.id));
 
-      type PayrollKey = string; // `${empCode}-${year}-${month}`
+      type PayrollKey = string;
       const grouped: Map<PayrollKey, {
         empCode: string; year: number; month: number;
         grossFromSalaryAcc: number; netFromBankAcc: number;
-        entryIds: number[];
+        sourceCount: number; source: 'journal' | 'bank';
       }> = new Map();
 
+      // Process journal entries
       for (const entry of lohnEntries) {
         const { empCode, month, year } = parsePayrollDesc(entry.description ?? "");
         if (!empCode || !month || !year) continue;
 
         const key: PayrollKey = `${empCode}-${year}-${month}`;
         if (!grouped.has(key)) {
-          grouped.set(key, { empCode, year, month, grossFromSalaryAcc: 0, netFromBankAcc: 0, entryIds: [] });
+          grouped.set(key, { empCode, year, month, grossFromSalaryAcc: 0, netFromBankAcc: 0, sourceCount: 0, source: 'journal' });
         }
         const g = grouped.get(key)!;
-        g.entryIds.push(entry.id);
+        g.sourceCount++;
 
-        // Get lines for this entry
-        const lines = await db.select({
-          line: journalLines,
-        }).from(journalLines).where(eq(journalLines.entryId, entry.id));
-
+        const lines = await db.select({ line: journalLines }).from(journalLines).where(eq(journalLines.entryId, entry.id));
         for (const { line } of lines) {
           const amt = parseFloat(line.amount as string);
-          if (line.side === "debit" && salaryAccIds.has(line.accountId)) {
-            g.grossFromSalaryAcc += amt;
+          if (line.side === "debit" && salaryAccIds.has(line.accountId)) g.grossFromSalaryAcc += amt;
+          if (line.side === "credit" && personalBankAccIds.has(line.accountId)) g.netFromBankAcc += amt;
+        }
+      }
+
+      // ── Source 2: Bank transactions with Lohn descriptions (fallback if journal is empty) ──
+      if (lohnEntries.length === 0) {
+        // Get bank transactions with 'Lohn' in description for the year
+        const yearStart = `${input.year}-01-01`;
+        const yearEnd = `${input.year}-12-31`;
+        const lohnTxns = await db.select().from(bankTransactions).where(
+          and(
+            sql`${bankTransactions.description} LIKE '%Lohn%'`,
+            sql`${bankTransactions.transactionDate} >= ${yearStart}`,
+            sql`${bankTransactions.transactionDate} <= ${yearEnd}`
+          )
+        );
+
+        for (const tx of lohnTxns) {
+          const desc = tx.description ?? "";
+          const { empCode, month, year } = parsePayrollDesc(desc);
+          if (!empCode || !month || !year) continue;
+
+          // Only consider transactions for known employees (mw, jm)
+          const emp = emps.find(e => e.code?.toLowerCase() === empCode);
+          if (!emp) continue;
+
+          const key: PayrollKey = `${empCode}-${year}-${month}`;
+          if (!grouped.has(key)) {
+            grouped.set(key, { empCode, year, month, grossFromSalaryAcc: 0, netFromBankAcc: 0, sourceCount: 0, source: 'bank' });
           }
-          if (line.side === "credit" && personalBankAccIds.has(line.accountId)) {
-            g.netFromBankAcc += amt;
-          }
+          const g = grouped.get(key)!;
+          g.sourceCount++;
+
+          // Bank transactions: negative amount = outgoing payment (salary paid out = net)
+          const amt = Math.abs(parseFloat(tx.amount as string));
+          g.netFromBankAcc += amt;
         }
       }
 
@@ -1558,15 +1658,24 @@ const payrollRouter = router({
       let skipped = 0;
 
       for (const g of Array.from(grouped.values())) {
-        // Find matching employee
         const emp = emps.find(e => e.code?.toLowerCase() === g.empCode);
         if (!emp) { skipped++; continue; }
 
-        // Determine gross: prefer salary account debit, fall back to net (net = gross if no deductions recorded)
-        const gross = g.grossFromSalaryAcc > 0 ? g.grossFromSalaryAcc : g.netFromBankAcc;
-        if (gross <= 0) { skipped++; continue; }
+        let calc;
+        if (g.grossFromSalaryAcc > 0) {
+          // We have the gross salary from journal salary accounts → top-down
+          calc = calcFromGross(g.grossFromSalaryAcc);
+          // If we also have net from bank, use that as the actual net (more precise)
+          if (g.netFromBankAcc > 0) calc.net = g.netFromBankAcc;
+        } else if (g.netFromBankAcc > 0) {
+          // Only net salary from bank transactions → bottom-up calculation
+          calc = calcFromNet(g.netFromBankAcc);
+        } else {
+          skipped++;
+          continue;
+        }
 
-        // Check if payroll entry already exists for this employee/year/month
+        // Check if payroll entry already exists
         const existing = await db.select().from(payrollEntries).where(
           and(
             eq(payrollEntries.employeeId, emp.id),
@@ -1575,45 +1684,100 @@ const payrollRouter = router({
           )
         ).limit(1);
 
-        const grossStr = gross.toFixed(2);
-        // Net: if we have salary account debit (gross), net = netFromBankAcc; else net = gross
-        const net = g.grossFromSalaryAcc > 0 && g.netFromBankAcc > 0 ? g.netFromBankAcc : gross;
-        const netStr = net.toFixed(2);
+        const payrollData = {
+          grossSalary: calc.gross.toFixed(2),
+          ahvEmployee: calc.ahvEmployee.toFixed(2),
+          ahvEmployer: calc.ahvEmployer.toFixed(2),
+          bvgEmployee: calc.bvgEmployee.toFixed(2),
+          bvgEmployer: calc.bvgEmployer.toFixed(2),
+          ktgUvgEmployee: calc.ktgUvgEmployee.toFixed(2),
+          ktgUvgEmployer: calc.ktgUvgEmployer.toFixed(2),
+          netSalary: calc.net.toFixed(2),
+          totalEmployerCost: calc.totalEmployerCost.toFixed(2),
+        };
 
         if (existing.length > 0) {
-          // Only update if status is draft
-          if (existing[0].status === "draft") {
-            await db.update(payrollEntries).set({
-              grossSalary: grossStr,
-              netSalary: netStr,
-              totalEmployerCost: grossStr,
-            }).where(eq(payrollEntries.id, existing[0].id));
-            updated++;
-          } else {
-            skipped++;
-          }
+          // Update existing entry (even if approved, since we're fixing data)
+          await db.update(payrollEntries).set({
+            ...payrollData,
+            notes: `Aktualisiert aus ${g.source === 'journal' ? 'Journal' : 'Banktransaktionen'} (${g.sourceCount} Buchung${g.sourceCount !== 1 ? "en" : ""})`,
+          }).where(eq(payrollEntries.id, existing[0].id));
+          updated++;
         } else {
           await db.insert(payrollEntries).values({
             employeeId: emp.id,
             year: g.year,
             month: g.month,
-            grossSalary: grossStr,
-            ahvEmployee: "0",
-            ahvEmployer: "0",
-            bvgEmployee: "0",
-            bvgEmployer: "0",
-            ktgUvgEmployee: "0",
-            ktgUvgEmployer: "0",
-            netSalary: netStr,
-            totalEmployerCost: grossStr,
+            ...payrollData,
             status: "approved",
-            notes: `Aus Journal importiert (${g.entryIds.length} Buchung${g.entryIds.length !== 1 ? "en" : ""})`,
+            notes: `Aus ${g.source === 'journal' ? 'Journal' : 'Banktransaktionen'} importiert (${g.sourceCount} Buchung${g.sourceCount !== 1 ? "en" : ""})`,
           });
           created++;
         }
       }
 
       return { created, updated, skipped, total: grouped.size };
+    }),
+
+  // Recalculate all payroll entries with current insurance settings
+  recalculate: protectedProcedure
+    .input(z.object({ year: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Load insurance settings
+      const allInsurance = await db.select().from(insuranceSettings).where(eq(insuranceSettings.isActive, true));
+      const ahvSetting = allInsurance.find(s => s.insuranceType === 'ahv');
+      const bvgSetting = allInsurance.find(s => s.insuranceType === 'bvg');
+      const ktgSetting = allInsurance.find(s => s.insuranceType === 'ktg' || s.insuranceType === 'uvg');
+
+      const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
+      const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
+      const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
+      const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
+      const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate as string ?? '0') / 100 : 0;
+      const ktgEmprRate = ktgSetting ? parseFloat(ktgSetting.employerRate as string ?? '0') / 100 : 0;
+
+      // Get all payroll entries for the year
+      const entries = await db.select().from(payrollEntries).where(eq(payrollEntries.year, input.year));
+
+      let recalculated = 0;
+      for (const entry of entries) {
+        const currentNet = parseFloat(entry.netSalary as string);
+        const currentGross = parseFloat(entry.grossSalary as string);
+        const currentAhv = parseFloat((entry.ahvEmployee as string) ?? '0');
+
+        // Determine if this entry needs recalculation:
+        // If deductions are all 0 or gross <= net, recalculate from net
+        const needsRecalc = currentAhv === 0 || currentGross <= currentNet;
+
+        if (needsRecalc && currentNet > 0) {
+          // Bottom-up: calculate gross from net
+          const grossVal = (currentNet + bvgEmpMonthly) / (1 - ahvEmpRate - ktgEmpRate);
+          const ahvEmp = Math.round(grossVal * ahvEmpRate * 100) / 100;
+          const ahvEmpr = Math.round(grossVal * ahvEmprRate * 100) / 100;
+          const ktgEmp = Math.round(grossVal * ktgEmpRate * 100) / 100;
+          const ktgEmpr = Math.round(grossVal * ktgEmprRate * 100) / 100;
+          const totalEmployerCost = grossVal + ahvEmpr + bvgEmprMonthly + ktgEmpr;
+
+          await db.update(payrollEntries).set({
+            grossSalary: (Math.round(grossVal * 100) / 100).toFixed(2),
+            ahvEmployee: ahvEmp.toFixed(2),
+            ahvEmployer: ahvEmpr.toFixed(2),
+            bvgEmployee: bvgEmpMonthly.toFixed(2),
+            bvgEmployer: bvgEmprMonthly.toFixed(2),
+            ktgUvgEmployee: ktgEmp.toFixed(2),
+            ktgUvgEmployer: ktgEmpr.toFixed(2),
+            totalEmployerCost: (Math.round(totalEmployerCost * 100) / 100).toFixed(2),
+            notes: `Abzüge neu berechnet (AHV ${(ahvEmpRate * 100).toFixed(1)}%, BVG CHF ${bvgEmpMonthly.toFixed(2)}/Mt.)`,
+          }).where(eq(payrollEntries.id, entry.id));
+          recalculated++;
+        }
+      }
+
+      return { recalculated, total: entries.length };
     }),
 
   approve: protectedProcedure

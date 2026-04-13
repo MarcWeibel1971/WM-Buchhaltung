@@ -51,7 +51,6 @@ describe("Swiss VAT Calculation", () => {
   }
 
   it("calculates 8.1% VAT correctly", () => {
-    // 108.10 inkl. 8.1% -> VAT = 108.10 - 108.10/1.081 = 108.10 - 100.00 = 8.10
     const { vatAmount, netAmount } = calcVat(108.10, 0.081);
     expect(vatAmount).toBeCloseTo(8.10, 1);
     expect(netAmount).toBeCloseTo(100.00, 1);
@@ -70,28 +69,109 @@ describe("Swiss VAT Calculation", () => {
 
 // ─── Payroll Calculation ──────────────────────────────────────────────────────
 describe("Payroll Calculation", () => {
-  function calcNet(gross: number, ahvEmployee: number, bvgEmployee: number, ktgUvg: number) {
-    return gross - ahvEmployee - bvgEmployee - ktgUvg;
+  // Top-down: Gross → deductions → Net
+  function calcFromGross(grossVal: number, ahvEmpRate: number, bvgEmpMonthly: number, ktgEmpRate: number) {
+    const ahvEmp = Math.round(grossVal * ahvEmpRate * 100) / 100;
+    const ktgEmp = Math.round(grossVal * ktgEmpRate * 100) / 100;
+    const netVal = grossVal - ahvEmp - bvgEmpMonthly - ktgEmp;
+    return {
+      gross: grossVal,
+      ahvEmployee: ahvEmp,
+      bvgEmployee: bvgEmpMonthly,
+      ktgUvgEmployee: ktgEmp,
+      net: Math.round(netVal * 100) / 100,
+    };
   }
 
-  it("calculates net salary correctly", () => {
-    const gross = 10000;
-    const ahv = 530; // 5.3%
-    const bvg = 800; // 8%
-    const ktg = 0;
-    expect(calcNet(gross, ahv, bvg, ktg)).toBe(8670);
+  // Bottom-up: Net → Gross → deductions
+  function calcFromNet(netVal: number, ahvEmpRate: number, bvgEmpMonthly: number, ktgEmpRate: number) {
+    const grossVal = (netVal + bvgEmpMonthly) / (1 - ahvEmpRate - ktgEmpRate);
+    const ahvEmp = Math.round(grossVal * ahvEmpRate * 100) / 100;
+    const ktgEmp = Math.round(grossVal * ktgEmpRate * 100) / 100;
+    return {
+      gross: Math.round(grossVal * 100) / 100,
+      ahvEmployee: ahvEmp,
+      bvgEmployee: bvgEmpMonthly,
+      ktgUvgEmployee: ktgEmp,
+      net: netVal,
+    };
+  }
+
+  // Swiss 2026 rates: AHV/IV/EO/ALV = 6.4% each side
+  const AHV_RATE = 0.064;
+  const BVG_MONTHLY = 0; // No BVG configured yet
+  const KTG_RATE = 0;
+
+  it("calculates net salary correctly (top-down, AHV 6.4%)", () => {
+    const result = calcFromGross(10000, AHV_RATE, BVG_MONTHLY, KTG_RATE);
+    expect(result.ahvEmployee).toBe(640);
+    expect(result.net).toBe(9360);
   });
 
-  it("net salary cannot be negative", () => {
-    const net = calcNet(1000, 600, 600, 0);
-    expect(net).toBeLessThan(0); // Validation should catch this
+  it("calculates gross from net correctly (bottom-up, AHV 6.4%)", () => {
+    const result = calcFromNet(9360, AHV_RATE, BVG_MONTHLY, KTG_RATE);
+    expect(result.gross).toBe(10000);
+    expect(result.ahvEmployee).toBe(640);
+    expect(result.net).toBe(9360);
+  });
+
+  it("gross is always greater than net", () => {
+    const result = calcFromNet(5000, AHV_RATE, BVG_MONTHLY, KTG_RATE);
+    expect(result.gross).toBeGreaterThan(result.net);
+  });
+
+  it("round-trip: gross → net → gross is consistent", () => {
+    const topDown = calcFromGross(15000, AHV_RATE, BVG_MONTHLY, KTG_RATE);
+    const bottomUp = calcFromNet(topDown.net, AHV_RATE, BVG_MONTHLY, KTG_RATE);
+    expect(Math.abs(bottomUp.gross - 15000)).toBeLessThan(0.02);
+  });
+
+  it("handles BVG fixed monthly amounts correctly", () => {
+    const bvgMonthly = 250;
+    const result = calcFromGross(10000, AHV_RATE, bvgMonthly, KTG_RATE);
+    expect(result.bvgEmployee).toBe(250);
+    expect(result.net).toBe(10000 - 640 - 250); // 9110
+  });
+
+  it("bottom-up with BVG: gross includes BVG recovery", () => {
+    const bvgMonthly = 250;
+    const result = calcFromNet(9110, AHV_RATE, bvgMonthly, KTG_RATE);
+    expect(result.gross).toBe(10000);
+    expect(result.ahvEmployee).toBe(640);
+    expect(result.bvgEmployee).toBe(250);
+  });
+
+  it("handles KTG/UVG percentage deductions", () => {
+    const ktgRate = 0.005; // 0.5%
+    const result = calcFromGross(10000, AHV_RATE, 0, ktgRate);
+    expect(result.ktgUvgEmployee).toBe(50);
+    expect(result.net).toBe(10000 - 640 - 50); // 9310
+  });
+
+  it("bottom-up with KTG: gross accounts for KTG rate", () => {
+    const ktgRate = 0.005;
+    const result = calcFromNet(9310, AHV_RATE, 0, ktgRate);
+    expect(result.gross).toBe(10000);
+    expect(result.ktgUvgEmployee).toBe(50);
+  });
+
+  it("real-world example: MW Jan 2026 net=26000 with AHV 6.4%", () => {
+    const result = calcFromNet(26000, AHV_RATE, BVG_MONTHLY, KTG_RATE);
+    // Brutto = 26000 / (1 - 0.064) = 26000 / 0.936 = 27777.78
+    expect(result.gross).toBeCloseTo(27777.78, 1);
+    expect(result.ahvEmployee).toBeCloseTo(1777.78, 1);
+    expect(result.gross).toBeGreaterThan(result.net);
+  });
+
+  it("net salary cannot be negative (validation case)", () => {
+    const result = calcFromGross(1000, 0.5, 600, 0); // 50% AHV = extreme
+    expect(result.net).toBeLessThan(0);
   });
 });
 
 // ─── Bank Parser ─────────────────────────────────────────────────────────────
 describe("Bank Statement Parser", () => {
   it("parses CSV format correctly", () => {
-    // Simple CSV test
     const csvLine = "2025-01-15;Miete Januar 2025;-2500.00;CHF";
     const parts = csvLine.split(";");
     expect(parts[0]).toBe("2025-01-15");
@@ -164,6 +244,6 @@ describe("normaliseDate – Datumsparser", () => {
     expect(normaliseDate("not-a-date")).toBeNull();
   });
   it("gibt null für unmögliche Datumsangaben zurück", () => {
-    expect(normaliseDate("32.13.2026")).toBeNull(); // Tag/Monat ungültig
+    expect(normaliseDate("32.13.2026")).toBeNull();
   });
 });

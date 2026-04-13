@@ -320,3 +320,15 @@
 - [x] Frontend: CreatePayrollDialog – Nettolohn-Eingabefeld (Bottom-Up): Netto eingeben → Brutto wird berechnet
 - [x] Frontend: CreatePayrollDialog – Bruttolohn-Eingabefeld weiterhin möglich (Top-Down)
 - [x] Frontend: AHV-Rate-Parsing korrigiert (DB-Wert ist Dezimalzahl, durch 100 dividiert für Prozentrechnung)
+
+## Feature: Journal Bulk-Selektion und Aktionen
+
+- [x] Frontend: Checkbox-Spalte in Journal-Tabelle (Einzelselektion pro Zeile)
+- [x] Frontend: "Alle markieren" Checkbox im Tabellenkopf (selektiert alle sichtbaren Einträge)
+- [x] Frontend: Bulk-Aktionsleiste erscheint wenn mindestens 1 Eintrag markiert ist (Anzahl, Aktionen)
+- [x] Frontend: Bulk-Aktion "Genehmigen" (alle markierten pending-Einträge freigeben)
+- [x] Frontend: Bulk-Aktion "Löschen" (alle markierten Einträge löschen, mit Bestätigung)
+- [x] Frontend: Bulk-Aktion "Zurücksetzen" (alle markierten approved-Einträge auf pending)
+- [x] Backend: bulkApprove Endpunkt (Array von Entry-IDs genehmigen)
+- [x] Backend: bulkDelete Endpunkt (Array von Entry-IDs löschen)
+- [x] Backend: bulkRevert Endpunkt (Array von Entry-IDs zurücksetzen)

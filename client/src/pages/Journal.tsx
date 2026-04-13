@@ -2,7 +2,8 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,7 @@ export default function Journal() {
   const [showCreateDialog, setShowCreateDialog] = useState<false | "single" | "collective">(false);
   const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const limit = 20;
 
   const { fiscalYear } = useFiscalYear();
@@ -84,6 +86,56 @@ export default function Journal() {
 
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
+
+  // Selection helpers
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    if (entries.length > 0 && selectedIds.size === entries.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(entries.map((e: any) => e.id)));
+    }
+  };
+
+  // Derived selection info
+  const selectedEntries = entries.filter((e: any) => selectedIds.has(e.id));
+  const selectedPending = selectedEntries.filter((e: any) => e.status === "pending");
+  const selectedApproved = selectedEntries.filter((e: any) => e.status === "approved");
+
+  // Bulk mutations
+  const bulkApproveMut = trpc.journal.bulkApprove.useMutation({
+    onSuccess: (res) => {
+      toast.success(`${res.approved} Buchung(en) genehmigt` + (res.skipped ? `, ${res.skipped} übersprungen` : ""));
+      setSelectedIds(new Set());
+      utils.journal.list.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const bulkDeleteMut = trpc.journal.bulkDelete.useMutation({
+    onSuccess: (res) => {
+      toast.success(`${res.deleted} Buchung(en) gelöscht` + (res.skipped ? `, ${res.skipped} übersprungen` : ""));
+      setSelectedIds(new Set());
+      utils.journal.list.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const bulkRevertMut = trpc.journal.bulkRevert.useMutation({
+    onSuccess: (res) => {
+      toast.success(`${res.reverted} Buchung(en) zurückgesetzt` + (res.skipped ? `, ${res.skipped} übersprungen` : ""));
+      setSelectedIds(new Set());
+      utils.journal.list.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   return (
     <div className="p-6 space-y-4">
@@ -135,12 +187,56 @@ export default function Journal() {
         </Select>
       </div>
 
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-primary/5 border border-primary/20 rounded-lg px-4 py-2.5">
+          <span className="text-sm font-medium">{selectedIds.size} ausgewählt</span>
+          <div className="flex-1" />
+          {selectedPending.length > 0 && (
+            <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-green-300 text-green-700 hover:bg-green-50"
+              disabled={bulkApproveMut.isPending}
+              onClick={() => bulkApproveMut.mutate({ entryIds: selectedPending.map(e => e.id) })}>
+              <Check className="h-3 w-3" />
+              {bulkApproveMut.isPending ? "Genehmige..." : `${selectedPending.length} genehmigen`}
+            </Button>
+          )}
+          {selectedApproved.length > 0 && (
+            <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+              disabled={bulkRevertMut.isPending}
+              onClick={() => bulkRevertMut.mutate({ entryIds: selectedApproved.map(e => e.id) })}>
+              <RotateCcw className="h-3 w-3" />
+              {bulkRevertMut.isPending ? "Setze zurück..." : `${selectedApproved.length} zurücksetzen`}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-red-300 text-red-700 hover:bg-red-50"
+            disabled={bulkDeleteMut.isPending}
+            onClick={() => setConfirmDialog({
+              open: true,
+              title: "Buchungen löschen",
+              message: `${selectedIds.size} Buchung(en) wirklich löschen? Verknüpfte Bankimport-Transaktionen werden auf Ausstehend zurückgesetzt.`,
+              onConfirm: () => bulkDeleteMut.mutate({ entryIds: Array.from(selectedIds) }),
+            })}>
+            <Trash2 className="h-3 w-3" />
+            {bulkDeleteMut.isPending ? "Lösche..." : `${selectedIds.size} löschen`}
+          </Button>
+          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedIds(new Set())}>
+            <X className="h-3 w-3 mr-1" /> Auswahl aufheben
+          </Button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="accounting-table">
             <thead>
               <tr>
+                <th className="w-10 px-2">
+                  <Checkbox
+                    checked={entries.length > 0 && selectedIds.size === entries.length}
+                    onCheckedChange={toggleSelectAll}
+                  />
+                </th>
                 <th>Nr.</th>
                 <th>Datum</th>
                 <th>Typ</th>
@@ -156,7 +252,7 @@ export default function Journal() {
             <tbody>
               {entries.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="text-center py-12 text-muted-foreground">
+                  <td colSpan={11} className="text-center py-12 text-muted-foreground">
                     Keine Buchungen gefunden
                   </td>
                 </tr>
@@ -164,9 +260,15 @@ export default function Journal() {
                 <>
                   <tr
                     key={entry.id}
-                    className={cn("cursor-pointer hover:bg-muted/20", expandedId === entry.id && "bg-muted/30")}
+                    className={cn("cursor-pointer hover:bg-muted/20", expandedId === entry.id && "bg-muted/30", selectedIds.has(entry.id) && "bg-primary/5")}
                     onClick={() => setDetailEntryId(entry.id)}
                   >
+                    <td className="px-2" onClick={e => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedIds.has(entry.id)}
+                        onCheckedChange={() => toggleSelect(entry.id)}
+                      />
+                    </td>
                     <td className="font-mono text-xs text-muted-foreground">{entry.entryNumber}</td>
                     <td className="text-sm whitespace-nowrap">
                       {new Date(entry.bookingDate as any).toLocaleDateString("de-CH")}
@@ -254,7 +356,7 @@ export default function Journal() {
                   {/* Expanded detail row */}
                   {expandedId === entry.id && entryDetail && (
                     <tr key={`detail-${entry.id}`}>
-                      <td colSpan={10} className="bg-muted/20 px-6 py-3">
+                      <td colSpan={11} className="bg-muted/20 px-6 py-3">
                         <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Buchungszeilen</div>
                         <table className="w-full text-sm">
                           <thead>

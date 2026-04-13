@@ -224,6 +224,64 @@ const journalRouter = router({
         .where(eq(journalEntries.id, input.entryId));
       return { success: true };
     }),
+
+  // Bulk approve multiple journal entries
+  bulkApprove: protectedProcedure
+    .input(z.object({ entryIds: z.array(z.number()) }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      let approved = 0;
+      let skipped = 0;
+      for (const id of input.entryIds) {
+        const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
+        if (!entry || entry.status !== "pending") { skipped++; continue; }
+        await db.update(journalEntries)
+          .set({ status: "approved", approvedBy: ctx.user.id, approvedAt: new Date() })
+          .where(eq(journalEntries.id, id));
+        approved++;
+      }
+      return { approved, skipped };
+    }),
+
+  // Bulk delete multiple journal entries
+  bulkDelete: protectedProcedure
+    .input(z.object({ entryIds: z.array(z.number()) }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let deleted = 0;
+      let skipped = 0;
+      for (const id of input.entryIds) {
+        try {
+          await deleteJournalEntry(id);
+          deleted++;
+        } catch {
+          skipped++;
+        }
+      }
+      return { deleted, skipped };
+    }),
+
+  // Bulk revert multiple journal entries back to pending
+  bulkRevert: protectedProcedure
+    .input(z.object({ entryIds: z.array(z.number()) }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      let reverted = 0;
+      let skipped = 0;
+      for (const id of input.entryIds) {
+        const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
+        if (!entry || entry.status !== "approved") { skipped++; continue; }
+        await db.update(journalEntries)
+          .set({ status: "pending", approvedBy: null, approvedAt: null })
+          .where(eq(journalEntries.id, id));
+        reverted++;
+      }
+      return { reverted, skipped };
+    }),
 });
 
 // ─── Bank Import Router ───────────────────────────────────────────────────────

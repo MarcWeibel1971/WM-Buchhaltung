@@ -2,7 +2,8 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +42,7 @@ export default function Journal() {
   const [offset, setOffset] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editEntry, setEditEntry] = useState<any>(null);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState<false | "single" | "collective">(false);
   const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
   const limit = 20;
 
@@ -83,9 +84,21 @@ export default function Journal() {
           <h2 className="text-xl font-bold">Journal</h2>
           <p className="text-sm text-muted-foreground">{total} Buchungen</p>
         </div>
-        <Button size="sm" className="gap-2" onClick={() => setShowCreateDialog(true)}>
-          <Plus className="h-4 w-4" /> Neue Buchung
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" className="gap-2">
+              <Plus className="h-4 w-4" /> Neue Buchung <ChevronDown className="h-3 w-3 ml-1" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setShowCreateDialog("single")}>
+              <Edit2 className="h-4 w-4 mr-2" /> Einzelbuchung
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowCreateDialog("collective")}>
+              <Layers className="h-4 w-4 mr-2" /> Sammelbuchung
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Filters */}
@@ -278,6 +291,7 @@ export default function Journal() {
       {/* Create Dialog */}
       {showCreateDialog && (
         <CreateEntryDialog
+          mode={showCreateDialog}
           accounts={accounts ?? []}
           onClose={() => setShowCreateDialog(false)}
           onSaved={() => { setShowCreateDialog(false); utils.journal.list.invalidate(); }}
@@ -383,14 +397,23 @@ function EditEntryDialog({ entry, accounts, onClose, onSaved }: {
 }
 
 // ─── Create Entry Dialog ──────────────────────────────────────────────────────
-function CreateEntryDialog({ accounts, onClose, onSaved }: {
-  accounts: any[]; onClose: () => void; onSaved: () => void;
+function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
+  mode: "single" | "collective"; accounts: any[]; onClose: () => void; onSaved: () => void;
 }) {
+  const isSingle = mode === "single";
   const [description, setDescription] = useState("");
   const [bookingDate, setBookingDate] = useState(new Date().toISOString().split("T")[0]);
+
+  // Single mode: simple debit/credit with one amount
+  const [singleDebitAccountId, setSingleDebitAccountId] = useState<string>("");
+  const [singleCreditAccountId, setSingleCreditAccountId] = useState<string>("");
+  const [singleAmount, setSingleAmount] = useState("");
+
+  // Collective mode: multiple lines
   const [lines, setLines] = useState([
     { accountId: 0, side: "debit" as const, amount: "" },
     { accountId: 0, side: "credit" as const, amount: "" },
+    { accountId: 0, side: "debit" as const, amount: "" },
   ]);
 
   const createMutation = trpc.journal.create.useMutation({
@@ -398,16 +421,47 @@ function CreateEntryDialog({ accounts, onClose, onSaved }: {
     onError: (e) => toast.error(e.message),
   });
 
+  // Validation for single mode
+  const singleAmountNum = parseFloat(singleAmount || "0");
+  const singleValid = isSingle && description.trim() && singleDebitAccountId && singleCreditAccountId && singleAmountNum > 0;
+
+  // Validation for collective mode
   const debitTotal = lines.filter(l => l.side === "debit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
   const creditTotal = lines.filter(l => l.side === "credit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
   const balanced = Math.abs(debitTotal - creditTotal) < 0.01 && debitTotal > 0;
-  const valid = balanced && description.trim() && lines.every(l => l.accountId > 0);
+  const collectiveValid = !isSingle && balanced && description.trim() && lines.filter(l => l.accountId > 0).length >= 2 && lines.every(l => l.accountId > 0 || !l.amount);
+
+  const handleCreate = () => {
+    if (isSingle) {
+      createMutation.mutate({
+        bookingDate,
+        description,
+        lines: [
+          { accountId: parseInt(singleDebitAccountId), side: "debit", amount: singleAmount },
+          { accountId: parseInt(singleCreditAccountId), side: "credit", amount: singleAmount },
+        ],
+      });
+    } else {
+      createMutation.mutate({
+        bookingDate,
+        description,
+        lines: lines.filter(l => l.accountId > 0),
+      });
+    }
+  };
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className={isSingle ? "max-w-lg" : "max-w-2xl"}>
         <DialogHeader>
-          <DialogTitle>Manuelle Buchung erstellen</DialogTitle>
+          <DialogTitle>
+            {isSingle ? "Einzelbuchung erstellen" : "Sammelbuchung erstellen"}
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground">
+            {isSingle
+              ? "Einfache Buchung mit einem Soll- und einem Haben-Konto"
+              : "Buchung mit mehreren Soll- und/oder Haben-Positionen"}
+          </p>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -420,64 +474,104 @@ function CreateEntryDialog({ accounts, onClose, onSaved }: {
               <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Buchungstext..." />
             </div>
           </div>
-          <div className="space-y-2">
-            <div className="grid grid-cols-[1fr_100px_120px_32px] gap-2 text-xs font-medium text-muted-foreground px-1">
-              <span>Konto</span><span>Seite</span><span className="text-right">Betrag CHF</span><span></span>
-            </div>
-            {lines.map((line, i) => (
-              <div key={i} className="grid grid-cols-[1fr_100px_120px_32px] gap-2 items-center">
-                <Select value={String(line.accountId || "")} onValueChange={v => {
-                  const nl = [...lines]; nl[i] = { ...line, accountId: parseInt(v) }; setLines(nl);
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Konto..." /></SelectTrigger>
+
+          {isSingle ? (
+            /* ── Single booking: Soll-Konto, Haben-Konto, Betrag ── */
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Soll-Konto</label>
+                <Select value={singleDebitAccountId} onValueChange={setSingleDebitAccountId}>
+                  <SelectTrigger><SelectValue placeholder="Soll-Konto wählen..." /></SelectTrigger>
                   <SelectContent className="max-h-64">
                     {accounts.map(a => (
                       <SelectItem key={a.id} value={String(a.id)}>{a.number} – {a.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={line.side} onValueChange={v => {
-                  const nl = [...lines]; nl[i] = { ...line, side: v as any }; setLines(nl);
-                }}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="debit">Soll</SelectItem>
-                    <SelectItem value="credit">Haben</SelectItem>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Haben-Konto</label>
+                <Select value={singleCreditAccountId} onValueChange={setSingleCreditAccountId}>
+                  <SelectTrigger><SelectValue placeholder="Haben-Konto wählen..." /></SelectTrigger>
+                  <SelectContent className="max-h-64">
+                    {accounts.map(a => (
+                      <SelectItem key={a.id} value={String(a.id)}>{a.number} – {a.name}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground">Betrag CHF</label>
                 <Input
                   className="font-mono text-right"
-                  value={line.amount}
-                  onChange={e => { const nl = [...lines]; nl[i] = { ...line, amount: e.target.value }; setLines(nl); }}
+                  value={singleAmount}
+                  onChange={e => setSingleAmount(e.target.value)}
                   placeholder="0.00"
                 />
-                <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground"
-                  onClick={() => setLines(lines.filter((_, j) => j !== i))}>
-                  <X className="h-3 w-3" />
-                </Button>
               </div>
-            ))}
-            <Button size="sm" variant="outline" className="w-full text-xs"
-              onClick={() => setLines([...lines, { accountId: 0, side: "debit", amount: "" }])}>
-              + Zeile hinzufügen
-            </Button>
-          </div>
-          {lines.length >= 2 && (
-            <div className="flex justify-between text-xs px-1">
-              <span className={balanced ? "text-green-600" : "text-red-500"}>
-                Soll: {debitTotal.toFixed(2)} | Haben: {creditTotal.toFixed(2)}
-                {balanced ? " ✓" : " ✗"}
-              </span>
+            </div>
+          ) : (
+            /* ── Collective booking: multiple lines ── */
+            <div className="space-y-2">
+              <div className="grid grid-cols-[1fr_100px_120px_32px] gap-2 text-xs font-medium text-muted-foreground px-1">
+                <span>Konto</span><span>Seite</span><span className="text-right">Betrag CHF</span><span></span>
+              </div>
+              {lines.map((line, i) => (
+                <div key={i} className="grid grid-cols-[1fr_100px_120px_32px] gap-2 items-center">
+                  <Select value={String(line.accountId || "")} onValueChange={v => {
+                    const nl = [...lines]; nl[i] = { ...line, accountId: parseInt(v) }; setLines(nl);
+                  }}>
+                    <SelectTrigger><SelectValue placeholder="Konto..." /></SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      {accounts.map(a => (
+                        <SelectItem key={a.id} value={String(a.id)}>{a.number} – {a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={line.side} onValueChange={v => {
+                    const nl = [...lines]; nl[i] = { ...line, side: v as any }; setLines(nl);
+                  }}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="debit">Soll</SelectItem>
+                      <SelectItem value="credit">Haben</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    className="font-mono text-right"
+                    value={line.amount}
+                    onChange={e => { const nl = [...lines]; nl[i] = { ...line, amount: e.target.value }; setLines(nl); }}
+                    placeholder="0.00"
+                  />
+                  <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground"
+                    disabled={lines.length <= 2}
+                    onClick={() => setLines(lines.filter((_, j) => j !== i))}>
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+              <Button size="sm" variant="outline" className="w-full text-xs"
+                onClick={() => setLines([...lines, { accountId: 0, side: "debit", amount: "" }])}>
+                + Zeile hinzufügen
+              </Button>
+              {lines.length >= 2 && (
+                <div className="flex justify-between text-xs px-1">
+                  <span className={balanced ? "text-green-600" : "text-red-500"}>
+                    Soll: {debitTotal.toFixed(2)} | Haben: {creditTotal.toFixed(2)}
+                    {balanced ? " ✓" : " ✗"}
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Abbrechen</Button>
           <Button
-            disabled={!valid || createMutation.isPending}
-            onClick={() => createMutation.mutate({ bookingDate, description, lines: lines.filter(l => l.accountId > 0) })}
+            disabled={isSingle ? (!singleValid || createMutation.isPending) : (!collectiveValid || createMutation.isPending)}
+            onClick={handleCreate}
           >
-            Buchung erstellen
+            {createMutation.isPending ? "Wird erstellt..." : (isSingle ? "Einzelbuchung erstellen" : "Sammelbuchung erstellen")}
           </Button>
         </DialogFooter>
       </DialogContent>

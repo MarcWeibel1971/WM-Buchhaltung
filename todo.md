@@ -188,3 +188,7 @@
 - [x] Fix 2: Toggle verbucht↔ausstehend – Verbuchte Transaktionen im Bankimport und KK-Abrechnungen müssen rückgängig gemacht werden können (Journal-Einträge löschen, Status zurück auf pending)
 - [x] Fix 3: Doppelte Eröffnungsbilanz entfernen – Eröffnungssalden wurden doppelt gebucht
 - [x] Fix 4: Ausstehende KK-Abrechnungen löschen – Lösch-Button für pending KK-Abrechnungen auf der Kreditkarte-Seite
+
+## Neue Features (Benutzer-Feedback)
+- [x] Feature: Neue Buchung – Auswahl zwischen Einzelbuchung und Sammelbuchung
+- [x] Feature: Rechnungsvorschau bei gematchten Bankimport-Transaktionen (Dokumente-Matching)

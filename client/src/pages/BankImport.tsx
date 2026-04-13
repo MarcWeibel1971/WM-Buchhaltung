@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2 } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -56,6 +56,9 @@ export default function BankImport() {
     debitAccountId: string;
     creditAccountId: string;
   }>({ description: "", counterparty: "", counterpartyIban: "", reference: "", debitAccountId: "", creditAccountId: "" });
+
+  // Invoice preview dialog state
+  const [previewDoc, setPreviewDoc] = useState<any>(null);
 
   // Credit card dialog state
   const [ccDialog, setCcDialog] = useState<{ txId: number; counterparty: string } | null>(null);
@@ -502,16 +505,35 @@ export default function BankImport() {
                               )}
                             </>
                           ) : "–"}
-                          {(tx as any).matchedDocumentId && (
-                            <span title="Rechnung gematched" className="inline-flex items-center text-green-600">
-                              <FileText className="h-3 w-3" />
-                            </span>
-                          )}
+                          {(tx as any).matchedDocumentId && (() => {
+                            const doc = allDocs?.find((d: any) => d.id === (tx as any).matchedDocumentId);
+                            return (
+                              <button
+                                title={doc ? `Rechnung: ${doc.filename}` : "Rechnung gematched"}
+                                className="inline-flex items-center text-green-600 hover:text-green-800 cursor-pointer"
+                                onClick={(e) => { e.stopPropagation(); if (doc) setPreviewDoc(doc); }}
+                              >
+                                <Eye className="h-3 w-3" />
+                              </button>
+                            );
+                          })()}
                         </span>
                       )}
                       {txIsMatched && (
                         <span className="inline-flex items-center gap-1 text-green-600 font-medium">
                           <Check className="h-3 w-3" /> Verbucht
+                          {(tx as any).matchedDocumentId && (() => {
+                            const doc = allDocs?.find((d: any) => d.id === (tx as any).matchedDocumentId);
+                            return doc ? (
+                              <button
+                                title={`Rechnung: ${doc.filename}`}
+                                className="ml-1 text-blue-600 hover:text-blue-800 cursor-pointer"
+                                onClick={(e) => { e.stopPropagation(); setPreviewDoc(doc); }}
+                              >
+                                <Eye className="h-3 w-3" />
+                              </button>
+                            ) : null;
+                          })()}
                         </span>
                       )}
                       {tx.status === "ignored" && (
@@ -781,6 +803,94 @@ export default function BankImport() {
                 {approveWithItemsMutation.isPending ? "Wird verbucht..." : "Sammelbuchung erstellen"}
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Invoice Preview Dialog ─── */}
+      <Dialog open={!!previewDoc} onOpenChange={open => { if (!open) setPreviewDoc(null); }}>
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-blue-600" />
+              Rechnungsvorschau
+            </DialogTitle>
+            <DialogDescription>
+              {previewDoc?.filename}
+            </DialogDescription>
+          </DialogHeader>
+          {previewDoc && (() => {
+            let meta: any = null;
+            try { if (previewDoc.aiMetadata) meta = JSON.parse(previewDoc.aiMetadata); } catch {}
+            return (
+              <div className="flex-1 overflow-hidden flex flex-col gap-4">
+                {/* AI-extracted metadata */}
+                {meta && (
+                  <div className="bg-muted/50 rounded-lg p-3 text-sm">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {meta.counterparty && (
+                        <div>
+                          <span className="text-xs text-muted-foreground block">Gegenpartei</span>
+                          <span className="font-medium">{meta.counterparty}</span>
+                        </div>
+                      )}
+                      {meta.totalAmount != null && (
+                        <div>
+                          <span className="text-xs text-muted-foreground block">Betrag</span>
+                          <span className="font-medium font-mono">CHF {formatCHF(Number(meta.totalAmount))}</span>
+                        </div>
+                      )}
+                      {meta.documentDate && (
+                        <div>
+                          <span className="text-xs text-muted-foreground block">Rechnungsdatum</span>
+                          <span className="font-medium">{meta.documentDate}</span>
+                        </div>
+                      )}
+                      {meta.vatRate != null && (
+                        <div>
+                          <span className="text-xs text-muted-foreground block">MWST</span>
+                          <span className="font-medium">{meta.vatRate}%</span>
+                        </div>
+                      )}
+                    </div>
+                    {meta.description && (
+                      <p className="text-xs text-muted-foreground mt-2">{meta.description}</p>
+                    )}
+                  </div>
+                )}
+                {/* Document preview */}
+                <div className="flex-1 min-h-0 rounded-lg border border-border overflow-hidden bg-white">
+                  {previewDoc.mimeType === "application/pdf" ? (
+                    <iframe
+                      src={previewDoc.s3Url}
+                      className="w-full h-full min-h-[500px]"
+                      title="Rechnungsvorschau"
+                    />
+                  ) : previewDoc.mimeType?.startsWith("image/") ? (
+                    <img
+                      src={previewDoc.s3Url}
+                      alt={previewDoc.filename}
+                      className="max-w-full max-h-[500px] object-contain mx-auto p-4"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                      <FileText className="h-12 w-12 mb-3 opacity-30" />
+                      <p>Vorschau nicht verfügbar</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            {previewDoc?.s3Url && (
+              <a href={previewDoc.s3Url} target="_blank" rel="noopener noreferrer">
+                <Button variant="outline" className="gap-2">
+                  <Eye className="h-4 w-4" /> In neuem Tab öffnen
+                </Button>
+              </a>
+            )}
+            <Button variant="outline" onClick={() => setPreviewDoc(null)}>Schliessen</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

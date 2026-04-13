@@ -212,16 +212,24 @@ export const employees = mysqlTable("employees", {
   lastName: varchar("lastName", { length: 100 }).notNull(),
   // AHV number
   ahvNumber: varchar("ahvNumber", { length: 20 }),
-  // Address
+  // Address (legacy single field)
   address: text("address"),
+  // Structured address fields for official documents
+  street: varchar("street", { length: 200 }),
+  zipCode: varchar("zipCode", { length: 10 }),
+  city: varchar("city", { length: 100 }),
   // Date of birth
   dateOfBirth: date("dateOfBirth", { mode: 'string' }),
   // Employment start
   employmentStart: date("employmentStart", { mode: 'string' }),
+  // Employment end (for partial year)
+  employmentEnd: date("employmentEnd", { mode: 'string' }),
   // Linked salary account (Kontokorrent)
   salaryAccountId: int("salaryAccountId"),
   // Linked gross salary account
   grossSalaryAccountId: int("grossSalaryAccountId"),
+  // Lohnausweis Ziffer 15: Bemerkungen
+  lohnausweisRemarks: text("lohnausweisRemarks"),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

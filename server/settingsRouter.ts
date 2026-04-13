@@ -56,10 +56,17 @@ const employeeInput = z.object({
   lastName: z.string().min(1).max(100),
   ahvNumber: z.string().max(20).optional(),
   address: z.string().optional(),
+  // Structured address fields
+  street: z.string().max(200).optional(),
+  zipCode: z.string().max(10).optional(),
+  city: z.string().max(100).optional(),
   dateOfBirth: z.string().optional(),
   employmentStart: z.string().optional(),
+  employmentEnd: z.string().optional(),
   salaryAccountId: z.number().int().optional(),
   grossSalaryAccountId: z.number().int().optional(),
+  // Lohnausweis Ziffer 15: Bemerkungen
+  lohnausweisRemarks: z.string().optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -236,10 +243,15 @@ export const settingsRouter = router({
           lastName: data.lastName,
           ahvNumber: data.ahvNumber,
           address: data.address,
+          street: data.street,
+          zipCode: data.zipCode,
+          city: data.city,
           dateOfBirth: data.dateOfBirth,
           employmentStart: data.employmentStart,
+          employmentEnd: data.employmentEnd,
           salaryAccountId: data.salaryAccountId,
           grossSalaryAccountId: data.grossSalaryAccountId,
+          lohnausweisRemarks: data.lohnausweisRemarks,
           isActive: data.isActive ?? true,
         });
       }

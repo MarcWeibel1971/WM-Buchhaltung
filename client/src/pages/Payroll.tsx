@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { Plus, Check, FileText, Users, CalendarDays } from "lucide-react";
+import { Plus, Check, FileText, Users, CalendarDays, Award } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -9,6 +9,290 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { jsPDF } from "jspdf";
+
+// ─── Offizieller Lohnausweis Form. 11 (Schweiz) ─────────────────────────────────
+function generateOfficialLohnausweis(summary: any, emp: any, company: any) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth(); // 210mm
+  const pageH = doc.internal.pageSize.getHeight(); // 297mm
+  const L = 12; // left margin
+  const R = pageW - 12; // right margin
+
+  // Helper: format CHF as integer (official form uses whole francs only)
+  const chf = (v: number) => Math.round(v).toLocaleString('de-CH');
+  const line = (x1: number, y: number, x2: number) => { doc.setDrawColor(180,180,180); doc.line(x1, y, x2, y); };
+  const box = (x: number, y: number, w: number, h: number, fill?: [number,number,number]) => {
+    if (fill) { doc.setFillColor(...fill); doc.rect(x, y, w, h, 'F'); }
+    doc.setDrawColor(120,120,120); doc.rect(x, y, w, h, 'S');
+  };
+  const checkbox = (x: number, y: number, checked: boolean, size = 4) => {
+    box(x, y - size + 1, size, size);
+    if (checked) {
+      doc.setDrawColor(0,0,0); doc.setLineWidth(0.6);
+      doc.line(x + 0.5, y - size + 2, x + size/2, y - 0.5);
+      doc.line(x + size/2, y - 0.5, x + size - 0.5, y - size + 1.5);
+      doc.setLineWidth(0.2);
+    }
+  };
+
+  let y = 10;
+
+  // ── Title bar ──
+  doc.setFillColor(240,240,240); doc.rect(L, y, R-L, 8, 'F');
+  doc.setDrawColor(80,80,80); doc.rect(L, y, R-L, 8, 'S');
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+
+  // A: Lohnausweis checkbox
+  checkbox(L+2, y+6, true);
+  doc.text('A', L+2, y+5.5);
+  doc.setFontSize(9);
+  doc.text('Lohnausweis – Certificat de salaire – Certificato di salario', L+8, y+5.5);
+  y += 10;
+
+  // B: Rentenbescheinigung
+  doc.setFillColor(248,248,248); doc.rect(L, y, R-L, 6, 'F');
+  doc.setDrawColor(80,80,80); doc.rect(L, y, R-L, 6, 'S');
+  checkbox(L+2, y+4.5, false);
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+  doc.text('B', L+2, y+4);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Rentenbescheinigung – Attestation de rentes – Attestazione delle rendite', L+8, y+4);
+  y += 8;
+
+  // ── Row C/D/E/F/G ──
+  const rowH = 10;
+  box(L, y, 80, rowH);
+  box(L+80, y, 20, rowH);
+  box(L+100, y, 30, rowH);
+  box(L+130, y, 25, rowH);
+  box(L+155, y, R-L-155, rowH);
+
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(100,100,100);
+  doc.text('AHV-Nr. – No AVS – N. AVS', L+1, y+2.5);
+  doc.text('Jahr – Année – Anno', L+81, y+2.5);
+  doc.text('von – du – dal', L+101, y+2.5);
+  doc.text('bis – au – al', L+131, y+2.5);
+
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(0,0,0);
+  doc.text(emp?.ahvNumber ?? '', L+2, y+7.5);
+  doc.text(String(summary.year), L+82, y+7.5);
+
+  const empStart = emp?.employmentStart ? new Date(emp.employmentStart) : new Date(summary.year, 0, 1);
+  const empEnd = emp?.employmentEnd ? new Date(emp.employmentEnd) : new Date(summary.year, 11, 31);
+  const startYear = empStart.getFullYear();
+  const endYear = empEnd.getFullYear();
+  const fromDate = startYear === summary.year ? empStart.toLocaleDateString('de-CH', { day:'2-digit', month:'2-digit', year:'2-digit' }) : `01.01.${String(summary.year).slice(2)}`;
+  const toDate = endYear === summary.year ? empEnd.toLocaleDateString('de-CH', { day:'2-digit', month:'2-digit', year:'2-digit' }) : `31.12.${String(summary.year).slice(2)}`;
+  doc.text(fromDate, L+102, y+7.5);
+  doc.text(toDate, L+132, y+7.5);
+
+  // F label (Beförderung)
+  doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(80,80,80);
+  doc.text('F', L+156, y+3);
+  doc.text('Unentgeltliche Beförderung', L+160, y+3);
+  checkbox(L+156, y+8, false, 3);
+
+  // G label (Kantine)
+  doc.setFontSize(6.5);
+  doc.text('G', L+156, y+3+4);
+  doc.text('Kantinenverpflegung', L+160, y+3+4);
+  checkbox(L+156, y+8+4, false, 3);
+
+  y += rowH + 2;
+
+  // ── H: Employee address block ──
+  const addrH = 35;
+  box(L, y, 100, addrH);
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(100,100,100);
+  doc.text('H', L+1, y+3);
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal'); doc.setTextColor(0,0,0);
+  doc.text(`${emp?.firstName ?? ''} ${emp?.lastName ?? ''}`, L+4, y+10);
+  if (emp?.street) doc.text(emp.street, L+4, y+16);
+  const cityLine = [emp?.zipCode, emp?.city].filter(Boolean).join(' ');
+  if (cityLine) doc.text(cityLine, L+4, y+22);
+
+  // Right side: F/G checkboxes area (already done above, just extend box)
+  box(L+100, y, R-L-100, addrH);
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(100,100,100);
+  doc.text('Nur ganze Frankenbeiträge', R-2, y+5, { align: 'right' });
+  doc.text('Que des montants entiers', R-2, y+9, { align: 'right' });
+  doc.text('Unicamente importi interi', R-2, y+13, { align: 'right' });
+
+  y += addrH + 3;
+
+  // ── Salary rows (Ziffern 1–11) ──
+  const gross = summary.totals.grossSalary;
+  const ahvEmp = summary.totals.ahvEmployee;
+  const bvgEmp = summary.totals.bvgEmployee;
+  const ktgEmp = summary.totals.ktgUvgEmployee;
+  const net = summary.totals.netSalary;
+
+  // Column positions
+  const numX = L+3;
+  const labelX = L+10;
+  const signX = R-35;
+  const amtX = R-2;
+
+  const salaryRow = (num: string, label: string, amount: number | null, sign: string, bold = false, shade = false) => {
+    const rh = 7;
+    if (shade) { doc.setFillColor(245,245,245); doc.rect(L, y-5, R-L, rh+1, 'F'); }
+    doc.setDrawColor(200,200,200); doc.line(L, y+2.5, R, y+2.5);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setTextColor(0,0,0);
+    doc.text(num+'.', numX, y);
+    doc.text(label, labelX, y);
+    if (amount !== null && amount !== 0) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(sign, signX, y, { align: 'right' });
+      doc.text(chf(amount), amtX, y, { align: 'right' });
+    } else if (amount !== null) {
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(160,160,160);
+      doc.text(sign, signX, y, { align: 'right' });
+    }
+    doc.setTextColor(0,0,0);
+    y += rh;
+  };
+
+  const subRow = (num: string, label: string, amount: number | null, sign: string) => {
+    doc.setDrawColor(210,210,210); doc.line(L, y+2.5, R, y+2.5);
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(60,60,60);
+    doc.text(num, numX+2, y);
+    doc.text(label, labelX+4, y);
+    if (amount !== null && amount !== 0) {
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(0,0,0);
+      doc.text(sign, signX, y, { align: 'right' });
+      doc.text(chf(amount), amtX, y, { align: 'right' });
+    } else {
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(160,160,160);
+      doc.text(sign, signX, y, { align: 'right' });
+    }
+    doc.setTextColor(0,0,0);
+    y += 6;
+  };
+
+  // Draw outer box for salary section
+  const salaryStartY = y - 5;
+
+  salaryRow('1', 'Lohn (soweit nicht unter Ziffer 2–7 aufzuführen)', gross, '', false);
+
+  // Ziffer 2: Gehaltsnebenleistungen
+  salaryRow('2', 'Gehaltsnebenleistungen', null, '+');
+  subRow('2.1', 'Verpflegung, Unterkunft', null, '+');
+  subRow('2.2', 'Privatanteil Geschäftswagen', null, '+');
+  subRow('2.3', 'Andere', null, '+');
+
+  salaryRow('3', 'Unregelmässige Leistungen', null, '+');
+  salaryRow('4', 'Kapitalleistungen', null, '+');
+  salaryRow('5', 'Beteiligungsrechte gemäss Beiblatt', null, '+');
+  salaryRow('6', 'Verwaltungsratsentschädigungen', null, '+');
+  salaryRow('7', 'Andere Leistungen', null, '+');
+
+  // Ziffer 8: Bruttolohn
+  doc.setFillColor(235,235,235); doc.rect(L, y-5, R-L, 8, 'F');
+  doc.setDrawColor(80,80,80); doc.line(L, y+3, R, y+3);
+  doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(0,0,0);
+  doc.text('8.', numX, y);
+  doc.text('Bruttolohn total / Rente', labelX, y);
+  doc.text('=', signX, y, { align: 'right' });
+  doc.text(chf(gross), amtX, y, { align: 'right' });
+  y += 8;
+
+  // Ziffer 9: AHV
+  doc.setDrawColor(200,200,200); doc.line(L, y+2.5, R, y+2.5);
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+  doc.text('9.', numX, y);
+  doc.text('Beiträge AHV/IV/EO/ALV/NBUV', labelX, y);
+  doc.setFont('helvetica', 'bold');
+  doc.text('–', signX, y, { align: 'right' });
+  doc.text(chf(ahvEmp + ktgEmp), amtX, y, { align: 'right' });
+  y += 7;
+
+  // Ziffer 10: BVG
+  doc.setDrawColor(200,200,200); doc.line(L, y+2.5, R, y+2.5);
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+  doc.text('10.', numX, y);
+  doc.text('Berufliche Vorsorge 2. Säule', labelX, y);
+  y += 7;
+  subRow('10.1', 'Ordentliche Beiträge', bvgEmp, '–');
+  subRow('10.2', 'Beiträge für den Einkauf', null, '–');
+
+  // Ziffer 11: Nettolohn
+  doc.setFillColor(220,240,220); doc.rect(L, y-5, R-L, 9, 'F');
+  doc.setDrawColor(60,120,60); doc.rect(L, y-5, R-L, 9, 'S');
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(0,0,0);
+  doc.text('11.', numX, y);
+  doc.text('Nettolohn/Rente', labelX, y);
+  doc.text('=', signX, y, { align: 'right' });
+  doc.text(chf(net), amtX, y, { align: 'right' });
+  doc.setFontSize(7); doc.setFont('helvetica', 'italic');
+  doc.text('In die Steuererklärung übertragen', labelX, y+4);
+  y += 10;
+
+  // Ziffern 12–14
+  salaryRow('12', 'Quellensteuerabzug', null, '–');
+  salaryRow('13', 'Spesenvergütungen (nicht im Bruttolohn)', null, '');
+  subRow('13.1', 'Effektive Spesen', null, '');
+  subRow('13.2', 'Pauschalspesen', null, '');
+  subRow('13.3', 'Beiträge an die Weiterbildung', null, '');
+  salaryRow('14', 'Weitere Gehaltsnebenleistungen', null, '');
+
+  // Ziffer 15: Bemerkungen
+  const remarks = emp?.lohnausweisRemarks ?? '';
+  doc.setDrawColor(200,200,200); doc.line(L, y+2.5, R, y+2.5);
+  doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(0,0,0);
+  doc.text('15.', numX, y);
+  doc.text('Bemerkungen', labelX, y);
+  y += 6;
+  if (remarks) {
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
+    const lines = doc.splitTextToSize(remarks, R - L - 10);
+    doc.text(lines, labelX, y);
+    y += lines.length * 5;
+  } else {
+    y += 4;
+  }
+
+  // Draw outer border around salary section
+  doc.setDrawColor(80,80,80); doc.rect(L, salaryStartY, R-L, y - salaryStartY, 'S');
+
+  y += 5;
+
+  // ── Footer I ──
+  if (y > pageH - 35) { doc.addPage(); y = 15; }
+  doc.setDrawColor(80,80,80); doc.line(L, y, R, y);
+  y += 5;
+
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(100,100,100);
+  doc.text('I   Ort und Datum – Lieu et date – Luogo e data', L, y);
+  doc.text('Die Richtigkeit und Vollständigkeit bestätigt', pageW/2, y);
+  y += 5;
+
+  const city = company?.city ?? 'Luzern';
+  const today = new Date().toLocaleDateString('de-CH', { day:'2-digit', month:'2-digit', year:'2-digit' });
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(0,0,0);
+  doc.text(`${city}, ${today}`, L, y);
+
+  // Employer info (right column)
+  const compName = company?.companyName ?? 'WM Weibel Mueller AG';
+  const compStreet = company?.street ?? '';
+  const compCity = [company?.zipCode, company?.city].filter(Boolean).join(' ');
+  const compPhone = company?.phone ?? '';
+  doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
+  doc.text(compName, R, y, { align: 'right' });
+  y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  if (compStreet) { doc.text(compStreet, R, y, { align: 'right' }); y += 4; }
+  if (compCity) { doc.text(compCity, R, y, { align: 'right' }); y += 4; }
+  if (compPhone) { doc.text(`Tel. ${compPhone}`, R, y, { align: 'right' }); y += 4; }
+  if (company?.uid) { doc.text(`UID: ${company.uid}`, R, y, { align: 'right' }); y += 4; }
+
+  // Form number
+  doc.setFontSize(7); doc.setTextColor(150,150,150);
+  doc.text('Form. 11', L, pageH - 5);
+  doc.text(`Erstellt am ${new Date().toLocaleDateString('de-CH')}`, pageW/2, pageH - 5, { align: 'center' });
+
+  doc.save(`Lohnausweis_offiziell_${emp?.code ?? 'MA'}_${summary.year}.pdf`);
+}
 
 function generateLohnausweis(p: any, emp: any, company?: any) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -416,9 +700,14 @@ function AnnualPayrollView({ year, employees, company, annualEmpId, setAnnualEmp
           </Select>
         </div>
         {summary && summary.months.length > 0 && (
-          <Button variant="outline" className="gap-2 mt-5" onClick={() => generateJahreslohnausweis(summary, selectedEmp, company)}>
-            <FileText className="h-4 w-4" /> PDF Export
-          </Button>
+          <div className="flex gap-2 mt-5">
+            <Button variant="outline" className="gap-2" onClick={() => generateJahreslohnausweis(summary, selectedEmp, company)}>
+              <FileText className="h-4 w-4" /> Interner Lohnausweis
+            </Button>
+            <Button variant="default" className="gap-2" onClick={() => generateOfficialLohnausweis(summary, selectedEmp, company)}>
+              <Award className="h-4 w-4" /> Offizieller Lohnausweis (Form. 11)
+            </Button>
+          </div>
         )}
       </div>
 

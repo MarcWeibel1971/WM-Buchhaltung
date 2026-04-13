@@ -259,3 +259,19 @@
 - [x] Frontend: 4 Summary-Cards: Jahresbruttolohn, Total AN-Abzüge, Jahresnettolohn, Total AG-Lohnkosten
 - [x] Frontend: PDF-Export Jahreslohnausweis (Firmenname, Mitarbeiter, Monatstabelle, Jahrestotale)
 - [x] Frontend: Monatslohnausweis-PDF zeigt Bruttolohn korrekt
+
+## Feature: Offizieller Lohnausweis Form. 11
+
+- [x] DB/Backend: employees-Tabelle um Adressfelder (street, zipCode, city, employmentEnd) erweitert
+- [x] DB/Backend: employees-Tabelle um Bemerkungen-Feld (lohnausweisRemarks) erweitert
+- [x] Backend: annualSummary-Endpunkt gibt alle Felder für Lohnausweis zurück
+- [x] Frontend: Settings/Mitarbeiter – Strasse, PLZ, Ort, Austritt, Bemerkungen Ziffer 15 bearbeitbar
+- [x] Frontend: Offizieller Lohnausweis PDF (Form. 11) mit exaktem Layout
+  - Checkboxen A (Lohnausweis angekreuzt) / B (Rentenbescheinigung leer)
+  - Felder C (AHV-Nr.), D (Jahr), E (Von/Bis aus Eintrittsdatum)
+  - Checkboxen F (Beförderung), G (Kantine) – beide leer
+  - Adressblock H (Arbeitnehmer: Name, Strasse, PLZ/Ort)
+  - Ziffern 1–11 (Lohn, Nebenleistungen, Bruttolohn, AHV+KTG, BVG, Nettolohn)
+  - Ziffern 12–15 (Quellensteuer, Spesen, Nebenleistungen, Bemerkungen aus DB)
+  - Footer I (Ort/Datum, Arbeitgeber-Adresse aus companySettings, UID)
+- [x] Frontend: Jahreslohnausweis-Tab – zwei Buttons: "Interner Lohnausweis" und "Offizieller Lohnausweis (Form. 11)"

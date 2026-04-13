@@ -425,7 +425,7 @@ function EmployeesTab() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editEmp, setEditEmp] = useState<Record<string, string> | null>(null);
 
-  const emptyForm = () => ({ code: "", firstName: "", lastName: "", ahvNumber: "", address: "", dateOfBirth: "", employmentStart: "" });
+  const emptyForm = () => ({ code: "", firstName: "", lastName: "", ahvNumber: "", address: "", street: "", zipCode: "", city: "", dateOfBirth: "", employmentStart: "", employmentEnd: "", lohnausweisRemarks: "" });
 
   const openNew = () => { setEditEmp(emptyForm()); setDialogOpen(true); };
   const openEdit = (e: NonNullable<typeof emps>[number]) => {
@@ -436,10 +436,15 @@ function EmployeesTab() {
       lastName: e.lastName,
       ahvNumber: e.ahvNumber ?? "",
       address: e.address ?? "",
+      street: (e as any).street ?? "",
+      zipCode: (e as any).zipCode ?? "",
+      city: (e as any).city ?? "",
       dateOfBirth: e.dateOfBirth ?? "",
       employmentStart: e.employmentStart ?? "",
+      employmentEnd: (e as any).employmentEnd ?? "",
       salaryAccountId: e.salaryAccountId ? String(e.salaryAccountId) : "",
       grossSalaryAccountId: e.grossSalaryAccountId ? String(e.grossSalaryAccountId) : "",
+      lohnausweisRemarks: (e as any).lohnausweisRemarks ?? "",
     });
     setDialogOpen(true);
   };
@@ -453,10 +458,15 @@ function EmployeesTab() {
       lastName: editEmp.lastName,
       ahvNumber: editEmp.ahvNumber || undefined,
       address: editEmp.address || undefined,
+      street: editEmp.street || undefined,
+      zipCode: editEmp.zipCode || undefined,
+      city: editEmp.city || undefined,
       dateOfBirth: editEmp.dateOfBirth || undefined,
       employmentStart: editEmp.employmentStart || undefined,
+      employmentEnd: editEmp.employmentEnd || undefined,
       salaryAccountId: (editEmp.salaryAccountId && editEmp.salaryAccountId !== '0') ? parseInt(editEmp.salaryAccountId) : undefined,
       grossSalaryAccountId: (editEmp.grossSalaryAccountId && editEmp.grossSalaryAccountId !== '0') ? parseInt(editEmp.grossSalaryAccountId) : undefined,
+      lohnausweisRemarks: editEmp.lohnausweisRemarks || undefined,
     });
   };
 
@@ -555,9 +565,29 @@ function EmployeesTab() {
                 <Label>Eintrittsdatum</Label>
                 <Input type="date" value={editEmp.employmentStart} onChange={e => setEditEmp(f => ({ ...f!, employmentStart: e.target.value }))} className="mt-1" />
               </div>
+              <div className="col-span-2 border-t pt-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Adresse (für Lohnausweis)</p>
+              </div>
               <div className="col-span-2">
-                <Label>Adresse</Label>
-                <Textarea value={editEmp.address} onChange={e => setEditEmp(f => ({ ...f!, address: e.target.value }))} className="mt-1" rows={2} />
+                <Label>Strasse</Label>
+                <Input value={editEmp.street} onChange={e => setEditEmp(f => ({ ...f!, street: e.target.value }))} className="mt-1" placeholder="Hofmattweg 69" />
+              </div>
+              <div>
+                <Label>PLZ</Label>
+                <Input value={editEmp.zipCode} onChange={e => setEditEmp(f => ({ ...f!, zipCode: e.target.value }))} className="mt-1" placeholder="4144" />
+              </div>
+              <div>
+                <Label>Ort</Label>
+                <Input value={editEmp.city} onChange={e => setEditEmp(f => ({ ...f!, city: e.target.value }))} className="mt-1" placeholder="Arlesheim" />
+              </div>
+              <div>
+                <Label>Austrittsdatum</Label>
+                <Input type="date" value={editEmp.employmentEnd} onChange={e => setEditEmp(f => ({ ...f!, employmentEnd: e.target.value }))} className="mt-1" />
+              </div>
+              <div />
+              <div className="col-span-2">
+                <Label>Bemerkungen Lohnausweis (Ziffer 15)</Label>
+                <Textarea value={editEmp.lohnausweisRemarks} onChange={e => setEditEmp(f => ({ ...f!, lohnausweisRemarks: e.target.value }))} className="mt-1" rows={2} placeholder="z.B. Privatanteil Mobile CHF 4'900 im Lohn enthalten" />
               </div>
               <div className="col-span-2 border-t pt-3">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lohnkonten</p>

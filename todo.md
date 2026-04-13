@@ -332,3 +332,10 @@
 - [x] Backend: bulkApprove Endpunkt (Array von Entry-IDs genehmigen)
 - [x] Backend: bulkDelete Endpunkt (Array von Entry-IDs löschen)
 - [x] Backend: bulkRevert Endpunkt (Array von Entry-IDs zurücksetzen)
+
+## Feature: Journal Erweiterte Selektion
+
+- [x] Frontend: Shift-Klick Bereichsselektion (alle Einträge zwischen letztem und aktuellem Klick markieren)
+- [x] Frontend: Seitenübergreifende Selektion – Banner "Alle Y Buchungen auswählen" nach Alle-markieren
+- [x] Frontend: Banner "Alle X Buchungen sind ausgewählt" mit Option "Nur diese Seite behalten"
+- [x] Backend: getAllIds Endpunkt – alle IDs der aktuellen Abfrage (Filter/Suche) zurückgeben

@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
 import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight } from "lucide-react";
@@ -47,6 +47,8 @@ export default function Journal() {
   const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [crossPageAll, setCrossPageAll] = useState(false); // true = alle Seiten selektiert
+  const lastClickedIndexRef = useRef<number | null>(null);
   const limit = 20;
 
   const { fiscalYear } = useFiscalYear();
@@ -87,21 +89,62 @@ export default function Journal() {
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
 
+  // Cross-page: load all IDs for current filter
+  const allIdsFilter = useMemo(() => ({
+    status: status === "all" ? undefined : status as any,
+    search: search || undefined,
+    fiscalYear,
+  }), [status, search, fiscalYear]);
+  const { data: allIdsData } = trpc.journal.getAllIds.useQuery(allIdsFilter, { enabled: crossPageAll });
+
   // Selection helpers
-  const toggleSelect = (id: number) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  const toggleSelect = (id: number, event?: React.MouseEvent, rowIndex?: number) => {
+    if (event?.shiftKey && lastClickedIndexRef.current !== null && rowIndex !== undefined) {
+      // Shift-click: select range
+      const start = Math.min(lastClickedIndexRef.current, rowIndex);
+      const end = Math.max(lastClickedIndexRef.current, rowIndex);
+      const rangeIds = entries.slice(start, end + 1).map((e: any) => e.id);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        rangeIds.forEach((rid: number) => next.add(rid));
+        return next;
+      });
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+      lastClickedIndexRef.current = rowIndex ?? null;
+    }
+    setCrossPageAll(false);
   };
   const toggleSelectAll = () => {
     if (entries.length > 0 && selectedIds.size === entries.length) {
       setSelectedIds(new Set());
+      setCrossPageAll(false);
+      lastClickedIndexRef.current = null;
     } else {
       setSelectedIds(new Set(entries.map((e: any) => e.id)));
+      setCrossPageAll(false);
+      lastClickedIndexRef.current = null;
     }
   };
+  const selectAllPages = () => {
+    if (allIdsData) {
+      setSelectedIds(new Set(allIdsData.ids));
+    } else {
+      setCrossPageAll(true); // trigger query, apply when loaded
+    }
+  };
+
+  // Apply cross-page IDs when loaded
+  useMemo(() => {
+    if (crossPageAll && allIdsData) {
+      setSelectedIds(new Set(allIdsData.ids));
+      setCrossPageAll(false);
+    }
+  }, [crossPageAll, allIdsData]);
 
   // Derived selection info
   const selectedEntries = entries.filter((e: any) => selectedIds.has(e.id));
@@ -219,9 +262,33 @@ export default function Journal() {
             <Trash2 className="h-3 w-3" />
             {bulkDeleteMut.isPending ? "Lösche..." : `${selectedIds.size} löschen`}
           </Button>
-          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedIds(new Set())}>
+          <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => { setSelectedIds(new Set()); setCrossPageAll(false); lastClickedIndexRef.current = null; }}>
             <X className="h-3 w-3 mr-1" /> Auswahl aufheben
           </Button>
+        </div>
+      )}
+
+      {/* Cross-page selection banner */}
+      {selectedIds.size === entries.length && entries.length > 0 && selectedIds.size > 0 && total > limit && selectedIds.size < total && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-300">
+          <span>Alle {entries.length} Einträge dieser Seite sind ausgewählt.</span>
+          <button
+            className="font-semibold underline hover:no-underline ml-1"
+            onClick={selectAllPages}
+          >
+            Alle {total} Buchungen auswählen
+          </button>
+        </div>
+      )}
+      {selectedIds.size === total && total > limit && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-300">
+          <span>Alle <strong>{total}</strong> Buchungen sind ausgewählt.</span>
+          <button
+            className="font-semibold underline hover:no-underline ml-1"
+            onClick={() => { setSelectedIds(new Set(entries.map((e: any) => e.id))); setCrossPageAll(false); }}
+          >
+            Nur diese Seite behalten
+          </button>
         </div>
       )}
 
@@ -266,7 +333,8 @@ export default function Journal() {
                     <td className="px-2" onClick={e => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedIds.has(entry.id)}
-                        onCheckedChange={() => toggleSelect(entry.id)}
+                        onCheckedChange={() => {}}
+                        onClick={(e: React.MouseEvent) => { e.stopPropagation(); toggleSelect(entry.id, e, entries.indexOf(entry)); }}
                       />
                     </td>
                     <td className="font-mono text-xs text-muted-foreground">{entry.entryNumber}</td>

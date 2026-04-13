@@ -20,7 +20,7 @@ import {
 } from "./db";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
-import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray, like } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
 
@@ -281,6 +281,25 @@ const journalRouter = router({
         reverted++;
       }
       return { reverted, skipped };
+    }),
+
+  getAllIds: protectedProcedure
+    .input(z.object({
+      status: z.enum(["pending", "approved", "rejected"]).optional(),
+      fiscalYear: z.number().optional(),
+      search: z.string().optional(),
+    }))
+    .query(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const conditions = [];
+      if (input.status) conditions.push(eq(journalEntries.status, input.status));
+      if (input.fiscalYear) conditions.push(eq(journalEntries.fiscalYear, input.fiscalYear));
+      if (input.search) conditions.push(like(journalEntries.description, `%${input.search}%`));
+      const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+      const rows = await db.select({ id: journalEntries.id }).from(journalEntries).where(whereClause);
+      return { ids: rows.map(r => r.id) };
     }),
 });
 

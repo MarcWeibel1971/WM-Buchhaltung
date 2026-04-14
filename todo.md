@@ -534,3 +534,10 @@
 - [x] Sammelbuchung-Dialog: Speichern nur möglich wenn Differenz = 0
 - [x] Sammelbuchung-Dialog: Bankkonto-Dropdown vorbelegt mit verfügbaren Bankkonten
 - [x] Sammelbuchung-Dialog: Vorschau-Tabelle unten (Konto, Text, Soll, Haben, Steuer)
+
+## Feature: Bankimport – Einzelbuchung/Sammelbuchung Umschalten
+
+- [x] Bankimport Transaktions-Dialog: Toggle zwischen Einzelbuchung und Sammelbuchung
+- [x] Sammelbuchung-Modus: Bankkonto im Soll (Eingang) oder Haben (Ausgang), mehrere Gegenkonten
+- [x] Sammelbuchung-Modus: Differenz-Anzeige und Speichern nur bei Diff=0
+- [x] Sammelbuchung-Modus: Vorschau-Tabelle mit Buchungszeilen

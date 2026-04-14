@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search, Plus, Trash2, Split } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -48,6 +48,7 @@ export default function BankImport() {
 
   // Edit dialog state
   const [editTx, setEditTx] = useState<EditableTx | null>(null);
+  const [editMode, setEditMode] = useState<"single" | "collective">("single");
   const [editForm, setEditForm] = useState<{
     description: string;
     counterparty: string;
@@ -56,6 +57,14 @@ export default function BankImport() {
     debitAccountId: string;
     creditAccountId: string;
   }>({ description: "", counterparty: "", counterpartyIban: "", reference: "", debitAccountId: "", creditAccountId: "" });
+
+  // Sammelbuchung lines for collective mode
+  const [collectiveLines, setCollectiveLines] = useState<Array<{
+    accountId: string;
+    amount: string;
+    description: string;
+    vatRate: string;
+  }>>([{ accountId: "", amount: "", description: "", vatRate: "" }, { accountId: "", amount: "", description: "", vatRate: "" }]);
 
   // Invoice preview dialog state
   const [previewDoc, setPreviewDoc] = useState<any>(null);
@@ -173,6 +182,17 @@ export default function BankImport() {
       utils.reports.dashboard.invalidate();
     },
     onError: (e: any) => toast.error(e.message),
+  });
+
+  const collectiveApproveMutation = trpc.bankImport.approveCollectiveTransaction.useMutation({
+    onSuccess: () => {
+      toast.success("Sammelbuchung verbucht");
+      setEditTx(null);
+      setEditMode("single");
+      refetchTxs();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
   });
 
   const refreshMutation = trpc.bankImport.refreshSuggestions.useMutation({
@@ -371,6 +391,7 @@ export default function BankImport() {
   // Open edit dialog
   const openEditDialog = (tx: any) => {
     setEditTx(tx);
+    setEditMode("single");
     setEditForm({
       description: tx.description ?? "",
       counterparty: tx.counterparty ?? "",
@@ -379,6 +400,7 @@ export default function BankImport() {
       debitAccountId: tx.suggestedDebitAccountId ? String(tx.suggestedDebitAccountId) : "",
       creditAccountId: tx.suggestedCreditAccountId ? String(tx.suggestedCreditAccountId) : "",
     });
+    setCollectiveLines([{ accountId: "", amount: "", description: "", vatRate: "" }, { accountId: "", amount: "", description: "", vatRate: "" }]);
   };
 
   const saveEdit = () => {
@@ -850,14 +872,75 @@ export default function BankImport() {
       </div>
 
       {/* ─── Edit Transaction Dialog ─── */}
-      <Dialog open={!!editTx} onOpenChange={open => { if (!open) setEditTx(null); }}>
-        <DialogContent className="w-[min(95vw,38rem)] max-w-none">
+      <Dialog open={!!editTx} onOpenChange={open => { if (!open) { setEditTx(null); setEditMode("single"); } }}>
+        <DialogContent className={editMode === "collective" ? "w-[min(98vw,60rem)] max-w-none max-h-[90vh] overflow-y-auto" : "w-[min(95vw,38rem)] max-w-none"}>
           <DialogHeader>
             <DialogTitle>Transaktion bearbeiten</DialogTitle>
             <DialogDescription>Alle Felder der Transaktion anpassen</DialogDescription>
           </DialogHeader>
-          {editTx && (
+          {editTx && (() => {
+            const txAmount = Math.abs(parseFloat(editTx.amount));
+            const isIncoming = parseFloat(editTx.amount) > 0;
+            // In collective mode: compute diff
+            const collectiveSum = collectiveLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            const collectiveDiff = Math.abs(txAmount - collectiveSum);
+            const collectiveBalanced = collectiveDiff < 0.005;
+            // Find the bank account for this transaction
+            const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
+            const bankAccountLabel = txBankAccount ? `${txBankAccount.account.number} ${txBankAccount.account.name}` : "Bankkonto";
+            const bankAccountId = txBankAccount?.account.id;
+
+            const handleCollectiveApprove = () => {
+              if (!editTx || !bankAccountId) return;
+              const bankSide = isIncoming ? "debit" : "credit";
+              const counterSide = isIncoming ? "credit" : "debit";
+              const lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string; description?: string; vatRate?: string }> = [
+                { accountId: bankAccountId, side: bankSide, amount: txAmount.toFixed(2) },
+              ];
+              for (const cl of collectiveLines) {
+                if (!cl.accountId || !cl.amount) continue;
+                lines.push({
+                  accountId: parseInt(cl.accountId),
+                  side: counterSide,
+                  amount: parseFloat(cl.amount).toFixed(2),
+                  description: cl.description || undefined,
+                  vatRate: cl.vatRate || undefined,
+                });
+              }
+              collectiveApproveMutation.mutate({
+                transactionId: editTx.id,
+                description: editForm.description || editTx.description || "Sammelbuchung",
+                lines,
+              });
+            };
+
+            return (
             <div className="space-y-4">
+              {/* Mode toggle */}
+              <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg">
+                <Button
+                  size="sm"
+                  variant={editMode === "single" ? "default" : "outline"}
+                  className="h-7 text-xs gap-1"
+                  onClick={() => setEditMode("single")}
+                >
+                  Einzelbuchung
+                </Button>
+                <Button
+                  size="sm"
+                  variant={editMode === "collective" ? "default" : "outline"}
+                  className="h-7 text-xs gap-1"
+                  onClick={() => setEditMode("collective")}
+                >
+                  <Split className="h-3 w-3" /> Sammelbuchung
+                </Button>
+                {editMode === "collective" && (
+                  <span className={`ml-auto text-xs font-mono font-bold ${collectiveBalanced ? "text-green-600" : "text-red-600"}`}>
+                    Diff. {formatCHF(collectiveDiff)}
+                  </span>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="text-xs">Datum</Label>
@@ -872,43 +955,185 @@ export default function BankImport() {
                 <Label className="text-xs">Buchungstext</Label>
                 <Input value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} placeholder="z.B. Sunrise 1. Quartal 2026" />
               </div>
-              <div>
-                <Label className="text-xs">Lieferant (Kreditor) / Kunde (Debitor)</Label>
-                <Input value={editForm.counterparty} onChange={e => setEditForm(f => ({ ...f, counterparty: e.target.value }))} />
-              </div>
-              <div>
-                <Label className="text-xs">IBAN Gegenpartei</Label>
-                <Input value={editForm.counterpartyIban} onChange={e => setEditForm(f => ({ ...f, counterpartyIban: e.target.value }))} />
-              </div>
-              <div>
-                <Label className="text-xs">Referenz</Label>
-                <Input value={editForm.reference} onChange={e => setEditForm(f => ({ ...f, reference: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-xs">Soll-Konto</Label>
-                  <Select value={editForm.debitAccountId} onValueChange={v => setEditForm(f => ({ ...f, debitAccountId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
-                    <SelectContent>
-                      {accounts?.map(a => (
-                        <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+
+              {editMode === "single" ? (
+                /* ─── Single booking mode ─── */
+                <>
+                  <div>
+                    <Label className="text-xs">Lieferant (Kreditor) / Kunde (Debitor)</Label>
+                    <Input value={editForm.counterparty} onChange={e => setEditForm(f => ({ ...f, counterparty: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">IBAN Gegenpartei</Label>
+                    <Input value={editForm.counterpartyIban} onChange={e => setEditForm(f => ({ ...f, counterpartyIban: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Referenz</Label>
+                    <Input value={editForm.reference} onChange={e => setEditForm(f => ({ ...f, reference: e.target.value }))} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-xs">Soll-Konto</Label>
+                      <Select value={editForm.debitAccountId} onValueChange={v => setEditForm(f => ({ ...f, debitAccountId: v }))}>
+                        <SelectTrigger><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
+                        <SelectContent>
+                          {accounts?.map(a => (
+                            <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Haben-Konto</Label>
+                      <Select value={editForm.creditAccountId} onValueChange={v => setEditForm(f => ({ ...f, creditAccountId: v }))}>
+                        <SelectTrigger><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
+                        <SelectContent>
+                          {accounts?.map(a => (
+                            <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* ─── Collective booking mode ─── */
+                <>
+                  {/* Bank account line (fixed) */}
+                  <div className={`rounded-lg border-2 p-3 ${isIncoming ? "border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-700" : "border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700"}`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-xs font-bold uppercase ${isIncoming ? "text-blue-700 dark:text-blue-400" : "text-amber-700 dark:text-amber-400"}`}>
+                        {isIncoming ? "SOLL (Belastung)" : "HABEN (Belastung)"}
+                      </span>
+                      <span className="text-xs text-muted-foreground">– Bankkonto</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-medium flex-1">{bankAccountLabel}</span>
+                      <span className="text-sm font-mono font-bold">CHF {formatCHF(txAmount)}</span>
+                    </div>
+                  </div>
+
+                  {/* Counter lines */}
+                  <div className={`rounded-lg border-2 p-3 ${isIncoming ? "border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700" : "border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-700"}`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-xs font-bold uppercase ${isIncoming ? "text-amber-700 dark:text-amber-400" : "text-blue-700 dark:text-blue-400"}`}>
+                        {isIncoming ? "HABEN (Ertrag)" : "SOLL (Aufwand)"}
+                      </span>
+                      <span className="text-xs text-muted-foreground">– Gegenpositionen</span>
+                    </div>
+                    <div className="space-y-2">
+                      {collectiveLines.map((line, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground w-5 shrink-0">{idx + 1}.</span>
+                          <Select value={line.accountId} onValueChange={v => {
+                            const next = [...collectiveLines];
+                            next[idx] = { ...next[idx], accountId: v };
+                            setCollectiveLines(next);
+                          }}>
+                            <SelectTrigger className="h-8 text-xs flex-1 min-w-[180px]"><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
+                            <SelectContent>
+                              {accounts?.map(a => (
+                                <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            className="h-8 text-xs w-[120px]"
+                            placeholder="Text"
+                            value={line.description}
+                            onChange={e => {
+                              const next = [...collectiveLines];
+                              next[idx] = { ...next[idx], description: e.target.value };
+                              setCollectiveLines(next);
+                            }}
+                          />
+                          <Input
+                            className="h-8 text-xs w-[100px] font-mono text-right"
+                            placeholder="Betrag"
+                            value={line.amount}
+                            onChange={e => {
+                              const next = [...collectiveLines];
+                              next[idx] = { ...next[idx], amount: e.target.value };
+                              setCollectiveLines(next);
+                            }}
+                          />
+                          <Select value={line.vatRate} onValueChange={v => {
+                            const next = [...collectiveLines];
+                            next[idx] = { ...next[idx], vatRate: v === "none" ? "" : v };
+                            setCollectiveLines(next);
+                          }}>
+                            <SelectTrigger className="h-8 text-xs w-[80px]"><SelectValue placeholder="MWST" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">–</SelectItem>
+                              <SelectItem value="8.1">8.1%</SelectItem>
+                              <SelectItem value="2.6">2.6%</SelectItem>
+                              <SelectItem value="3.8">3.8%</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 p-0 text-muted-foreground hover:text-red-600 shrink-0"
+                            disabled={collectiveLines.length <= 1}
+                            onClick={() => setCollectiveLines(ls => ls.filter((_, i) => i !== idx))}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs">Haben-Konto</Label>
-                  <Select value={editForm.creditAccountId} onValueChange={v => setEditForm(f => ({ ...f, creditAccountId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
-                    <SelectContent>
-                      {accounts?.map(a => (
-                        <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              {editTx.aiReasoning && (
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 text-xs gap-1"
+                      onClick={() => setCollectiveLines(ls => [...ls, { accountId: "", amount: "", description: "", vatRate: "" }])}
+                    >
+                      <Plus className="h-3 w-3" /> Zeile hinzufügen
+                    </Button>
+                  </div>
+
+                  {/* Preview table */}
+                  {collectiveLines.some(l => l.accountId && l.amount) && (
+                    <div className="border rounded-lg overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/50">
+                          <tr>
+                            <th className="text-left p-2 font-medium">Konto</th>
+                            <th className="text-left p-2 font-medium">Text</th>
+                            <th className="text-right p-2 font-medium">Soll</th>
+                            <th className="text-right p-2 font-medium">Haben</th>
+                            <th className="text-right p-2 font-medium">Steuer</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t">
+                            <td className="p-2 font-medium">{bankAccountLabel}</td>
+                            <td className="p-2 text-muted-foreground">{editForm.description || "–"}</td>
+                            <td className="p-2 text-right font-mono">{isIncoming ? formatCHF(txAmount) : ""}</td>
+                            <td className="p-2 text-right font-mono">{!isIncoming ? formatCHF(txAmount) : ""}</td>
+                            <td className="p-2 text-right"></td>
+                          </tr>
+                          {collectiveLines.filter(l => l.accountId && l.amount).map((l, i) => {
+                            const acc = accounts?.find(a => a.id === parseInt(l.accountId));
+                            const vatAmt = l.vatRate ? (parseFloat(l.amount) * parseFloat(l.vatRate) / 100) : 0;
+                            return (
+                              <tr key={i} className="border-t">
+                                <td className="p-2">{acc ? `${acc.number} ${acc.name}` : l.accountId}</td>
+                                <td className="p-2 text-muted-foreground">{l.description || "–"}</td>
+                                <td className="p-2 text-right font-mono">{!isIncoming ? formatCHF(parseFloat(l.amount)) : ""}</td>
+                                <td className="p-2 text-right font-mono">{isIncoming ? formatCHF(parseFloat(l.amount)) : ""}</td>
+                                <td className="p-2 text-right font-mono text-muted-foreground">{vatAmt > 0 ? formatCHF(vatAmt) : ""}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {editTx.aiReasoning && editMode === "single" && (
                 <div className="bg-muted/50 rounded-lg p-3">
                   <Label className="text-xs text-muted-foreground">KI-Begründung</Label>
                   <p className="text-sm mt-1">{editTx.aiReasoning}</p>
@@ -981,12 +1206,57 @@ export default function BankImport() {
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditTx(null)}>Abbrechen</Button>
-            <Button onClick={saveEdit} disabled={updateTxMutation.isPending}>
-              {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
-            </Button>
+            <Button variant="outline" onClick={() => { setEditTx(null); setEditMode("single"); }}>Abbrechen</Button>
+            {editMode === "single" ? (
+              <Button onClick={saveEdit} disabled={updateTxMutation.isPending}>
+                {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
+              </Button>
+            ) : (
+              <Button
+                onClick={() => {
+                  // First save the edit form (metadata), then approve as collective
+                  if (!editTx) return;
+                  const txAmount = Math.abs(parseFloat(editTx.amount));
+                  const isIncoming = parseFloat(editTx.amount) > 0;
+                  const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
+                  const bankAccountId = txBankAccount?.account.id;
+                  if (!bankAccountId) { toast.error("Bankkonto nicht gefunden"); return; }
+                  const collectiveSum = collectiveLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+                  if (Math.abs(txAmount - collectiveSum) >= 0.005) { toast.error("Differenz muss 0 sein"); return; }
+                  const bankSide: "debit" | "credit" = isIncoming ? "debit" : "credit";
+                  const counterSide: "debit" | "credit" = isIncoming ? "credit" : "debit";
+                  const lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string; description?: string; vatRate?: string }> = [
+                    { accountId: bankAccountId, side: bankSide, amount: txAmount.toFixed(2) },
+                  ];
+                  for (const cl of collectiveLines) {
+                    if (!cl.accountId || !cl.amount) continue;
+                    lines.push({
+                      accountId: parseInt(cl.accountId),
+                      side: counterSide,
+                      amount: parseFloat(cl.amount).toFixed(2),
+                      description: cl.description || undefined,
+                      vatRate: cl.vatRate || undefined,
+                    });
+                  }
+                  collectiveApproveMutation.mutate({
+                    transactionId: editTx.id,
+                    description: editForm.description || editTx.description || "Sammelbuchung",
+                    lines,
+                  });
+                }}
+                disabled={collectiveApproveMutation.isPending || (() => {
+                  if (!editTx) return true;
+                  const txAmount = Math.abs(parseFloat(editTx.amount));
+                  const collectiveSum = collectiveLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+                  return Math.abs(txAmount - collectiveSum) >= 0.005 || !collectiveLines.some(l => l.accountId && l.amount);
+                })()}
+              >
+                {collectiveApproveMutation.isPending ? "Verbuchen..." : "Sammelbuchung verbuchen"}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

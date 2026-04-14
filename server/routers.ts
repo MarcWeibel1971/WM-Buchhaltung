@@ -650,6 +650,46 @@ Regeln:
       return { success: true, entryId };
     }),
 
+  // ── Approve as Sammelbuchung (compound entry) ──
+  approveCollectiveTransaction: protectedProcedure
+    .input(z.object({
+      transactionId: z.number(),
+      description: z.string().min(1),
+      lines: z.array(z.object({
+        accountId: z.number(),
+        side: z.enum(["debit", "credit"]),
+        amount: z.string(),
+        description: z.string().optional(),
+        vatRate: z.string().optional(),
+      })).min(2),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const year = new Date(tx.transactionDate as any).getFullYear();
+
+      const entryId = await createJournalEntry({
+        bookingDate: toDateStr(tx.transactionDate as string) as string,
+        valueDate: toDateStr(tx.valueDate as string),
+        description: input.description,
+        source: "bank_import",
+        sourceRef: `bank-tx-${tx.id}`,
+        fiscalYear: year,
+        status: "approved",
+        lines: input.lines,
+      });
+
+      await approveBankTransaction(input.transactionId, entryId);
+      await approveJournalEntry(entryId, ctx.user.id);
+
+      return { success: true, entryId };
+    }),
+
   ignoreTransaction: protectedProcedure
     .input(z.object({ transactionId: z.number() }))
     .mutation(async ({ input, ctx }) => {

@@ -21,6 +21,8 @@ type Props = {
   bankTransactionId?: number;
   /** If true, shows a compact inline button instead of a full drop zone */
   compact?: boolean;
+  /** Fiscal year to assign to uploaded documents */
+  fiscalYear?: number;
   onUploaded?: (doc: UploadedDocument) => void;
 };
 
@@ -35,7 +37,7 @@ function DocIcon({ mimeType }: { mimeType: string }) {
   return <FileText className="w-4 h-4 text-red-500" />;
 }
 
-export function DocumentUpload({ journalEntryId, bankTransactionId, compact = false, onUploaded }: Props) {
+export function DocumentUpload({ journalEntryId, bankTransactionId, compact = false, fiscalYear, onUploaded }: Props) {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -51,6 +53,7 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
       formData.append("file", file);
       if (journalEntryId) formData.append("journalEntryId", String(journalEntryId));
       if (bankTransactionId) formData.append("bankTransactionId", String(bankTransactionId));
+      if (fiscalYear) formData.append("fiscalYear", String(fiscalYear));
 
       const resp = await fetch("/api/upload/document", {
         method: "POST",
@@ -69,7 +72,7 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
     } finally {
       setUploading(false);
     }
-  }, [journalEntryId, bankTransactionId, onUploaded]);
+  }, [journalEntryId, bankTransactionId, fiscalYear, onUploaded]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();

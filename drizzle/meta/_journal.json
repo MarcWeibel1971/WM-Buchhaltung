@@ -85,6 +85,13 @@
       "when": 1776166043012,
       "tag": "0011_broken_colossus",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1776171661070,
+      "tag": "0012_robust_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

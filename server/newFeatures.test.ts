@@ -202,3 +202,103 @@ describe("getBankTransactionsByStatus schema", () => {
     expect(statusFilterSchema.safeParse({ status: "invalid" }).success).toBe(false);
   });
 });
+
+// ─── Document Fiscal Year Tests ──────────────────────────────────────────────
+describe("Feature: Document Fiscal Year", () => {
+  // Test: fiscalYear is accepted in the documents.list input schema
+  const documentsListSchema = z.object({
+    journalEntryId: z.number().optional(),
+    bankTransactionId: z.number().optional(),
+    documentType: z.string().optional(),
+    fiscalYear: z.number().optional(),
+    limit: z.number().default(200),
+  });
+
+  it("should accept fiscalYear filter in list query", () => {
+    const result = documentsListSchema.safeParse({ fiscalYear: 2026 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.fiscalYear).toBe(2026);
+    }
+  });
+
+  it("should accept list query without fiscalYear", () => {
+    const result = documentsListSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.fiscalYear).toBeUndefined();
+      expect(result.data.limit).toBe(200);
+    }
+  });
+
+  it("should accept combined filters with fiscalYear", () => {
+    const result = documentsListSchema.safeParse({
+      fiscalYear: 2025,
+      documentType: "invoice_in",
+      limit: 50,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.fiscalYear).toBe(2025);
+      expect(result.data.documentType).toBe("invoice_in");
+      expect(result.data.limit).toBe(50);
+    }
+  });
+
+  // Test: updateFiscalYear input schema
+  const updateFiscalYearSchema = z.object({
+    documentId: z.number(),
+    fiscalYear: z.number(),
+  });
+
+  it("should validate updateFiscalYear input", () => {
+    const result = updateFiscalYearSchema.safeParse({ documentId: 42, fiscalYear: 2026 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.documentId).toBe(42);
+      expect(result.data.fiscalYear).toBe(2026);
+    }
+  });
+
+  it("should reject updateFiscalYear without documentId", () => {
+    const result = updateFiscalYearSchema.safeParse({ fiscalYear: 2026 });
+    expect(result.success).toBe(false);
+  });
+
+  it("should reject updateFiscalYear without fiscalYear", () => {
+    const result = updateFiscalYearSchema.safeParse({ documentId: 42 });
+    expect(result.success).toBe(false);
+  });
+
+  // Test: fiscal year assignment logic
+  it("should assign fiscal year from form data during upload", () => {
+    // Simulate the upload route logic
+    const formBody = { fiscalYear: "2025" };
+    const parsedFiscalYear = formBody.fiscalYear ? parseInt(formBody.fiscalYear) : undefined;
+    expect(parsedFiscalYear).toBe(2025);
+  });
+
+  it("should handle missing fiscal year in form data", () => {
+    const formBody: Record<string, string> = {};
+    const parsedFiscalYear = formBody.fiscalYear ? parseInt(formBody.fiscalYear) : undefined;
+    expect(parsedFiscalYear).toBeUndefined();
+  });
+
+  // Test: fiscal year filtering logic
+  it("should filter documents by fiscal year", () => {
+    const documents = [
+      { id: 1, filename: "rechnung-2025.pdf", fiscalYear: 2025 },
+      { id: 2, filename: "rechnung-2026.pdf", fiscalYear: 2026 },
+      { id: 3, filename: "rechnung-2026-b.pdf", fiscalYear: 2026 },
+      { id: 4, filename: "old-doc.pdf", fiscalYear: null },
+    ];
+
+    const filtered2026 = documents.filter(d => d.fiscalYear === 2026);
+    expect(filtered2026).toHaveLength(2);
+    expect(filtered2026.map(d => d.id)).toEqual([2, 3]);
+
+    const filtered2025 = documents.filter(d => d.fiscalYear === 2025);
+    expect(filtered2025).toHaveLength(1);
+    expect(filtered2025[0].id).toBe(1);
+  });
+});

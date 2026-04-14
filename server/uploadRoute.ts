@@ -32,7 +32,7 @@ uploadRouter.post("/document", upload.single("file"), async (req, res) => {
 
     if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
 
-    const { journalEntryId, bankTransactionId, documentType, notes } = req.body;
+    const { journalEntryId, bankTransactionId, documentType, notes, fiscalYear } = req.body;
 
     // Generate unique S3 key
     const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "bin";
@@ -139,6 +139,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       extractedText,
       aiMetadata,
       notes: notes ?? null,
+      fiscalYear: fiscalYear ? parseInt(fiscalYear) : undefined,
       uploadedBy: user.id,
     });
 

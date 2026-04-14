@@ -2066,7 +2066,8 @@ const documentsRouter = router({
       journalEntryId: z.number().optional(),
       bankTransactionId: z.number().optional(),
       documentType: z.string().optional(),
-      limit: z.number().default(50),
+      fiscalYear: z.number().optional(),
+      limit: z.number().default(200),
     }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -2077,6 +2078,7 @@ const documentsRouter = router({
       if (input.journalEntryId) conditions.push(eqOp(docs.journalEntryId, input.journalEntryId));
       if (input.bankTransactionId) conditions.push(eqOp(docs.bankTransactionId, input.bankTransactionId));
       if (input.documentType) conditions.push(eqOp(docs.documentType, input.documentType as any));
+      if (input.fiscalYear) conditions.push(eqOp(docs.fiscalYear, input.fiscalYear));
       const rows = await db.select().from(docs)
         .where(conditions.length ? and(...conditions) : undefined)
         .orderBy(descOp(docs.createdAt))
@@ -2114,6 +2116,23 @@ const documentsRouter = router({
       await db.update(docs).set({
         journalEntryId: input.journalEntryId,
         bankTransactionId: input.bankTransactionId,
+      }).where(eqOp(docs.id, input.documentId));
+      return { success: true };
+    }),
+
+  // Update fiscal year for a document
+  updateFiscalYear: protectedProcedure
+    .input(z.object({
+      documentId: z.number(),
+      fiscalYear: z.number(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      await db.update(docs).set({
+        fiscalYear: input.fiscalYear,
       }).where(eqOp(docs.id, input.documentId));
       return { success: true };
     }),

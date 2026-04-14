@@ -8,9 +8,10 @@ import { Input } from "@/components/ui/input";
 import {
   FileText, Image, Eye, Trash2, Search, Filter,
   Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
-  Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2
+  Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2, Calendar
 } from "lucide-react";
 import { toast } from "sonner";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 
 const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   invoice_in:  { label: "Eingangsrechnung",  icon: <ArrowDownToLine className="w-3.5 h-3.5" />, color: "text-red-600 bg-red-50" },
@@ -41,6 +42,7 @@ function formatCHF(n: number) {
 }
 
 export default function Documents() {
+  const { fiscalYear, fiscalYears } = useFiscalYear();
   const [filterType, setFilterType] = useState<string>("all");
   const [filterMatch, setFilterMatch] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -48,6 +50,7 @@ export default function Documents() {
 
   const { data: docs, refetch } = trpc.documents.list.useQuery({
     documentType: filterType !== "all" ? filterType : undefined,
+    fiscalYear: fiscalYear,
     limit: 200,
   });
 
@@ -66,6 +69,14 @@ export default function Documents() {
   const unmatchMutation = trpc.documents.unmatch.useMutation({
     onSuccess: () => {
       toast.success("Match aufgehoben");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const updateFiscalYearMutation = trpc.documents.updateFiscalYear.useMutation({
+    onSuccess: () => {
+      toast.success("Geschäftsjahr aktualisiert");
       refetch();
     },
     onError: (err) => toast.error(err.message),
@@ -163,9 +174,10 @@ export default function Documents() {
       {/* Upload Zone */}
       <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
         <h3 className="font-semibold mb-3">Neues Dokument hochladen</h3>
-        <DocumentUpload onUploaded={handleUploaded} />
+        <DocumentUpload onUploaded={handleUploaded} fiscalYear={fiscalYear} />
         <p className="text-xs text-muted-foreground mt-2">
           Die KI analysiert den Beleg automatisch und extrahiert Betrag, Gegenpartei und Datum.
+          Dokumente werden automatisch dem Geschäftsjahr <strong>GJ {fiscalYear}</strong> zugewiesen.
           Klicken Sie «Auto-Match» um Dokumente automatisch mit Banktransaktionen zu verknüpfen.
         </p>
       </div>
@@ -226,6 +238,7 @@ export default function Documents() {
               const matchScoreVal = (doc as any).matchScore as number | null;
               let meta: any = null;
               try { if (doc.aiMetadata) meta = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
+              const docFiscalYear = doc.fiscalYear;
 
               return (
                 <div key={doc.id} className="flex items-start gap-3 p-4 hover:bg-muted/30 transition-colors">
@@ -260,7 +273,10 @@ export default function Documents() {
                         </Badge>
                       )}
                       {doc.journalEntryId && (
-                        <Badge variant="outline" className="text-xs">Buchung #{doc.journalEntryId}</Badge>
+                        <Badge variant="outline" className="text-xs gap-1">
+                          <FileText className="w-3 h-3" />
+                          Buchung #{doc.journalEntryId}
+                        </Badge>
                       )}
                     </div>
 
@@ -278,6 +294,28 @@ export default function Documents() {
                     <div className="mt-1 text-xs text-muted-foreground">
                       {formatBytes(doc.fileSize)} · {formatDate(doc.createdAt)}
                     </div>
+                  </div>
+
+                  {/* Fiscal Year Select */}
+                  <div className="flex-shrink-0">
+                    <Select
+                      value={docFiscalYear != null ? String(docFiscalYear) : "none"}
+                      onValueChange={(val) => {
+                        if (val === "none") return;
+                        const newYear = parseInt(val);
+                        updateFiscalYearMutation.mutate({ documentId: doc.id, fiscalYear: newYear });
+                      }}
+                    >
+                      <SelectTrigger className="w-28 h-8 text-xs">
+                        <Calendar className="w-3 h-3 mr-1 text-muted-foreground" />
+                        {docFiscalYear != null ? `GJ ${docFiscalYear}` : "GJ"}
+                      </SelectTrigger>
+                      <SelectContent>
+                        {fiscalYears.map(y => (
+                          <SelectItem key={y} value={String(y)}>GJ {y}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   {/* Actions */}

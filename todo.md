@@ -442,3 +442,15 @@
 - [x] Bug: "Refresh (gelernt)" überschreibt manuell geänderte Buchungstexte und Konten mit alten KI-Vorschlägen
 - [x] Fix: Refresh muss gelernte Regeln auf ÄHNLICHE unbearbeitete Transaktionen anwenden, aber bereits manuell geänderte Transaktionen NICHT überschreiben
 - [x] Sicherstellen, dass Booking Rules korrekt aus manuellen Korrekturen gelernt und beim Refresh priorisiert werden
+
+## Feature: Geschäftsjahr-Zuordnung für Dokumente
+
+- [x] DB-Schema: fiscalYear-Spalte (int) zur documents-Tabelle hinzufügen
+- [x] Backend: Beim Upload automatisch das übergebene Geschäftsjahr zuweisen
+- [x] Backend: documents.list nach fiscalYear filtern
+- [x] Backend: Endpunkt zum Ändern des Geschäftsjahrs pro Dokument
+- [x] Frontend: Neue Spalte "Jahr" in der Dokumentenliste
+- [x] Frontend: Dokumente nach gewähltem Geschäftsjahr filtern (GJ-Wähler oben rechts)
+- [x] Frontend: Geschäftsjahr pro Dokument editierbar (Dropdown/Select)
+- [x] Frontend: Statistik-Karten nur für das gewählte GJ anzeigen
+- [x] Migration: Bestehende 13 Dokumente auf GJ 2026 migriert

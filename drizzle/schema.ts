@@ -396,6 +396,8 @@ export const documents = mysqlTable("documents", {
   matchStatus: mysqlEnum("matchStatus", ["unmatched", "matched", "manual"]).default("unmatched").notNull(),
   // Match confidence score (0-100)
   matchScore: int("matchScore"),
+  // Fiscal year this document belongs to
+  fiscalYear: int("fiscalYear"),
   // Uploader
   uploadedBy: int("uploadedBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

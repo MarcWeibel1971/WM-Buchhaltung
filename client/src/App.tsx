@@ -20,6 +20,7 @@ import Accounts from "./pages/Accounts";
 import VatPage from "./pages/Vat";
 import Documents from "./pages/Documents";
 import Settings from "./pages/Settings";
+import YearEnd from "./pages/YearEnd";
 import Layout from "./components/Layout";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -77,6 +78,7 @@ function Router() {
       <Route path="/vat" component={VatPage} />
       <Route path="/documents" component={Documents} />
       <Route path="/settings" component={Settings} />
+      <Route path="/year-end" component={YearEnd} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

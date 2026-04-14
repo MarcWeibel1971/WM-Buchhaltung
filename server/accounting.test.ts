@@ -247,3 +247,225 @@ describe("normaliseDate – Datumsparser", () => {
     expect(normaliseDate("32.13.2026")).toBeNull();
   });
 });
+
+// ─── Year-End Closing Logic ──────────────────────────────────────────────────
+describe("Year-End Closing Logic", () => {
+
+  // ── Depreciation Calculation ──
+  describe("Depreciation Calculation", () => {
+    function calcDepreciation(
+      bookValue: number,
+      rate: number,
+      method: "linear" | "degressive",
+      originalCost?: number
+    ): number {
+      if (bookValue <= 0) return 0;
+      if (method === "degressive") {
+        return Math.round(bookValue * (rate / 100) * 100) / 100;
+      } else {
+        // Linear: based on original cost
+        const base = originalCost || bookValue;
+        const amount = Math.round(base * (rate / 100) * 100) / 100;
+        return Math.min(amount, bookValue); // Cannot depreciate more than book value
+      }
+    }
+
+    it("calculates degressive depreciation from book value", () => {
+      // 40% on book value of 10000
+      expect(calcDepreciation(10000, 40, "degressive")).toBe(4000);
+    });
+
+    it("calculates degressive depreciation year 2 (reduced book value)", () => {
+      // Year 2: book value 6000, 40% = 2400
+      expect(calcDepreciation(6000, 40, "degressive")).toBe(2400);
+    });
+
+    it("calculates linear depreciation from original cost", () => {
+      // 25% linear on original cost 10000
+      expect(calcDepreciation(7500, 25, "linear", 10000)).toBe(2500);
+    });
+
+    it("linear depreciation capped at book value", () => {
+      // Book value 1000, 25% of original 10000 = 2500 → capped at 1000
+      expect(calcDepreciation(1000, 25, "linear", 10000)).toBe(1000);
+    });
+
+    it("returns 0 for zero book value", () => {
+      expect(calcDepreciation(0, 40, "degressive")).toBe(0);
+    });
+
+    it("returns 0 for negative book value", () => {
+      expect(calcDepreciation(-500, 40, "degressive")).toBe(0);
+    });
+
+    it("handles small rates correctly", () => {
+      // 4% on 500000 (Immobilien)
+      expect(calcDepreciation(500000, 4, "degressive")).toBe(20000);
+    });
+
+    it("Swiss standard rates: EDV/Software 40% degressive", () => {
+      const bookValue = 15000;
+      const year1 = calcDepreciation(bookValue, 40, "degressive");
+      expect(year1).toBe(6000);
+      const year2 = calcDepreciation(bookValue - year1, 40, "degressive");
+      expect(year2).toBe(3600);
+      const year3 = calcDepreciation(bookValue - year1 - year2, 40, "degressive");
+      expect(year3).toBe(2160);
+    });
+  });
+
+  // ── Transitorische Buchungen Logic ──
+  describe("Transitorische Buchungen Classification", () => {
+    type TransitoryType = "transitorische_passiven" | "transitorische_aktiven" | "kreditoren" | "debitoren" | "none";
+
+    function classifyInvoice(
+      invoiceDate: string,
+      serviceYear: number,
+      paymentDate: string | null,
+      closingYear: number,
+      isIncome: boolean
+    ): TransitoryType {
+      const invYear = parseInt(invoiceDate.substring(0, 4));
+      const payYear = paymentDate ? parseInt(paymentDate.substring(0, 4)) : null;
+
+      if (!isIncome) {
+        // Expense invoices
+        if (invYear === closingYear + 1 && serviceYear === closingYear) {
+          // Invoice 2026, service 2025 → Transitorische Passiven
+          return "transitorische_passiven";
+        }
+        if (invYear === closingYear && payYear && payYear === closingYear + 1) {
+          // Invoice 2025, payment 2026 → Kreditoren
+          return "kreditoren";
+        }
+        if (payYear && payYear === closingYear + 1 && invYear === closingYear) {
+          // Prepayment in closing year for next year → Transitorische Aktiven
+          return "transitorische_aktiven";
+        }
+      } else {
+        // Income invoices
+        if (invYear === closingYear && payYear && payYear === closingYear + 1) {
+          // Income invoice 2025, payment 2026 → Debitoren
+          return "debitoren";
+        }
+      }
+      return "none";
+    }
+
+    it("classifies Transitorische Passiven: invoice 2026, service 2025", () => {
+      expect(classifyInvoice("2026-01-15", 2025, "2026-02-01", 2025, false))
+        .toBe("transitorische_passiven");
+    });
+
+    it("classifies Kreditoren: invoice 2025, payment 2026", () => {
+      expect(classifyInvoice("2025-12-15", 2025, "2026-01-10", 2025, false))
+        .toBe("kreditoren");
+    });
+
+    it("classifies Debitoren: income invoice 2025, payment 2026", () => {
+      expect(classifyInvoice("2025-11-30", 2025, "2026-01-15", 2025, true))
+        .toBe("debitoren");
+    });
+
+    it("classifies none for normal in-year transactions", () => {
+      expect(classifyInvoice("2025-06-15", 2025, "2025-07-01", 2025, false))
+        .toBe("none");
+    });
+  });
+
+  // ── Saldovortrag (Balance Carry-Forward) ──
+  describe("Saldovortrag (Balance Carry-Forward)", () => {
+    function calculateCarryForward(
+      accounts: Array<{ number: string; balance: number; type: "asset" | "liability" | "revenue" | "expense" }>
+    ) {
+      // Only balance sheet accounts (Aktiven + Passiven) carry forward
+      // P&L accounts (Aufwand + Ertrag) close to Gewinnvortrag
+      const balanceSheet = accounts.filter(a => a.type === "asset" || a.type === "liability");
+      const pnl = accounts.filter(a => a.type === "revenue" || a.type === "expense");
+
+      const profit = pnl.reduce((sum, a) => {
+        if (a.type === "revenue") return sum + a.balance;
+        if (a.type === "expense") return sum - a.balance;
+        return sum;
+      }, 0);
+
+      return {
+        openingBalances: balanceSheet.map(a => ({ number: a.number, balance: a.balance })),
+        profitLoss: Math.round(profit * 100) / 100,
+      };
+    }
+
+    it("carries forward balance sheet accounts", () => {
+      const accounts = [
+        { number: "1031", balance: 50000, type: "asset" as const },
+        { number: "2000", balance: 30000, type: "liability" as const },
+        { number: "3000", balance: 100000, type: "revenue" as const },
+        { number: "4000", balance: 80000, type: "expense" as const },
+      ];
+      const result = calculateCarryForward(accounts);
+      expect(result.openingBalances).toHaveLength(2); // Only balance sheet
+      expect(result.openingBalances[0].balance).toBe(50000);
+      expect(result.openingBalances[1].balance).toBe(30000);
+    });
+
+    it("calculates profit/loss from P&L accounts", () => {
+      const accounts = [
+        { number: "3000", balance: 100000, type: "revenue" as const },
+        { number: "4000", balance: 80000, type: "expense" as const },
+        { number: "5000", balance: 5000, type: "expense" as const },
+      ];
+      const result = calculateCarryForward(accounts);
+      expect(result.profitLoss).toBe(15000); // 100000 - 80000 - 5000
+    });
+
+    it("handles loss correctly", () => {
+      const accounts = [
+        { number: "3000", balance: 50000, type: "revenue" as const },
+        { number: "4000", balance: 80000, type: "expense" as const },
+      ];
+      const result = calculateCarryForward(accounts);
+      expect(result.profitLoss).toBe(-30000);
+    });
+  });
+
+  // ── Automatic Reversals ──
+  describe("Automatic Reversals in New Year", () => {
+    function createReversal(
+      original: { debitAccountId: number; creditAccountId: number; amount: number; description: string },
+      reversalDate: string
+    ) {
+      return {
+        date: reversalDate,
+        debitAccountId: original.creditAccountId, // Swap debit/credit
+        creditAccountId: original.debitAccountId,
+        amount: original.amount,
+        description: `Rückbuchung: ${original.description}`,
+      };
+    }
+
+    it("swaps debit and credit accounts", () => {
+      const original = { debitAccountId: 1, creditAccountId: 2, amount: 1000, description: "TP Miete" };
+      const reversal = createReversal(original, "2026-01-01");
+      expect(reversal.debitAccountId).toBe(2);
+      expect(reversal.creditAccountId).toBe(1);
+    });
+
+    it("keeps the same amount", () => {
+      const original = { debitAccountId: 1, creditAccountId: 2, amount: 5000, description: "TP Versicherung" };
+      const reversal = createReversal(original, "2026-01-01");
+      expect(reversal.amount).toBe(5000);
+    });
+
+    it("prefixes description with Rückbuchung", () => {
+      const original = { debitAccountId: 1, creditAccountId: 2, amount: 1000, description: "TP Miete Q1" };
+      const reversal = createReversal(original, "2026-01-01");
+      expect(reversal.description).toBe("Rückbuchung: TP Miete Q1");
+    });
+
+    it("uses first day of new year as reversal date", () => {
+      const original = { debitAccountId: 1, creditAccountId: 2, amount: 1000, description: "TP" };
+      const reversal = createReversal(original, "2026-01-01");
+      expect(reversal.date).toBe("2026-01-01");
+    });
+  });
+});

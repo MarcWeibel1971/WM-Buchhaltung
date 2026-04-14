@@ -63,9 +63,74 @@ export const fiscalYears = mysqlTable("fiscal_years", {
   year: int("year").notNull().unique(),
   startDate: date("startDate", { mode: 'string' }).notNull(),
   endDate: date("endDate", { mode: 'string' }).notNull(),
+  // Status: open = aktiv, closing = Abschluss läuft, closed = abgeschlossen
+  status: mysqlEnum("status", ["open", "closing", "closed"]).default("open").notNull(),
   isClosed: boolean("isClosed").default(false).notNull(),
+  // Saldovortrag completed?
+  balanceCarriedForward: boolean("balanceCarriedForward").default(false).notNull(),
+  closedAt: timestamp("closedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+// ─── Depreciation Settings (Abschreibungssätze) ─────────────────────────────
+export const depreciationSettings = mysqlTable("depreciation_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  // Linked asset account (e.g., 1500 Mobiliar, 1510 Fahrzeuge)
+  accountId: int("accountId").notNull(),
+  // Depreciation rate in percent (e.g., 25.00 for 25%)
+  depreciationRate: decimal("depreciationRate", { precision: 5, scale: 2 }).notNull(),
+  // Method: linear or degressive (degressiv)
+  method: mysqlEnum("method", ["linear", "degressive"]).default("degressive").notNull(),
+  // Useful life in years (optional, for linear method)
+  usefulLifeYears: int("usefulLifeYears"),
+  // Contra account for depreciation expense (e.g., 4800 Abschreibungen)
+  depreciationExpenseAccountId: int("depreciationExpenseAccountId"),
+  // Notes
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type DepreciationSetting = typeof depreciationSettings.$inferSelect;
+
+// ─── Year-End Bookings (Jahresabschluss-Buchungen) ──────────────────────────
+export const yearEndBookings = mysqlTable("year_end_bookings", {
+  id: int("id").autoincrement().primaryKey(),
+  // Fiscal year being closed
+  fiscalYear: int("fiscalYear").notNull(),
+  // Type of year-end booking
+  bookingType: mysqlEnum("bookingType", [
+    "transitorische_aktiven",   // TA: Vorauszahlungen/Rückerstattungen (Kto 1300)
+    "transitorische_passiven",  // TP: Aufwand im alten GJ, Rechnung im neuen (Kto 2300)
+    "kreditoren",               // Offene Lieferantenrechnungen (Kto 2000)
+    "debitoren",                // Offene Forderungen (Kto 1100)
+    "abschreibung",             // Abschreibungen auf Anlagevermögen
+    "rueckbuchung",             // Automatische Rückbuchung im neuen GJ
+  ]).notNull(),
+  // Description of the booking
+  description: text("description").notNull(),
+  // Amount
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  // Debit account
+  debitAccountId: int("debitAccountId").notNull(),
+  // Credit account
+  creditAccountId: int("creditAccountId").notNull(),
+  // Source document that triggered this suggestion
+  sourceDocumentId: int("sourceDocumentId"),
+  // Source journal entry (for TA/TP based on existing bookings)
+  sourceJournalEntryId: int("sourceJournalEntryId"),
+  // Created journal entry (after approval)
+  journalEntryId: int("journalEntryId"),
+  // Reversal entry in new fiscal year
+  reversalEntryId: int("reversalEntryId"),
+  // Status
+  status: mysqlEnum("status", ["suggested", "approved", "rejected"]).default("suggested").notNull(),
+  // AI reasoning for the suggestion
+  aiReasoning: text("aiReasoning"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type YearEndBooking = typeof yearEndBookings.$inferSelect;
 
 // ─── Journal Entries (Buchungssätze) ─────────────────────────────────────────
 export const journalEntries = mysqlTable("journal_entries", {
@@ -434,4 +499,6 @@ export const insuranceSettings = mysqlTable("insurance_settings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 export type InsuranceSetting = typeof insuranceSettings.$inferSelect;
+export type InsertDepreciationSetting = typeof depreciationSettings.$inferInsert;
+export type InsertYearEndBooking = typeof yearEndBookings.$inferInsert;
 

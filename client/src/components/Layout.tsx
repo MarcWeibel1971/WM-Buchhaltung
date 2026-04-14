@@ -3,7 +3,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, BookOpen, Building2, CreditCard,
   Users, FileText, BarChart3, Receipt, LogOut, ChevronRight,
-  Menu, X, Bell, Paperclip, Settings
+  Menu, X, Bell, Paperclip, Settings, CalendarCheck
 } from "lucide-react";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { href: "/vat", icon: Receipt, label: "MWST" },
   { href: "/reports", icon: BarChart3, label: "Berichte" },
   { href: "/documents", icon: Paperclip, label: "Dokumente" },
+  { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
   { href: "/settings", icon: Settings, label: "Einstellungen" },
 ];
 

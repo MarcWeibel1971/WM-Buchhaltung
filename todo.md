@@ -385,3 +385,43 @@
 - [x] Frontend: Suchfeld für Buchungstext im Kontoauszug
 - [x] Frontend: Datumsbereich-Filter (von/bis) im Kontoauszug mit Filter-Total und Ergebniszähler
 - [x] Frontend: Lupe/Stift-Icon in Kontoauszug-Zeile öffnet Buchungsdetail bzw. Bearbeiten-Dialog direkt (ohne Umweg über Journal)
+
+## Feature: Jahresabschluss
+
+### DB-Schema
+- [x] Tabelle: fiscal_years erweitert (closingStatus, isClosed, balanceCarriedForward, closedAt)
+- [x] Tabelle: depreciation_settings (assetAccountId, depreciationRate, method, depreciationExpenseAccountId, isActive)
+- [x] Tabelle: year_end_bookings (id, fiscalYear, type, debitAccountId, creditAccountId, amount, description, status, journalEntryId, reversalJournalEntryId, sourceDocumentId)
+
+### Backend: Jahresendbuchungs-Vorschläge
+- [x] Transitorische Passiven: Rechnungen mit Datum im neuen GJ aber Leistung im alten GJ erkennen (Kto 2300)
+- [x] Kreditoren: Rechnungen mit Datum im alten GJ aber Bezahlung im neuen GJ erkennen (Kto 2000)
+- [x] Transitorische Aktiven: Vorauszahlungen/Rückerstattungen im neuen GJ für Aufwand im alten GJ (Kto 1300)
+- [x] Debitoren: Offene Forderungen am Jahresende (Kto 1100)
+- [x] Abschreibungen: Automatische Berechnung basierend auf Abschreibungssätzen und Anlagevermögen
+- [x] Rückbuchungen: Automatische Gegenbuchungen im neuen GJ für transitorische Buchungen
+
+### Backend: Geschäftsjahr-Verwaltung
+- [x] Neues Geschäftsjahr eröffnen (fiscal_years Eintrag erstellen)
+- [x] Saldovortrag: Jahresendwerte als neue Eröffnungssaldi ins neue GJ übertragen
+- [x] Geschäftsjahr abschliessen (Status auf 'closed', keine weiteren Buchungen möglich)
+
+### Frontend: Jahresabschluss-Seite
+- [x] Neue Seite /year-end in Navigation (zwischen Berichte und Dokumente)
+- [x] Wizard-Flow: 5 Schritte (Abschluss starten → Vorschläge generieren → Buchungen prüfen → Rückbuchungen & Saldovortrag → Abschluss finalisieren)
+- [x] Übersicht aller vorgeschlagenen Jahresendbuchungen mit Genehmigen/Ablehnen
+- [x] Summary-Cards: Status, Vorschläge, Genehmigt, Saldovortrag
+- [x] Hinweise zu TP, TA, Kreditoren, Abschreibungen, Rückbuchungen
+
+### Frontend: Abschreibungssätze in Einstellungen
+- [x] Neuer Tab "Abschreibungen" in Einstellungen
+- [x] Tabelle: Konto, Satz, Methode, Aufwandkonto, Aktiv, Aktionen
+- [x] CRUD für Abschreibungssätze (Neuer Satz / Bearbeiten / Löschen)
+- [x] Info-Box: Steuerlich zulässige Abschreibungssätze (Schweiz)
+
+### Tests: Jahresabschluss
+- [x] Vitest: Abschreibungsberechnung (linear 25%, degressiv 40%)
+- [x] Vitest: Transitorische Buchungen Klassifizierung (TP, TA, Kreditoren)
+- [x] Vitest: Saldovortrag-Berechnung (Bilanzkonten übertragen, Erfolgsrechnung abschliessen)
+- [x] Vitest: Rückbuchungen (Gegenbuchung am 01.01. des neuen GJ)
+- [x] Total: 109 Tests bestanden

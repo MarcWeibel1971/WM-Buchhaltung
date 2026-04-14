@@ -20,7 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Building2, Users, Shield, Landmark, BookOpen, Scale,
-  Pencil, Trash2, Plus, Check, X, AlertTriangle,
+  Pencil, Trash2, Plus, Check, X, AlertTriangle, TrendingDown, Loader2,
 } from "lucide-react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { toast } from "sonner";
@@ -34,6 +34,7 @@ const TABS = [
   { id: "insurance", label: "Versicherungen", icon: Shield },
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
   { id: "opening", label: "Eröffnungssalden", icon: Scale },
+  { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -94,6 +95,7 @@ export default function Settings() {
         {activeTab === "insurance" && <InsuranceTab />}
         {activeTab === "rules" && <BookingRulesTab />}
         {activeTab === "opening" && <OpeningBalancesTab />}
+        {activeTab === "depreciation" && <DepreciationTab />}
       </main>
     </div>
   );
@@ -1229,6 +1231,302 @@ function OpeningBalancesTab() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+
+// ─── Depreciation Settings Tab ───────────────────────────────────────────────
+
+const METHOD_LABELS: Record<string, string> = {
+  linear: "Linear",
+  degressive: "Degressiv",
+};
+
+function DepreciationTab() {
+  const { data: settings, isLoading, refetch } = trpc.yearEnd.listDepreciationSettings.useQuery();
+  const { data: allAccounts } = trpc.accounts.list.useQuery();
+  const createMut = trpc.yearEnd.createDepreciationSetting.useMutation({
+    onSuccess: () => { toast.success("Abschreibungssatz erstellt"); refetch(); setShowAdd(false); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateMut = trpc.yearEnd.updateDepreciationSetting.useMutation({
+    onSuccess: () => { toast.success("Abschreibungssatz aktualisiert"); refetch(); setEditId(null); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMut = trpc.yearEnd.deleteDepreciationSetting.useMutation({
+    onSuccess: () => { toast.success("Abschreibungssatz gelöscht"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+
+  // Form state
+  const [formAccountId, setFormAccountId] = useState<string>("");
+  const [formRate, setFormRate] = useState("");
+  const [formMethod, setFormMethod] = useState<"linear" | "degressive">("linear");
+  const [formExpenseAccountId, setFormExpenseAccountId] = useState<string>("");
+  const [formActive, setFormActive] = useState(true);
+
+  // Filter accounts: only asset accounts (1xxx) for depreciation
+  const assetAccounts = (allAccounts || []).filter(a => {
+    const num = parseInt(a.number);
+    return num >= 1400 && num < 1900; // Anlagevermögen
+  });
+
+  // Filter accounts: only expense accounts (6xxx) for depreciation expense
+  const expenseAccounts = (allAccounts || []).filter(a => {
+    const num = parseInt(a.number);
+    return num >= 6800 && num < 6900; // Abschreibungen
+  });
+
+  const resetForm = () => {
+    setFormAccountId("");
+    setFormRate("");
+    setFormMethod("linear");
+    setFormExpenseAccountId("");
+    setFormActive(true);
+  };
+
+  const startEdit = (setting: NonNullable<typeof settings>[number]) => {
+    setEditId(setting.id);
+    setFormAccountId(String(setting.accountId));
+    setFormRate(setting.depreciationRate);
+    setFormMethod(setting.method as "linear" | "degressive");
+    setFormExpenseAccountId(setting.depreciationExpenseAccountId ? String(setting.depreciationExpenseAccountId) : "");
+    setFormActive(setting.isActive);
+  };
+
+  const handleCreate = () => {
+    if (!formAccountId || !formRate) { toast.error("Konto und Satz sind Pflichtfelder"); return; }
+    createMut.mutate({
+      accountId: parseInt(formAccountId),
+      depreciationRate: formRate,
+      method: formMethod,
+      depreciationExpenseAccountId: formExpenseAccountId ? parseInt(formExpenseAccountId) : undefined,
+    });
+  };
+
+  const handleUpdate = () => {
+    if (!editId) return;
+    updateMut.mutate({
+      id: editId,
+      depreciationRate: formRate || undefined,
+      method: formMethod,
+      depreciationExpenseAccountId: formExpenseAccountId ? parseInt(formExpenseAccountId) : null,
+      isActive: formActive,
+    });
+  };
+
+  if (isLoading) return <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+
+  return (
+    <div className="max-w-4xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Abschreibungssätze</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Definieren Sie die jährlichen Abschreibungssätze für Ihr Anlagevermögen.
+            Diese werden beim Jahresabschluss automatisch als Buchungsvorschläge generiert.
+          </p>
+        </div>
+        <Button onClick={() => { resetForm(); setShowAdd(true); }} size="sm">
+          <Plus className="h-4 w-4 mr-2" /> Neuer Satz
+        </Button>
+      </div>
+
+      {/* Info box */}
+      <Card className="border-blue-200 bg-blue-50 dark:bg-blue-900/10 dark:border-blue-800">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex gap-3 text-sm">
+            <AlertTriangle className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+            <div className="text-muted-foreground">
+              <strong className="text-blue-700 dark:text-blue-400">Steuerlich zulässige Abschreibungssätze (Schweiz):</strong>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-2">
+                <span>Mobiliar/Einrichtungen: 25%</span>
+                <span>Büromaschinen: 40%</span>
+                <span>Fahrzeuge: 40%</span>
+                <span>Werkzeuge/Geräte: 40%</span>
+                <span>Immobilien (Geschäft): 4%</span>
+                <span>EDV/Software: 40%</span>
+                <span>Immaterielle Anlagen: 40%</span>
+                <span>Goodwill: 40%</span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Add form */}
+      {showAdd && (
+        <Card className="border-primary/30">
+          <CardHeader>
+            <CardTitle className="text-base">Neuer Abschreibungssatz</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Anlagekonto *</Label>
+                <Select value={formAccountId} onValueChange={setFormAccountId}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
+                  <SelectContent>
+                    {assetAccounts.map(a => (
+                      <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Abschreibungssatz (%) *</Label>
+                <Input
+                  className="mt-1" type="number" step="0.1" min="0" max="100"
+                  value={formRate} onChange={e => setFormRate(e.target.value)}
+                  placeholder="z.B. 25"
+                />
+              </div>
+              <div>
+                <Label>Methode</Label>
+                <Select value={formMethod} onValueChange={v => setFormMethod(v as "linear" | "degressive")}>
+                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="linear">Linear (gleichmässig)</SelectItem>
+                    <SelectItem value="degressive">Degressiv (vom Buchwert)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Aufwandkonto (optional)</Label>
+                <Select value={formExpenseAccountId} onValueChange={setFormExpenseAccountId}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="Standard: 6800" /></SelectTrigger>
+                  <SelectContent>
+                    {expenseAccounts.map(a => (
+                      <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={formActive} onCheckedChange={setFormActive} />
+              <Label>Aktiv</Label>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button onClick={handleCreate} disabled={createMut.isPending} size="sm">
+                {createMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Check className="h-4 w-4 mr-2" />}
+                Erstellen
+              </Button>
+              <Button onClick={() => setShowAdd(false)} variant="outline" size="sm">
+                <X className="h-4 w-4 mr-2" /> Abbrechen
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Settings table */}
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Konto</TableHead>
+              <TableHead>Satz</TableHead>
+              <TableHead>Methode</TableHead>
+              <TableHead>Aufwandkonto</TableHead>
+              <TableHead className="text-center">Aktiv</TableHead>
+              <TableHead className="text-right">Aktionen</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(!settings || settings.length === 0) && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  Noch keine Abschreibungssätze definiert.
+                </TableCell>
+              </TableRow>
+            )}
+            {(settings || []).map(s => (
+              <TableRow key={s.id}>
+                {editId === s.id ? (
+                  <>
+                    <TableCell className="font-medium">{s.accountNumber} {s.accountName}</TableCell>
+                    <TableCell>
+                      <Input
+                        type="number" step="0.1" min="0" max="100" className="w-20"
+                        value={formRate} onChange={e => setFormRate(e.target.value)}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Select value={formMethod} onValueChange={v => setFormMethod(v as "linear" | "degressive")}>
+                        <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="linear">Linear</SelectItem>
+                          <SelectItem value="degressive">Degressiv</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Select value={formExpenseAccountId} onValueChange={setFormExpenseAccountId}>
+                        <SelectTrigger className="w-40"><SelectValue placeholder="Standard" /></SelectTrigger>
+                        <SelectContent>
+                          {expenseAccounts.map(a => (
+                            <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Switch checked={formActive} onCheckedChange={setFormActive} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex gap-1 justify-end">
+                        <Button size="sm" variant="ghost" onClick={handleUpdate} disabled={updateMut.isPending}>
+                          <Check className="h-4 w-4 text-green-600" />
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditId(null)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </>
+                ) : (
+                  <>
+                    <TableCell className="font-medium">{s.accountNumber} {s.accountName}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-mono">{s.depreciationRate}%</Badge>
+                    </TableCell>
+                    <TableCell>{METHOD_LABELS[s.method] || s.method}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {s.expenseAccountNumber ? `${s.expenseAccountNumber} ${s.expenseAccountName}` : "Standard (6800)"}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {s.isActive ? (
+                        <Badge variant="default" className="bg-green-100 text-green-700">Aktiv</Badge>
+                      ) : (
+                        <Badge variant="secondary">Inaktiv</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex gap-1 justify-end">
+                        <Button size="sm" variant="ghost" onClick={() => startEdit(s)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm" variant="ghost"
+                          onClick={() => { if (confirm("Abschreibungssatz löschen?")) deleteMut.mutate({ id: s.id }); }}
+                          disabled={deleteMut.isPending}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   );
 }

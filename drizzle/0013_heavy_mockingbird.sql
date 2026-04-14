@@ -1,0 +1,1 @@
+ALTER TABLE `company_settings` ADD `vatSaldoRate` decimal(5,2) DEFAULT '6.20';

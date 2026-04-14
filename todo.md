@@ -541,3 +541,13 @@
 - [x] Sammelbuchung-Modus: Bankkonto im Soll (Eingang) oder Haben (Ausgang), mehrere Gegenkonten
 - [x] Sammelbuchung-Modus: Differenz-Anzeige und Speichern nur bei Diff=0
 - [x] Sammelbuchung-Modus: Vorschau-Tabelle mit Buchungszeilen
+
+## Bug: MWST-Abrechnungen löschen und Saldosteuersatz
+
+- [x] MWST: Lösch-Button für erstellte Abrechnungsperioden hinzufügen
+- [x] MWST: Umsatzberechnung korrigieren – Saldosteuersatz 6.2% statt Normalsatz verwenden
+- [x] MWST: Umsatz aus verbuchten Ertragskonten mit MWST-Flag korrekt berechnen (aktuell 0.00)
+
+## Bug: Kontoübertrag-Duplikate bei zwei Bankauszügen
+
+- [x] Bankimport: Duplikaterkennung für Kontoüberträge – automatische Erkennung nach jedem Import

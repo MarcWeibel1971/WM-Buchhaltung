@@ -133,6 +133,7 @@ function CompanyTab() {
       uid: (current as Record<string, unknown>).uid as string ?? "",
       vatNumber: (current as Record<string, unknown>).vatNumber as string ?? "",
       vatMethod: (current as Record<string, unknown>).vatMethod as string ?? "effective",
+      vatSaldoRate: (current as Record<string, unknown>).vatSaldoRate as string ?? "6.20",
       vatPeriod: (current as Record<string, unknown>).vatPeriod as string ?? "quarterly",
       fiscalYearStartMonth: String((current as Record<string, unknown>).fiscalYearStartMonth ?? 1),
       phone: (current as Record<string, unknown>).phone as string ?? "",
@@ -155,6 +156,7 @@ function CompanyTab() {
       uid: form.uid || undefined,
       vatNumber: form.vatNumber || undefined,
       vatMethod: (form.vatMethod as "effective" | "saldo" | "pauschal") || undefined,
+      vatSaldoRate: form.vatSaldoRate || undefined,
       vatPeriod: (form.vatPeriod as "quarterly" | "semi-annual") || undefined,
       fiscalYearStartMonth: form.fiscalYearStartMonth ? parseInt(form.fiscalYearStartMonth) : undefined,
       phone: form.phone || undefined,
@@ -277,6 +279,14 @@ function CompanyTab() {
               </Select>
             ) : <p className="mt-1">{val("vatMethod") === "effective" ? "Effektive Methode" : val("vatMethod") === "saldo" ? "Saldosteuersatz" : val("vatMethod") || "—"}</p>}
           </div>
+          {val("vatMethod") === "saldo" && (
+            <div>
+              <Label>Saldosteuersatz (%)</Label>
+              {editing ? (
+                <Input className="mt-1" value={val("vatSaldoRate")} onChange={e => set("vatSaldoRate", e.target.value)} placeholder="6.20" />
+              ) : <p className="mt-1">{val("vatSaldoRate") || "6.20"}%</p>}
+            </div>
+          )}
           <div>
             <Label>Abrechnungsperiode</Label>
             {editing ? (

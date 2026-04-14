@@ -454,6 +454,8 @@ export const companySettings = mysqlTable("company_settings", {
   vatNumber: varchar("vatNumber", { length: 30 }),
   // MWST method: effective, saldo, pauschal
   vatMethod: mysqlEnum("vatMethod", ["effective", "saldo", "pauschal"]).default("effective"),
+  // Saldosteuersatz (for saldo method, e.g. 6.2%)
+  vatSaldoRate: decimal("vatSaldoRate", { precision: 5, scale: 2 }).default("6.20"),
   // MWST period: quarterly, semi-annual
   vatPeriod: mysqlEnum("vatPeriod", ["quarterly", "semi-annual"]).default("quarterly"),
   // Fiscal year start (month: 1-12)

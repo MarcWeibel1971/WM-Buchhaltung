@@ -21,7 +21,7 @@ import {
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
-import { eq, and, desc, asc, sql, inArray, like } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
 
@@ -2210,13 +2210,168 @@ const vatRouter = router({
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const startDate = toDateStr(input.startDate) as string;
+      const endDate = toDateStr(input.endDate) as string;
+
+      // Get company settings to determine VAT method
+      const { companySettings: csTable } = await import("../drizzle/schema");
+      const [settings] = await db.select().from(csTable).limit(1);
+      const vatMethod = settings?.vatMethod ?? "effective";
+      const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
+
+      // Calculate turnover from approved journal entries in the period
+      // Get all approved journal entries in the date range
+      const entries = await db.select({
+        entryId: journalEntries.id,
+        bookingDate: journalEntries.bookingDate,
+      }).from(journalEntries)
+        .where(and(
+          eq(journalEntries.status, "approved"),
+          gte(journalEntries.bookingDate, startDate),
+          lte(journalEntries.bookingDate, endDate),
+        ));
+
+      if (entries.length === 0) {
+        // No entries – insert with zeros
+        const [result] = await db.insert(vatPeriods).values({
+          year: input.year,
+          period: input.period,
+          startDate,
+          endDate,
+        });
+        return { periodId: (result as any).insertId };
+      }
+
+      const entryIds = entries.map(e => e.entryId);
+
+      // Get all journal lines for these entries that are on VAT-relevant revenue accounts
+      // Revenue accounts have credit-side entries (Haben = Ertrag)
+      const vatRevenueAccounts = await db.select({
+        id: accounts.id,
+        number: accounts.number,
+        defaultVatRate: accounts.defaultVatRate,
+      }).from(accounts)
+        .where(and(
+          eq(accounts.isVatRelevant, true),
+          eq(accounts.accountType, "revenue"),
+        ));
+
+      const vatAccountIds = vatRevenueAccounts.map(a => a.id);
+
+      let totalTurnover = 0;
+      let turnover81 = 0;
+      let turnover26 = 0;
+      let turnover38 = 0;
+
+      if (vatAccountIds.length > 0) {
+        // Get all credit-side lines on VAT-relevant revenue accounts for these entries
+        const lines = await db.select({
+          accountId: journalLines.accountId,
+          amount: journalLines.amount,
+          side: journalLines.side,
+          vatRate: journalLines.vatRate,
+        }).from(journalLines)
+          .where(and(
+            inArray(journalLines.entryId, entryIds),
+            inArray(journalLines.accountId, vatAccountIds),
+          ));
+
+        for (const line of lines) {
+          const amt = parseFloat(line.amount as string);
+          // Revenue is on credit side; if debit, it's a reversal
+          const signedAmt = line.side === "credit" ? amt : -amt;
+
+          // Determine VAT rate: use line vatRate, or fall back to account defaultVatRate
+          const lineVatRate = line.vatRate ? parseFloat(line.vatRate as string) : null;
+          const acct = vatRevenueAccounts.find(a => a.id === line.accountId);
+          const acctVatRate = acct?.defaultVatRate ? parseFloat(acct.defaultVatRate as string) : null;
+          const effectiveRate = lineVatRate ?? acctVatRate ?? 8.1;
+
+          totalTurnover += signedAmt;
+
+          if (effectiveRate >= 7) {
+            turnover81 += signedAmt;
+          } else if (effectiveRate >= 3) {
+            turnover38 += signedAmt;
+          } else {
+            turnover26 += signedAmt;
+          }
+        }
+      }
+
+      // Calculate VAT due based on method
+      let vatDue81 = 0, vatDue26 = 0, vatDue38 = 0;
+
+      if (vatMethod === "saldo") {
+        // Saldosteuersatz: one flat rate on total turnover
+        // All turnover goes into turnover81 bucket for simplicity
+        const totalVat = totalTurnover * (saldoRate / 100);
+        turnover81 = totalTurnover;
+        turnover26 = 0;
+        turnover38 = 0;
+        vatDue81 = totalVat;
+      } else {
+        // Effective method: apply individual rates
+        vatDue81 = turnover81 * 0.081;
+        vatDue26 = turnover26 * 0.026;
+        vatDue38 = turnover38 * 0.038;
+      }
+
+      // Input tax (Vorsteuer) – sum of vatAmount on debit-side lines on expense accounts
+      let inputTax = 0;
+      if (vatMethod === "effective") {
+        const expenseAccounts = await db.select({ id: accounts.id }).from(accounts)
+          .where(and(
+            eq(accounts.isVatRelevant, true),
+            eq(accounts.accountType, "expense"),
+          ));
+        const expenseIds = expenseAccounts.map(a => a.id);
+        if (expenseIds.length > 0) {
+          const expenseLines = await db.select({
+            vatAmount: journalLines.vatAmount,
+            side: journalLines.side,
+          }).from(journalLines)
+            .where(and(
+              inArray(journalLines.entryId, entryIds),
+              inArray(journalLines.accountId, expenseIds),
+            ));
+          for (const line of expenseLines) {
+            if (line.vatAmount) {
+              inputTax += parseFloat(line.vatAmount as string);
+            }
+          }
+        }
+      }
+      // For Saldosteuersatz: no Vorsteuer deduction
+
+      const netVatPayable = (vatDue81 + vatDue26 + vatDue38) - inputTax;
+
       const [result] = await db.insert(vatPeriods).values({
         year: input.year,
         period: input.period,
-        startDate: toDateStr(input.startDate) as string,
-        endDate: toDateStr(input.endDate) as string,
+        startDate,
+        endDate,
+        turnover81: turnover81.toFixed(2),
+        turnover26: turnover26.toFixed(2),
+        turnover38: turnover38.toFixed(2),
+        vatDue81: vatDue81.toFixed(2),
+        vatDue26: vatDue26.toFixed(2),
+        vatDue38: vatDue38.toFixed(2),
+        inputTax: inputTax.toFixed(2),
+        netVatPayable: netVatPayable.toFixed(2),
       });
       return { periodId: (result as any).insertId };
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await db.delete(vatPeriods).where(eq(vatPeriods.id, input.id));
+      return { success: true };
     }),
 });
 

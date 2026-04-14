@@ -116,11 +116,24 @@ export default function BankImport() {
 
   const utils = trpc.useUtils();
 
+  const detectTransfersMutation = trpc.bankImport.detectTransfers.useMutation({
+    onSuccess: (data) => {
+      if (data.found === 0) toast.info("Keine neuen Kontoüberträge erkannt");
+      else toast.success(`${data.found} Kontoüberträge erkannt und markiert`);
+      refetchTxs();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const importMutation = trpc.bankImport.importTransactions.useMutation({
     onSuccess: (data) => {
       toast.success(`${data.imported} Transaktionen importiert, ${data.duplicates} Duplikate übersprungen`);
       refetchTxs();
       setImporting(false);
+      // Auto-detect transfers after import
+      if (data.imported > 0) {
+        detectTransfersMutation.mutate();
+      }
     },
     onError: (e) => { toast.error(e.message); setImporting(false); },
   });
@@ -255,17 +268,6 @@ export default function BankImport() {
     },
     onError: (e: any) => toast.error(e.message),
   });
-
-  const detectTransfersMutation = trpc.bankImport.detectTransfers.useMutation({
-    onSuccess: (data) => {
-      if (data.found === 0) toast.info("Keine neuen Kontoüberträge erkannt");
-      else toast.success(`${data.found} Kontoüberträge erkannt und markiert`);
-      refetchTxs();
-    },
-    onError: (e: any) => toast.error(e.message),
-  });
-
-
 
   const handleFileUpload = useCallback(async (file: File) => {
     if (!selectedBankAccountId) { toast.error("Bitte zuerst ein Bankkonto auswählen"); return; }

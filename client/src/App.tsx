@@ -16,7 +16,7 @@ import BankImport from "./pages/BankImport";
 import CreditCard from "./pages/CreditCard";
 import Payroll from "./pages/Payroll";
 import Reports from "./pages/Reports";
-import Accounts from "./pages/Accounts";
+// Accounts is now embedded in Reports
 import VatPage from "./pages/Vat";
 import Documents from "./pages/Documents";
 import Settings from "./pages/Settings";
@@ -74,7 +74,7 @@ function Router() {
       <Route path="/credit-card" component={CreditCard} />
       <Route path="/payroll" component={Payroll} />
       <Route path="/reports" component={Reports} />
-      <Route path="/accounts" component={Accounts} />
+      <Route path="/accounts">{() => { window.location.replace("/reports"); return null; }}</Route>
       <Route path="/vat" component={VatPage} />
       <Route path="/documents" component={Documents} />
       <Route path="/settings" component={Settings} />

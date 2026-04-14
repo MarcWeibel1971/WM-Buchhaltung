@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { jsPDF } from "jspdf";
+import Accounts from "./Accounts";
 
 function exportToPdf(title: string, year: number, rows: Array<{label: string; amount: number; indent?: number; bold?: boolean}>, company?: { companyName?: string | null; legalForm?: string | null; street?: string | null; zipCode?: string | null; city?: string | null; uid?: string | null; vatNumber?: string | null }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -114,7 +115,7 @@ export default function Reports() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold">Berichte</h2>
-          <p className="text-sm text-muted-foreground">Bilanz und Erfolgsrechnung</p>
+          <p className="text-sm text-muted-foreground">Erfolgsrechnung, Bilanz und Konten</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="gap-2" onClick={() => {
@@ -174,6 +175,7 @@ export default function Reports() {
         <TabsList>
           <TabsTrigger value="income-statement">Erfolgsrechnung</TabsTrigger>
           <TabsTrigger value="balance-sheet">Bilanz</TabsTrigger>
+          <TabsTrigger value="accounts">Konten</TabsTrigger>
         </TabsList>
 
         {/* Erfolgsrechnung */}
@@ -341,6 +343,11 @@ export default function Reports() {
               </table>
             </div>
           </div>
+        </TabsContent>
+
+        {/* Konten */}
+        <TabsContent value="accounts">
+          <Accounts />
         </TabsContent>
       </Tabs>
     </div>

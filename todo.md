@@ -517,3 +517,10 @@
 
 - [x] Bankimport: Büroklammer-Button und ManualMatch-Dialog entfernt
 - [x] Dokumente: Manuelles Matching bleibt bestehen (einziger Ort dafür)
+
+## Änderung: Konten unter Berichte verschieben
+
+- [x] Sidebar: "Konten" Eintrag entfernen
+- [x] Berichte: Neuer dritter Tab "Konten" nach ER und Bilanz
+- [x] Konten-Inhalt (Kontenliste mit Saldo, Suche, Filter) in den Berichte-Tab integrieren
+- [x] Route /accounts auf /reports umleiten (Rückwärtskompatibilität)

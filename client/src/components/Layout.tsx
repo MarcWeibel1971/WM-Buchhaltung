@@ -2,7 +2,7 @@ import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, BookOpen, Building2, CreditCard,
-  Users, FileText, BarChart3, Receipt, LogOut, ChevronRight,
+  Users, BarChart3, Receipt, LogOut, ChevronRight,
   Menu, X, Bell, Paperclip, Settings, CalendarCheck
 } from "lucide-react";
 import { useState } from "react";
@@ -14,7 +14,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 const NAV_ITEMS = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/journal", icon: BookOpen, label: "Journal" },
-  { href: "/accounts", icon: FileText, label: "Konten" },
   { href: "/bank-import", icon: Building2, label: "Bankimport" },
   { href: "/credit-card", icon: CreditCard, label: "Kreditkarte" },
   { href: "/payroll", icon: Users, label: "Lohnbuchhaltung" },

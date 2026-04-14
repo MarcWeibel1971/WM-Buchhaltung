@@ -607,14 +607,11 @@ export default function Accounts() {
   }
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-xl font-bold">Konten</h2>
-          <p className="text-sm text-muted-foreground">
-            {accounts?.length ?? 0} Konten | Klicken Sie auf ein Konto für die Detailansicht
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          {accounts?.length ?? 0} Konten | Klicken Sie auf ein Konto für die Detailansicht
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-3">

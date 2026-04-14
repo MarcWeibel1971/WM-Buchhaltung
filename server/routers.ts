@@ -1927,15 +1927,26 @@ const payrollRouter = router({
         jul: 7, aug: 8, sep: 9, okt: 10, nov: 11, dez: 12,
       };
 
-      // Parse employee code and month from description like "Lohn MW März 2026" or "Lohn MW Januar 2026"
+      // Parse employee code and month from description like "Lohn MW März 2026", "Lohn AS-C Januar 2026", "Akontozahlung MW März 2026"
       function parsePayrollDesc(desc: string): { empCode: string | null; month: number | null; year: number | null } {
-        const m = desc.match(/Lohn\s+(\w+)\s+(\w+)\s+(\d{4})/i);
-        if (!m) return { empCode: null, month: null, year: null };
-        const empCode = m[1].toLowerCase();
-        const monthStr = m[2].toLowerCase();
-        const year = parseInt(m[3]);
-        const month = MONTH_NAMES_DE[monthStr] ?? null;
-        return { empCode, month, year };
+        // Try multiple patterns:
+        // 1. "Lohn MW März 2026" / "Lohn AS-C Januar 2026"
+        // 2. "Akontozahlung MW März 2026"
+        const patterns = [
+          /Lohn\s+([\w-]+)\s+([A-Za-z\u00C0-\u017F]+)\s+(\d{4})/i,
+          /Akontozahlung\s+([\w-]+)\s+([A-Za-z\u00C0-\u017F]+)\s+(\d{4})/i,
+          /Gehalt\s+([\w-]+)\s+([A-Za-z\u00C0-\u017F]+)\s+(\d{4})/i,
+        ];
+        for (const pattern of patterns) {
+          const m = desc.match(pattern);
+          if (!m) continue;
+          const empCode = m[1].toLowerCase();
+          const monthStr = m[2].toLowerCase();
+          const year = parseInt(m[3]);
+          const month = MONTH_NAMES_DE[monthStr] ?? null;
+          if (month) return { empCode, month, year };
+        }
+        return { empCode: null, month: null, year: null };
       }
 
       // ── Source 1: Journal entries (if any exist) ──
@@ -1945,7 +1956,7 @@ const payrollRouter = router({
         .where(
           and(
             eq(journalEntries.fiscalYear, input.year),
-            sql`${journalEntries.description} LIKE '%Lohn%'`
+            sql`(${journalEntries.description} LIKE '%Lohn%' OR ${journalEntries.description} LIKE '%Akontozahlung%' OR ${journalEntries.description} LIKE '%Gehalt%')`
           )
         );
 
@@ -1955,7 +1966,7 @@ const payrollRouter = router({
       const salaryAccIds = new Set(salaryAccounts.map(a => a.id));
 
       const personalBankAccounts = await db.select().from(accounts).where(
-        sql`${accounts.number} IN ('1032','1033','1071','1081','1082','1083')`
+        sql`${accounts.number} IN ('1031','1032','1033','1071','1081','1082','1083')`
       );
       const personalBankAccIds = new Set(personalBankAccounts.map(a => a.id));
 
@@ -1971,6 +1982,14 @@ const payrollRouter = router({
         const { empCode, month, year } = parsePayrollDesc(entry.description ?? "");
         if (!empCode || !month || !year) continue;
 
+        // Fetch all lines for this entry
+        const lines = await db.select({ line: journalLines }).from(journalLines).where(eq(journalLines.entryId, entry.id));
+
+        // CRITICAL: Only process entries that have at least one line on a salary account (4000-4005)
+        // This filters out bank-to-bank transfers that happen to have "Lohn" in the description
+        const hasSalaryAccLine = lines.some(({ line }) => salaryAccIds.has(line.accountId));
+        if (!hasSalaryAccLine) continue;
+
         const key: PayrollKey = `${empCode}-${year}-${month}`;
         if (!grouped.has(key)) {
           grouped.set(key, { empCode, year, month, grossFromSalaryAcc: 0, netFromBankAcc: 0, sourceCount: 0, source: 'journal' });
@@ -1978,7 +1997,6 @@ const payrollRouter = router({
         const g = grouped.get(key)!;
         g.sourceCount++;
 
-        const lines = await db.select({ line: journalLines }).from(journalLines).where(eq(journalLines.entryId, entry.id));
         for (const { line } of lines) {
           const amt = parseFloat(line.amount as string);
           if (line.side === "debit" && salaryAccIds.has(line.accountId)) g.grossFromSalaryAcc += amt;
@@ -1986,14 +2004,13 @@ const payrollRouter = router({
         }
       }
 
-      // ── Source 2: Bank transactions with Lohn descriptions (fallback if journal is empty) ──
-      if (lohnEntries.length === 0) {
-        // Get bank transactions with 'Lohn' in description for the year
+      // ── Source 2: Bank transactions with Lohn descriptions (ALWAYS check, not just fallback) ──
+      {
         const yearStart = `${input.year}-01-01`;
         const yearEnd = `${input.year}-12-31`;
         const lohnTxns = await db.select().from(bankTransactions).where(
           and(
-            sql`${bankTransactions.description} LIKE '%Lohn%'`,
+            sql`(${bankTransactions.description} LIKE '%Lohn%' OR ${bankTransactions.description} LIKE '%Akontozahlung%' OR ${bankTransactions.description} LIKE '%Gehalt%')`,
             sql`${bankTransactions.transactionDate} >= ${yearStart}`,
             sql`${bankTransactions.transactionDate} <= ${yearEnd}`
           )
@@ -2004,19 +2021,28 @@ const payrollRouter = router({
           const { empCode, month, year } = parsePayrollDesc(desc);
           if (!empCode || !month || !year) continue;
 
+          // Skip transfer transactions (bank-to-bank) – these are not salary payments
+          if (tx.isTransfer || tx.status === 'matched') continue;
+
+          // Only consider OUTGOING transactions (negative amount = salary paid out)
+          const rawAmt = parseFloat(tx.amount as string);
+          if (rawAmt >= 0) continue; // Incoming transactions are not salary payments
+
           // Only consider transactions for known employees (mw, jm)
           const emp = emps.find(e => e.code?.toLowerCase() === empCode);
           if (!emp) continue;
 
           const key: PayrollKey = `${empCode}-${year}-${month}`;
+          // Only add from bank if we don't already have this from journal
+          if (grouped.has(key) && grouped.get(key)!.source === 'journal') continue;
+
           if (!grouped.has(key)) {
             grouped.set(key, { empCode, year, month, grossFromSalaryAcc: 0, netFromBankAcc: 0, sourceCount: 0, source: 'bank' });
           }
           const g = grouped.get(key)!;
-          g.sourceCount++;
+          if (!g.netFromBankAcc) g.sourceCount++;
 
-          // Bank transactions: negative amount = outgoing payment (salary paid out = net)
-          const amt = Math.abs(parseFloat(tx.amount as string));
+          const amt = Math.abs(rawAmt);
           g.netFromBankAcc += amt;
         }
       }
@@ -2030,11 +2056,25 @@ const payrollRouter = router({
         if (!emp) { skipped++; continue; }
 
         let calc;
-        if (g.grossFromSalaryAcc > 0) {
-          // We have the gross salary from journal salary accounts → top-down
-          calc = calcFromGross(g.grossFromSalaryAcc);
-          // If we also have net from bank, use that as the actual net (more precise)
-          if (g.netFromBankAcc > 0) calc.net = g.netFromBankAcc;
+        if (g.grossFromSalaryAcc > 0 && g.netFromBankAcc > 0) {
+          // We have both salary account debit and bank credit
+          if (Math.abs(g.grossFromSalaryAcc - g.netFromBankAcc) < 0.01) {
+            // Same amount on salary account and bank → the booked amount is actually the NET
+            // (single entry: debit salary acc, credit bank for the net payment)
+            // Use bottom-up to calculate the real gross
+            calc = calcFromNet(g.netFromBankAcc);
+          } else if (g.grossFromSalaryAcc > g.netFromBankAcc) {
+            // Salary account has more than bank → salary account has gross, bank has net
+            calc = calcFromGross(g.grossFromSalaryAcc);
+            calc.net = g.netFromBankAcc; // Use actual net from bank
+          } else {
+            // Unusual: bank > salary account → treat bank as net
+            calc = calcFromNet(g.netFromBankAcc);
+          }
+        } else if (g.grossFromSalaryAcc > 0) {
+          // Only salary account → could be gross or net, assume net for safety
+          // (most small businesses book net payments to salary accounts)
+          calc = calcFromNet(g.grossFromSalaryAcc);
         } else if (g.netFromBankAcc > 0) {
           // Only net salary from bank transactions → bottom-up calculation
           calc = calcFromNet(g.netFromBankAcc);

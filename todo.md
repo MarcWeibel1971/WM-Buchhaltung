@@ -557,3 +557,10 @@
 - [x] Bankimport: Snapshot-Mechanismus – vor jeder Bulk-Aktion den Zustand der betroffenen Transaktionen speichern
 - [x] Bankimport: Rückgängig-Button in der Toolbar anzeigen (nur wenn ein Snapshot vorhanden ist)
 - [x] Bankimport: Restore-Funktion – gespeicherten Snapshot wiederherstellen und Änderungen rückgängig machen
+
+## Bug: Lohnabrechnung – 4 Probleme
+
+- [x] Lohn Bug 1: Bruttolohn mw wird nicht berechnet (Brutto = Netto) – wenn grossFromSalaryAcc == netFromBankAcc, als Netto behandeln und calcFromNet verwenden
+- [x] Lohn Bug 2: Refresh/Sync findet März-Lohnzahlungen nicht – Regex für deutsche Umlaute (März) korrigiert, Banktransaktionen als zusätzliche Quelle
+- [x] Lohn Bug 3: Monatlich "Lohnausweis" → "Lohnabrechnung" umbenennen (Lohnausweis nur jährlich)
+- [x] Lohn Bug 4: Offizieller Lohnausweis als PDF nach Schweizer Formular 11 – exaktes Layout nachgebaut

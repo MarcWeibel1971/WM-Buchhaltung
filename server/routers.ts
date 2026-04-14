@@ -1074,6 +1074,62 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         creditAccountNumber: allAccounts.find(a => a.id === r.creditAccountId)?.number,
       }));
     }),
+
+  // List unmatched bank transactions for manual matching from Documents page
+  listUnmatchedTransactions: protectedProcedure
+    .input(z.object({
+      search: z.string().optional(),
+      limit: z.number().default(50),
+    }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { bankTransactions: txns, bankAccounts: ba, accounts: accts } = await import("../drizzle/schema");
+      const { and, eq: eqOp, or, like, desc: descOp, isNull } = await import("drizzle-orm");
+      const conditions: any[] = [
+        eqOp(txns.status, 'pending'),
+        or(
+          isNull(txns.matchedDocumentId),
+          eqOp(txns.matchedDocumentId, 0),
+        ),
+      ];
+      if (input.search) {
+        const q = `%${input.search}%`;
+        conditions.push(
+          or(
+            like(txns.suggestedBookingText, q),
+            like(txns.counterparty, q),
+            like(txns.description, q),
+          )!
+        );
+      }
+      const rows = await db.select({
+        id: txns.id,
+        transactionDate: txns.transactionDate,
+        bookingText: txns.suggestedBookingText,
+        description: txns.description,
+        amount: txns.amount,
+        counterparty: txns.counterparty,
+        bankAccountId: txns.bankAccountId,
+      }).from(txns)
+        .where(and(...conditions))
+        .orderBy(descOp(txns.transactionDate))
+        .limit(input.limit);
+
+      // Enrich with bank account names
+      const bankAccountIds = Array.from(new Set(rows.map(r => r.bankAccountId).filter(Boolean)));
+      let bankAccountMap: Record<number, string> = {};
+      if (bankAccountIds.length > 0) {
+        const bankRows = await db.select({ id: ba.id, name: ba.name }).from(ba).where(inArray(ba.id, bankAccountIds as number[]));
+        bankAccountMap = Object.fromEntries(bankRows.map(b => [b.id, b.name]));
+      }
+
+      return rows.map(r => ({
+        ...r,
+        counterpartyName: r.counterparty ?? '',
+        bankAccountName: r.bankAccountId ? bankAccountMap[r.bankAccountId] ?? '' : '',
+      }));
+    }),
 });
 
 // ─── Credit Card Router ───────────────────────────────────────────────────────

@@ -468,3 +468,10 @@
 - [x] Frontend Bankimport: Paperclip-Button pro Transaktion zum manuellen Verknüpfen
 - [x] Frontend Bankimport: Dialog mit Suchfeld und Liste unverknüpfter Dokumente (Typ, Gegenpartei, Betrag, Datum)
 - [x] Frontend Bankimport: Visuelles Feedback nach erfolgreichem manuellen Match (Toast + Refresh)
+
+## Feature: Manuelles Matching von der Dokumente-Seite aus
+
+- [x] Backend: Endpunkt bankImport.listUnmatchedTransactions – ausstehende Transaktionen ohne verknüpftes Dokument auflisten (mit Suchfunktion)
+- [x] Frontend Dokumente: Paperclip-Button bei offenen Dokumenten zum manuellen Verknüpfen mit einer Banktransaktion
+- [x] Frontend Dokumente: Dialog zur Auswahl einer ungematchten Banktransaktion (Datum, Buchungstext, Betrag, Bankkonto)
+- [x] Frontend Dokumente: Visuelles Feedback nach erfolgreichem Match (Toast + Status-Refresh)

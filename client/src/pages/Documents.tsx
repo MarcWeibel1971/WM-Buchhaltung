@@ -5,10 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   FileText, Image, Eye, Trash2, Search, Filter,
   Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
-  Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2, Calendar
+  Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2, Calendar,
+  Paperclip
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
@@ -48,11 +50,23 @@ export default function Documents() {
   const [search, setSearch] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Manual match dialog state
+  const [matchDialogOpen, setMatchDialogOpen] = useState(false);
+  const [matchDocId, setMatchDocId] = useState<number | null>(null);
+  const [matchDocName, setMatchDocName] = useState("");
+  const [txnSearch, setTxnSearch] = useState("");
+
   const { data: docs, refetch } = trpc.documents.list.useQuery({
     documentType: filterType !== "all" ? filterType : undefined,
     fiscalYear: fiscalYear,
     limit: 200,
   });
+
+  // Unmatched transactions for manual matching dialog
+  const { data: unmatchedTxns } = trpc.bankImport.listUnmatchedTransactions.useQuery(
+    { search: txnSearch || undefined, limit: 50 },
+    { enabled: matchDialogOpen }
+  );
 
   const autoMatchMutation = trpc.documents.autoMatch.useMutation({
     onSuccess: (result) => {
@@ -69,6 +83,17 @@ export default function Documents() {
   const unmatchMutation = trpc.documents.unmatch.useMutation({
     onSuccess: () => {
       toast.success("Match aufgehoben");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const manualMatchMutation = trpc.documents.manualMatch.useMutation({
+    onSuccess: () => {
+      toast.success("Dokument erfolgreich mit Transaktion verknüpft");
+      setMatchDialogOpen(false);
+      setMatchDocId(null);
+      setTxnSearch("");
       refetch();
     },
     onError: (err) => toast.error(err.message),
@@ -102,6 +127,13 @@ export default function Documents() {
     }
   }, [refetch]);
 
+  const openMatchDialog = (docId: number, docName: string) => {
+    setMatchDocId(docId);
+    setMatchDocName(docName);
+    setTxnSearch("");
+    setMatchDialogOpen(true);
+  };
+
   const filtered = (docs ?? []).filter(doc => {
     // Match status filter
     if (filterMatch !== "all") {
@@ -127,7 +159,7 @@ export default function Documents() {
   const allDocs = docs ?? [];
   const stats = {
     total: allDocs.length,
-    matched: allDocs.filter(d => (d as any).matchStatus === "matched").length,
+    matched: allDocs.filter(d => (d as any).matchStatus === "matched" || (d as any).matchStatus === "manual").length,
     unmatched: allDocs.filter(d => (d as any).matchStatus === "unmatched" || !(d as any).matchStatus).length,
     invoice_in: allDocs.filter(d => d.documentType === "invoice_in").length,
   };
@@ -239,6 +271,7 @@ export default function Documents() {
               let meta: any = null;
               try { if (doc.aiMetadata) meta = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
               const docFiscalYear = doc.fiscalYear;
+              const isUnmatched = matchStatus === "unmatched" || !matchStatus;
 
               return (
                 <div key={doc.id} className="flex items-start gap-3 p-4 hover:bg-muted/30 transition-colors">
@@ -258,8 +291,8 @@ export default function Documents() {
                         {typeInfo.icon}
                         {typeInfo.label}
                       </span>
-                      {/* Match status badge */}
-                      <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium border ${matchInfo.color}`}>
+ 
+                      <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full border font-medium ${matchInfo.color}`}>
                         {matchInfo.icon}
                         {matchInfo.label}
                         {matchScoreVal != null && matchStatus === "matched" && (
@@ -330,7 +363,18 @@ export default function Documents() {
                         <Eye className="w-4 h-4" />
                       </Button>
                     </a>
-                    {matchStatus === "matched" && (
+                    {isUnmatched && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-blue-600 hover:text-blue-700"
+                        title="Manuell mit Banktransaktion verknüpfen"
+                        onClick={() => openMatchDialog(doc.id, doc.filename)}
+                      >
+                        <Paperclip className="w-4 h-4" />
+                      </Button>
+                    )}
+                    {(matchStatus === "matched" || matchStatus === "manual") && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -357,6 +401,84 @@ export default function Documents() {
           </div>
         )}
       </div>
+
+      {/* Manual Match Dialog */}
+      <Dialog open={matchDialogOpen} onOpenChange={setMatchDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Paperclip className="w-5 h-5" />
+              Transaktion manuell verknüpfen
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Dokument: <span className="font-medium text-foreground">{matchDocName}</span>
+            </p>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-2">
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Transaktion suchen (Buchungstext, Lieferant...)"
+                className="pl-9"
+                value={txnSearch}
+                onChange={e => setTxnSearch(e.target.value)}
+              />
+            </div>
+
+            {/* Transaction List */}
+            <div className="divide-y divide-border border border-border rounded-lg overflow-hidden max-h-96 overflow-y-auto">
+              {!unmatchedTxns || unmatchedTxns.length === 0 ? (
+                <div className="p-6 text-center text-muted-foreground text-sm">
+                  Keine unverknüpften Transaktionen gefunden
+                </div>
+              ) : (
+                unmatchedTxns.map(tx => (
+                  <div key={tx.id} className="flex items-center gap-3 p-3 hover:bg-muted/30 transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs text-muted-foreground">{tx.transactionDate}</span>
+                        <span className="font-medium text-sm truncate">{tx.bookingText || tx.description || '–'}</span>
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                        {tx.counterpartyName && <span>{tx.counterpartyName}</span>}
+                        {tx.bankAccountName && <span className="opacity-70">{tx.bankAccountName}</span>}
+                      </div>
+                    </div>
+                    <div className={`text-sm font-mono font-medium whitespace-nowrap ${Number(tx.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      CHF {formatCHF(Number(tx.amount))}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-shrink-0 text-blue-600 border-blue-200 hover:bg-blue-50"
+                      disabled={manualMatchMutation.isPending}
+                      onClick={() => {
+                        if (matchDocId) {
+                          manualMatchMutation.mutate({
+                            documentId: matchDocId,
+                            transactionId: tx.id,
+                          });
+                        }
+                      }}
+                    >
+                      <Paperclip className="w-3.5 h-3.5 mr-1" />
+                      Verknüpfen
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end mt-2">
+            <Button variant="outline" onClick={() => setMatchDialogOpen(false)}>
+              Abbrechen
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

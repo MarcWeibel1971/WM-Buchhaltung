@@ -524,3 +524,13 @@
 - [x] Berichte: Neuer dritter Tab "Konten" nach ER und Bilanz
 - [x] Konten-Inhalt (Kontenliste mit Saldo, Suche, Filter) in den Berichte-Tab integrieren
 - [x] Route /accounts auf /reports umleiten (Rückwärtskompatibilität)
+
+## Feature: Sammelbuchung-Dialog (Buchungsmaske)
+
+- [x] Sammelbuchung-Dialog: Buchungstext und Datum oben
+- [x] Sammelbuchung-Dialog: Gesamtbetrag mit Bankkonto im HABEN (Belastung) als Kopfzeile
+- [x] Sammelbuchung-Dialog: Einzelne Aufwandspositionen im SOLL darunter (dynamisch hinzufügen/entfernen)
+- [x] Sammelbuchung-Dialog: Differenz-Anzeige (Diff.) zwischen Haben-Total und Soll-Summe
+- [x] Sammelbuchung-Dialog: Speichern nur möglich wenn Differenz = 0
+- [x] Sammelbuchung-Dialog: Bankkonto-Dropdown vorbelegt mit verfügbaren Bankkonten
+- [x] Sammelbuchung-Dialog: Vorschau-Tabelle unten (Konto, Text, Soll, Haben, Steuer)

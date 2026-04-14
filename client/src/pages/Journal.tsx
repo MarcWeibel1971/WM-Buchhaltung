@@ -399,104 +399,81 @@ export default function Journal() {
                       <Checkbox
                         checked={selectedIds.has(entry.id)}
                         onCheckedChange={() => {}}
-                        onClick={(e: React.MouseEvent) => { e.stopPropagation(); toggleSelect(entry.id, e, entries.indexOf(entry)); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const idx = sortedEntries.findIndex((se: any) => se.id === entry.id);
+                          toggleSelect(entry.id, e as any, idx);
+                        }}
                       />
                     </td>
-                    <td className="font-mono text-xs text-muted-foreground">{entry.entryNumber}</td>
-                    <td className="text-sm whitespace-nowrap">
-                      {new Date(entry.bookingDate as any).toLocaleDateString("de-CH")}
-                    </td>
+                    <td className="font-mono text-xs">{entry.entryNumber}</td>
                     <td className="text-xs">
+                      {entry.bookingDate ? new Date(entry.bookingDate).toLocaleDateString("de-CH") : "–"}
+                    </td>
+                    <td>
                       {entry.isCollective ? (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Sammel</span>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                          <Layers className="h-3 w-3" /> Sammel
+                        </span>
                       ) : (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400">Einzel</span>
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
+                          Einzel
+                        </span>
                       )}
                     </td>
-                    <td className="text-sm max-w-xs truncate">{entry.description}</td>
-                    <td className="text-xs font-mono truncate max-w-[180px]" title={entry.debitAccountLabel}>
-                      {entry.debitAccountLabel ?? '\u2013'}
+                    <td className="max-w-48 truncate text-sm">{entry.description}</td>
+                    <td className="text-xs font-mono">{entry.debitAccountLabel ?? "–"}</td>
+                    <td className="text-xs font-mono">{entry.creditAccountLabel ?? "–"}</td>
+                    <td className="text-right font-mono">
+                      {entry.totalAmount != null ? formatCHF(entry.totalAmount) : "–"}
                     </td>
-                    <td className="text-xs font-mono truncate max-w-[180px]" title={entry.creditAccountLabel}>
-                      {entry.creditAccountLabel ?? '\u2013'}
-                    </td>
-                    <td className="text-right font-mono text-sm whitespace-nowrap">
-                      {entry.totalAmount != null && entry.totalAmount > 0 ? (
-                        <span>{formatCHF(entry.totalAmount)}</span>
-                      ) : '\u2013'}
-                    </td>
-                    <td><SourceBadge source={entry.source ?? "manual"} /></td>
+                    <td><SourceBadge source={entry.source} /></td>
                     <td><StatusBadge status={entry.status} /></td>
-                    <td className="text-right">
-                      <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
-                        {entry.status === "pending" && (<>
-                          <Button
-                            size="sm" variant="ghost"
-                            className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
-                            title="Genehmigen"
-                            onClick={() => approveMutation.mutate({ entryId: entry.id })}
-                          >
-                            <Check className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm" variant="ghost"
-                            className="h-7 w-7 p-0 text-orange-500 hover:text-orange-600 hover:bg-orange-50"
-                            title="Ablehnen"
-                            onClick={() => rejectMutation.mutate({ entryId: entry.id })}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="sm" variant="ghost"
-                            className="h-7 w-7 p-0 text-muted-foreground"
-                            title="Bearbeiten"
-                            onClick={() => setEditEntry(entry)}
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                        </>)}
+                    <td className="text-right" onClick={e => e.stopPropagation()}>
+                      <div className="flex gap-1 justify-end">
+                        {entry.status === "pending" && (
+                          <>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-green-600"
+                              onClick={() => approveMutation.mutate({ entryId: entry.id })}>
+                              <Check className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500"
+                              onClick={() => rejectMutation.mutate({ entryId: entry.id })}>
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
                         {entry.status === "approved" && (
-                          <Button
-                            size="sm" variant="ghost"
-                            className="h-7 w-7 p-0 text-amber-500 hover:text-amber-600 hover:bg-amber-50"
-                            title="Zurück auf Ausstehend setzen"
-                            onClick={() => setConfirmDialog({
-                              open: true,
-                              title: "Buchung rücksetzen",
-                              message: `Buchung "${entry.description}" zurück auf Ausstehend setzen?`,
-                              onConfirm: () => revertMutation.mutate({ entryId: entry.id }),
-                            })}
-                          >
-                            <RotateCcw className="h-4 w-4" />
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-amber-600"
+                            onClick={() => revertMutation.mutate({ entryId: entry.id })}>
+                            <RotateCcw className="h-3.5 w-3.5" />
                           </Button>
                         )}
-                        <Button
-                          size="sm" variant="ghost"
-                          className="h-7 w-7 p-0 text-red-500 hover:text-red-600 hover:bg-red-50"
-                          title="Buchung löschen"
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                          onClick={() => setEditEntry(entry)}>
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-500"
                           onClick={() => setConfirmDialog({
                             open: true,
                             title: "Buchung löschen",
-                            message: `Buchung "${entry.description}" wirklich löschen? Verknüpfte Bankimport-Transaktionen werden auf Ausstehend zurückgesetzt.`,
+                            message: `Buchung ${entry.entryNumber} wirklich löschen?`,
                             onConfirm: () => deleteMutation.mutate({ entryId: entry.id }),
-                          })}
-                        >
-                          <Trash2 className="h-4 w-4" />
+                          })}>
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     </td>
                   </tr>
-                  {/* Expanded detail row */}
                   {expandedId === entry.id && entryDetail && (
                     <tr key={`detail-${entry.id}`}>
-                      <td colSpan={11} className="bg-muted/20 px-6 py-3">
-                        <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Buchungszeilen</div>
+                      <td colSpan={11} className="bg-muted/10 px-6 py-4">
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="text-xs text-muted-foreground">
-                              <th className="text-left pb-1 font-medium">Konto</th>
-                              <th className="text-right pb-1 font-medium">Soll</th>
-                              <th className="text-right pb-1 font-medium">Haben</th>
+                              <th className="text-left py-1">Konto</th>
+                              <th className="text-right py-1">Soll</th>
+                              <th className="text-right py-1">Haben</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -569,7 +546,7 @@ export default function Journal() {
           mode={showCreateDialog}
           accounts={accounts ?? []}
           onClose={() => setShowCreateDialog(false)}
-          onSaved={() => { setShowCreateDialog(false); utils.journal.list.invalidate(); }}
+          onSaved={() => { setShowCreateDialog(false); utils.journal.list.invalidate(); utils.reports.dashboard.invalidate(); }}
         />
       )}
 
@@ -745,15 +722,33 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
   const [singleCreditAccountId, setSingleCreditAccountId] = useState<string>("");
   const [singleAmount, setSingleAmount] = useState("");
 
-  // Collective mode: multiple lines
-  const [lines, setLines] = useState([
-    { accountId: 0, side: "debit" as const, amount: "" },
-    { accountId: 0, side: "credit" as const, amount: "" },
-    { accountId: 0, side: "debit" as const, amount: "" },
+  // Collective mode (Sammelbuchung): one credit (Haben) line + multiple debit (Soll) lines
+  const [habenAccountId, setHabenAccountId] = useState<string>("");
+  const [habenAmount, setHabenAmount] = useState("");
+  const [sollLines, setSollLines] = useState<Array<{ accountId: string; text: string; amount: string; vatRate: string }>>([
+    { accountId: "", text: "", amount: "", vatRate: "" },
+    { accountId: "", text: "", amount: "", vatRate: "" },
   ]);
 
+  // Load bank accounts for the Haben dropdown
+  const { data: bankAccountsData } = trpc.bankImport.getBankAccounts.useQuery(undefined, { enabled: !isSingle });
+
+  // Build bank account options (from bankAccounts joined with accounts)
+  const bankAccountOptions = useMemo(() => {
+    if (!bankAccountsData) return [];
+    return bankAccountsData.map((ba: any) => ({
+      accountId: ba.account.id,
+      number: ba.account.number,
+      name: ba.bankAccount.name || ba.account.name,
+      label: `${ba.account.number} – ${ba.bankAccount.name || ba.account.name}`,
+    }));
+  }, [bankAccountsData]);
+
   const createMutation = trpc.journal.create.useMutation({
-    onSuccess: onSaved,
+    onSuccess: () => {
+      toast.success(isSingle ? "Einzelbuchung erstellt" : "Sammelbuchung erstellt");
+      onSaved();
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -762,10 +757,45 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
   const singleValid = isSingle && description.trim() && singleDebitAccountId && singleCreditAccountId && singleAmountNum > 0;
 
   // Validation for collective mode
-  const debitTotal = lines.filter(l => l.side === "debit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
-  const creditTotal = lines.filter(l => l.side === "credit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
-  const balanced = Math.abs(debitTotal - creditTotal) < 0.01 && debitTotal > 0;
-  const collectiveValid = !isSingle && balanced && description.trim() && lines.filter(l => l.accountId > 0).length >= 2 && lines.every(l => l.accountId > 0 || !l.amount);
+  const habenAmountNum = parseFloat(habenAmount || "0");
+  const sollTotal = sollLines.reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
+  const differenz = habenAmountNum - sollTotal;
+  const isBalanced = Math.abs(differenz) < 0.01 && habenAmountNum > 0;
+  const validSollLines = sollLines.filter(l => l.accountId && parseFloat(l.amount || "0") > 0);
+  const collectiveValid = !isSingle && isBalanced && description.trim() && habenAccountId && validSollLines.length >= 1;
+
+  // Build preview lines for the table
+  const previewLines = useMemo(() => {
+    if (isSingle) return [];
+    const lines: Array<{ konto: string; text: string; soll: number; haben: number; steuer: string }> = [];
+    // Haben line (bank account)
+    if (habenAccountId) {
+      const acct = accounts.find(a => String(a.id) === habenAccountId);
+      const bankAcct = bankAccountOptions.find((ba: any) => String(ba.accountId) === habenAccountId);
+      lines.push({
+        konto: acct ? `${acct.number}` : "",
+        text: bankAcct ? bankAcct.name : (acct?.name ?? ""),
+        soll: 0,
+        haben: habenAmountNum,
+        steuer: "",
+      });
+    }
+    // Soll lines
+    for (const sl of sollLines) {
+      if (!sl.accountId) continue;
+      const amt = parseFloat(sl.amount || "0");
+      if (amt <= 0) continue;
+      const acct = accounts.find(a => String(a.id) === sl.accountId);
+      lines.push({
+        konto: acct ? `${acct.number}` : "",
+        text: sl.text || (acct?.name ?? ""),
+        soll: amt,
+        haben: 0,
+        steuer: sl.vatRate ? `${sl.vatRate}%` : "",
+      });
+    }
+    return lines;
+  }, [isSingle, habenAccountId, habenAmountNum, sollLines, accounts, bankAccountOptions]);
 
   const handleCreate = () => {
     if (isSingle) {
@@ -778,17 +808,64 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
         ],
       });
     } else {
+      // Build lines: one credit (Haben) + multiple debits (Soll)
+      const lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string; description?: string; vatRate?: string }> = [];
+      // Credit line (bank account)
+      lines.push({
+        accountId: parseInt(habenAccountId),
+        side: "credit",
+        amount: habenAmount,
+      });
+      // Debit lines (expenses)
+      for (const sl of sollLines) {
+        const amt = parseFloat(sl.amount || "0");
+        if (!sl.accountId || amt <= 0) continue;
+        lines.push({
+          accountId: parseInt(sl.accountId),
+          side: "debit",
+          amount: sl.amount,
+          description: sl.text || undefined,
+          vatRate: sl.vatRate || undefined,
+        });
+      }
       createMutation.mutate({
         bookingDate,
         description,
-        lines: lines.filter(l => l.accountId > 0),
+        lines,
       });
     }
   };
 
+  const addSollLine = () => {
+    setSollLines([...sollLines, { accountId: "", text: "", amount: "", vatRate: "" }]);
+  };
+
+  const removeSollLine = (index: number) => {
+    if (sollLines.length <= 1) return;
+    setSollLines(sollLines.filter((_, i) => i !== index));
+  };
+
+  const updateSollLine = (index: number, field: string, value: string) => {
+    const updated = [...sollLines];
+    updated[index] = { ...updated[index], [field]: value };
+    setSollLines(updated);
+  };
+
+  // Account search filter for Soll lines
+  const [sollSearches, setSollSearches] = useState<Record<number, string>>({});
+
+  const getFilteredAccounts = (searchTerm: string) => {
+    if (!searchTerm) return accounts;
+    const lower = searchTerm.toLowerCase();
+    return accounts.filter(a =>
+      a.number.toLowerCase().includes(lower) ||
+      a.name.toLowerCase().includes(lower)
+    );
+  };
+
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className={isSingle ? "w-[min(95vw,38rem)] max-w-none" : "w-[min(95vw,52rem)] max-w-none"}>
+      <DialogContent className={isSingle ? "w-[min(95vw,38rem)] max-w-none" : "w-[min(95vw,64rem)] max-w-none max-h-[90vh] overflow-y-auto"}>
         <DialogHeader>
           <DialogTitle>
             {isSingle ? "Einzelbuchung erstellen" : "Sammelbuchung erstellen"}
@@ -796,118 +873,256 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
           <p className="text-sm text-muted-foreground">
             {isSingle
               ? "Einfache Buchung mit einem Soll- und einem Haben-Konto"
-              : "Buchung mit mehreren Soll- und/oder Haben-Positionen"}
+              : "Sammelbeleg: Ein Konto im Haben (z.B. Bank), mehrere Aufwandspositionen im Soll"}
           </p>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Datum</label>
-              <Input type="date" value={bookingDate} onChange={e => setBookingDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Beschreibung</label>
-              <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Buchungstext..." />
-            </div>
-          </div>
-
           {isSingle ? (
-            /* ── Single booking: Soll-Konto, Haben-Konto, Betrag ── */
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">Soll-Konto</label>
-                <Select value={singleDebitAccountId} onValueChange={setSingleDebitAccountId}>
-                  <SelectTrigger><SelectValue placeholder="Soll-Konto wählen..." /></SelectTrigger>
-                  <SelectContent className="max-h-64">
-                    {accounts.map(a => (
-                      <SelectItem key={a.id} value={String(a.id)}>{a.number} – {a.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            /* ── Single booking ── */
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Datum</label>
+                  <Input type="date" value={bookingDate} onChange={e => setBookingDate(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Buchungstext</label>
+                  <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Buchungstext..." />
+                </div>
               </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">Haben-Konto</label>
-                <Select value={singleCreditAccountId} onValueChange={setSingleCreditAccountId}>
-                  <SelectTrigger><SelectValue placeholder="Haben-Konto wählen..." /></SelectTrigger>
-                  <SelectContent className="max-h-64">
-                    {accounts.map(a => (
-                      <SelectItem key={a.id} value={String(a.id)}>{a.number} – {a.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground">Betrag CHF</label>
-                <Input
-                  className="font-mono text-right"
-                  value={singleAmount}
-                  onChange={e => setSingleAmount(e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
-            </div>
-          ) : (
-            /* ── Collective booking: multiple lines ── */
-            <div className="space-y-2">
-              <div className="grid grid-cols-[1fr_100px_120px_32px] gap-2 text-xs font-medium text-muted-foreground px-1">
-                <span>Konto</span><span>Seite</span><span className="text-right">Betrag CHF</span><span></span>
-              </div>
-              {lines.map((line, i) => (
-                <div key={i} className="grid grid-cols-[1fr_100px_120px_32px] gap-2 items-center">
-                  <Select value={String(line.accountId || "")} onValueChange={v => {
-                    const nl = [...lines]; nl[i] = { ...line, accountId: parseInt(v) }; setLines(nl);
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Konto..." /></SelectTrigger>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Soll-Konto</label>
+                  <Select value={singleDebitAccountId} onValueChange={setSingleDebitAccountId}>
+                    <SelectTrigger><SelectValue placeholder="Soll-Konto wählen..." /></SelectTrigger>
                     <SelectContent className="max-h-64">
                       {accounts.map(a => (
                         <SelectItem key={a.id} value={String(a.id)}>{a.number} – {a.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select value={line.side} onValueChange={v => {
-                    const nl = [...lines]; nl[i] = { ...line, side: v as any }; setLines(nl);
-                  }}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="debit">Soll</SelectItem>
-                      <SelectItem value="credit">Haben</SelectItem>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Haben-Konto</label>
+                  <Select value={singleCreditAccountId} onValueChange={setSingleCreditAccountId}>
+                    <SelectTrigger><SelectValue placeholder="Haben-Konto wählen..." /></SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      {accounts.map(a => (
+                        <SelectItem key={a.id} value={String(a.id)}>{a.number} – {a.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Betrag CHF</label>
                   <Input
                     className="font-mono text-right"
-                    value={line.amount}
-                    onChange={e => { const nl = [...lines]; nl[i] = { ...line, amount: e.target.value }; setLines(nl); }}
+                    value={singleAmount}
+                    onChange={e => setSingleAmount(e.target.value)}
                     placeholder="0.00"
                   />
-                  <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground"
-                    disabled={lines.length <= 2}
-                    onClick={() => setLines(lines.filter((_, j) => j !== i))}>
-                    <X className="h-3 w-3" />
-                  </Button>
                 </div>
-              ))}
-              <Button size="sm" variant="outline" className="w-full text-xs"
-                onClick={() => setLines([...lines, { accountId: 0, side: "debit", amount: "" }])}>
-                + Zeile hinzufügen
-              </Button>
-              {lines.length >= 2 && (
-                <div className="flex justify-between text-xs px-1">
-                  <span className={balanced ? "text-green-600" : "text-red-500"}>
-                    Soll: {debitTotal.toFixed(2)} | Haben: {creditTotal.toFixed(2)}
-                    {balanced ? " ✓" : " ✗"}
+              </div>
+            </>
+          ) : (
+            /* ── Collective booking (Sammelbuchung) ── */
+            <>
+              {/* Row 1: Date, Description, Diff */}
+              <div className="grid grid-cols-[1fr_2fr_auto] gap-3 items-end">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Datum</label>
+                  <Input type="date" value={bookingDate} onChange={e => setBookingDate(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Buchungstext</label>
+                  <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="z.B. F5, Sammelbeleg Februar..." />
+                </div>
+                <div className="text-right">
+                  <label className="text-xs font-medium text-muted-foreground">Diff.</label>
+                  <div className={cn(
+                    "px-3 py-2 rounded-md border font-mono text-right text-sm font-bold min-w-24",
+                    Math.abs(differenz) < 0.01 && habenAmountNum > 0
+                      ? "bg-green-50 border-green-300 text-green-700 dark:bg-green-950/30 dark:border-green-700 dark:text-green-400"
+                      : "bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-400"
+                  )}>
+                    {differenz >= 0 ? "" : "-"}{formatCHF(Math.abs(differenz))}
+                  </div>
+                </div>
+              </div>
+
+              {/* HABEN Section (Bank Account) */}
+              <div className="bg-blue-50/50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">Haben (Belastung)</span>
+                  <span className="text-xs text-muted-foreground">– Bankkonto / Gegenkonto</span>
+                </div>
+                <div className="grid grid-cols-[1fr_160px] gap-3">
+                  <div>
+                    <Select value={habenAccountId} onValueChange={setHabenAccountId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Bankkonto wählen..." />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {/* Bank accounts first */}
+                        {bankAccountOptions.length > 0 && (
+                          <>
+                            <div className="px-2 py-1 text-xs font-semibold text-muted-foreground">Bankkonten</div>
+                            {bankAccountOptions.map((ba: any) => (
+                              <SelectItem key={`bank-${ba.accountId}`} value={String(ba.accountId)}>
+                                {ba.label}
+                              </SelectItem>
+                            ))}
+                            <div className="px-2 py-1 text-xs font-semibold text-muted-foreground border-t mt-1 pt-1">Alle Konten</div>
+                          </>
+                        )}
+                        {accounts.map(a => (
+                          <SelectItem key={a.id} value={String(a.id)}>
+                            {a.number} – {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Input
+                      className="font-mono text-right font-bold"
+                      value={habenAmount}
+                      onChange={e => setHabenAmount(e.target.value)}
+                      placeholder="Betrag CHF"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SOLL Section (Expense Lines) */}
+              <div className="bg-amber-50/50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">Soll (Aufwand)</span>
+                    <span className="text-xs text-muted-foreground">– Aufwandspositionen</span>
+                  </div>
+                  <span className="text-xs font-mono font-semibold">
+                    Total: {formatCHF(sollTotal)}
                   </span>
                 </div>
+
+                {/* Column headers */}
+                <div className="grid grid-cols-[40px_1fr_1fr_120px_80px_32px] gap-2 text-xs font-medium text-muted-foreground px-1">
+                  <span>#</span>
+                  <span>Konto</span>
+                  <span>Text</span>
+                  <span className="text-right">Betrag CHF</span>
+                  <span className="text-right">MWST %</span>
+                  <span></span>
+                </div>
+
+                {/* Soll lines */}
+                {sollLines.map((line, i) => (
+                  <div key={i} className="grid grid-cols-[40px_1fr_1fr_120px_80px_32px] gap-2 items-center">
+                    <span className="text-xs text-muted-foreground font-mono">{i + 1}:</span>
+                    <Select value={line.accountId} onValueChange={v => updateSollLine(i, "accountId", v)}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="Konto..." />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {accounts.map(a => (
+                          <SelectItem key={a.id} value={String(a.id)}>
+                            {a.number} – {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      className="h-9"
+                      value={line.text}
+                      onChange={e => updateSollLine(i, "text", e.target.value)}
+                      placeholder="Buchungstext..."
+                    />
+                    <Input
+                      className="h-9 font-mono text-right"
+                      value={line.amount}
+                      onChange={e => updateSollLine(i, "amount", e.target.value)}
+                      placeholder="0.00"
+                    />
+                    <Input
+                      className="h-9 font-mono text-right"
+                      value={line.vatRate}
+                      onChange={e => updateSollLine(i, "vatRate", e.target.value)}
+                      placeholder="0.0"
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-red-500"
+                      disabled={sollLines.length <= 1}
+                      onClick={() => removeSollLine(i)}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+
+                <Button size="sm" variant="outline" className="w-full text-xs gap-1" onClick={addSollLine}>
+                  <Plus className="h-3 w-3" /> Zeile hinzufügen
+                </Button>
+              </div>
+
+              {/* Preview Table */}
+              {previewLines.length > 0 && (
+                <div className="border border-border rounded-lg overflow-hidden">
+                  <div className="bg-muted/50 px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    Vorschau Buchungssatz
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="text-left px-3 py-1.5 text-xs font-semibold w-20">Konto</th>
+                        <th className="text-left px-3 py-1.5 text-xs font-semibold">Text</th>
+                        <th className="text-right px-3 py-1.5 text-xs font-semibold w-28">Soll</th>
+                        <th className="text-right px-3 py-1.5 text-xs font-semibold w-28">Haben</th>
+                        <th className="text-right px-3 py-1.5 text-xs font-semibold w-20">Steuer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewLines.map((pl, i) => (
+                        <tr key={i} className={cn("border-b border-border/50", pl.haben > 0 ? "bg-blue-50/30 dark:bg-blue-950/10" : "")}>
+                          <td className="px-3 py-1.5 font-mono text-xs">{pl.konto}</td>
+                          <td className="px-3 py-1.5 text-xs">{pl.text}</td>
+                          <td className="px-3 py-1.5 font-mono text-xs text-right">
+                            {pl.soll > 0 ? formatCHF(pl.soll) : ""}
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-xs text-right">
+                            {pl.haben > 0 ? formatCHF(pl.haben) : ""}
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-xs text-right">{pl.steuer}</td>
+                        </tr>
+                      ))}
+                      {/* Totals row */}
+                      <tr className="border-t-2 border-border font-bold bg-muted/20">
+                        <td className="px-3 py-1.5 text-xs" colSpan={2}>Total</td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-right">{formatCHF(sollTotal)}</td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-right">{formatCHF(habenAmountNum)}</td>
+                        <td className="px-3 py-1.5"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </div>
+            </>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Abbrechen</Button>
           <Button
             disabled={isSingle ? (!singleValid || createMutation.isPending) : (!collectiveValid || createMutation.isPending)}
             onClick={handleCreate}
           >
-            {createMutation.isPending ? "Wird erstellt..." : (isSingle ? "Einzelbuchung erstellen" : "Sammelbuchung erstellen")}
+            {createMutation.isPending
+              ? "Wird erstellt..."
+              : isSingle
+                ? "Einzelbuchung erstellen"
+                : `Sammelbuchung erstellen${validSollLines.length > 0 ? ` (${validSollLines.length} Pos.)` : ""}`
+            }
           </Button>
         </DialogFooter>
       </DialogContent>

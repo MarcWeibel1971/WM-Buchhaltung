@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -92,6 +92,16 @@ export default function BankImport() {
   );
   const { data: accounts } = trpc.accounts.list.useQuery();
   const { data: allDocs } = trpc.documents.list.useQuery({ limit: 500 });
+
+  // Import history for selected bank account
+  const { data: lastImport } = trpc.bankImport.getLastImport.useQuery(
+    { bankAccountId: selectedBankAccountId! },
+    { enabled: !!selectedBankAccountId }
+  );
+  const { data: importHistoryList } = trpc.bankImport.getImportHistory.useQuery(
+    { bankAccountId: selectedBankAccountId ?? undefined }
+  );
+  const [showHistory, setShowHistory] = useState(false);
 
   const utils = trpc.useUtils();
 
@@ -239,7 +249,9 @@ export default function BankImport() {
     const content = await file.text();
     const parsed = parseStatement(content, file.name);
     if (!parsed.length) { toast.error("Keine Transaktionen erkannt. Bitte CAMT.053, MT940 oder CSV hochladen."); setImporting(false); return; }
-    importMutation.mutate({ bankAccountId: selectedBankAccountId, transactions: parsed });
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "unknown";
+    const fileType = ext === "xml" ? "CAMT.053" : ext === "sta" || ext === "mt940" ? "MT940" : ext === "csv" || ext === "txt" ? "CSV" : ext;
+    importMutation.mutate({ bankAccountId: selectedBankAccountId, transactions: parsed, filename: file.name, fileType });
   }, [selectedBankAccountId, importMutation]);
 
   const handlePdfUpload = useCallback(async (file: File) => {
@@ -253,7 +265,15 @@ export default function BankImport() {
       if (!resp.ok) throw new Error(result.error ?? "PDF-Verarbeitung fehlgeschlagen");
       if (!result.transactions?.length) { toast.error("Keine Transaktionen im PDF erkannt"); return; }
       toast.info(`${result.totalExtracted} Transaktionen aus PDF extrahiert. Importiere...`);
-      importMutation.mutate({ bankAccountId: selectedBankAccountId, transactions: result.transactions, importBatchId: `pdf-${Date.now()}` });
+      importMutation.mutate({
+        bankAccountId: selectedBankAccountId,
+        transactions: result.transactions,
+        importBatchId: `pdf-${Date.now()}`,
+        filename: file.name,
+        fileType: "PDF",
+        s3Key: result.fileKey ?? undefined,
+        s3Url: result.fileUrl ?? undefined,
+      });
     } catch (e: any) { toast.error(e.message); } finally { setImportingPdf(false); }
   }, [selectedBankAccountId, importMutation]);
 
@@ -437,6 +457,79 @@ export default function BankImport() {
         <p className="text-xs text-muted-foreground">
           Unterstützte Formate: CAMT.053 (XML), MT940 (.sta), CSV (Semikolon-getrennt), PDF (KI-Extraktion)
         </p>
+
+        {/* Last import info */}
+        {selectedBankAccountId && lastImport && (
+          <div className="mt-4 p-3 bg-muted/50 rounded-lg border border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Letzter Import:</span>
+                <span className="text-sm text-muted-foreground">
+                  {lastImport.filename} ({lastImport.fileType})
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  – {new Date(lastImport.createdAt).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">
+                  {lastImport.transactionsImported} importiert
+                </span>
+                {(lastImport.transactionsDuplicate ?? 0) > 0 && (
+                  <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">
+                    {lastImport.transactionsDuplicate} Duplikate
+                  </span>
+                )}
+                {lastImport.dateRangeFrom && lastImport.dateRangeTo && (
+                  <span className="text-xs text-muted-foreground">
+                    Zeitraum: {new Date(lastImport.dateRangeFrom as string).toLocaleDateString("de-CH")} – {new Date(lastImport.dateRangeTo as string).toLocaleDateString("de-CH")}
+                  </span>
+                )}
+                <Button variant="ghost" size="sm" className="h-7 gap-1" onClick={() => setShowHistory(!showHistory)}>
+                  <History className="h-3.5 w-3.5" />
+                  Import-Historie
+                </Button>
+              </div>
+            </div>
+
+            {/* Import history table */}
+            {showHistory && importHistoryList && importHistoryList.length > 0 && (
+              <div className="mt-3 border-t border-border pt-3">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left py-1 font-medium">Datum</th>
+                      <th className="text-left py-1 font-medium">Datei</th>
+                      <th className="text-left py-1 font-medium">Typ</th>
+                      <th className="text-left py-1 font-medium">Konto</th>
+                      <th className="text-right py-1 font-medium">Importiert</th>
+                      <th className="text-right py-1 font-medium">Duplikate</th>
+                      <th className="text-left py-1 font-medium">Zeitraum</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importHistoryList.map((h: any) => (
+                      <tr key={h.id} className="border-t border-border/50">
+                        <td className="py-1.5">{new Date(h.createdAt).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                        <td className="py-1.5 font-medium">{h.filename}</td>
+                        <td className="py-1.5">{h.fileType}</td>
+                        <td className="py-1.5">{h.bankAccountName}</td>
+                        <td className="py-1.5 text-right text-green-600">{h.transactionsImported}</td>
+                        <td className="py-1.5 text-right text-yellow-600">{h.transactionsDuplicate ?? 0}</td>
+                        <td className="py-1.5">
+                          {h.dateRangeFrom && h.dateRangeTo
+                            ? `${new Date(h.dateRangeFrom as string).toLocaleDateString("de-CH")} – ${new Date(h.dateRangeTo as string).toLocaleDateString("de-CH")}`
+                            : "–"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Transactions list */}

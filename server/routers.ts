@@ -18,7 +18,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { eq, and, desc, asc, sql, inArray, like } from "drizzle-orm";
@@ -397,15 +397,23 @@ const bankImportRouter = router({
         counterpartyIban: z.string().nullable().optional(),
       })),
       importBatchId: z.string().optional(),
+      filename: z.string().optional(),
+      fileType: z.string().optional(),
+      s3Key: z.string().optional(),
+      s3Url: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
       const batchId = input.importBatchId ?? `import-${Date.now()}`;
       let imported = 0, duplicates = 0, skipped = 0;
+      let dateMin: string | null = null, dateMax: string | null = null;
       for (const tx of input.transactions) {
-        // Validate date before insert – skip rows with invalid dates
         const transactionDate = normaliseDate(tx.transactionDate);
         if (!transactionDate) { skipped++; continue; }
+        // Track date range
+        if (!dateMin || transactionDate < dateMin) dateMin = transactionDate;
+        if (!dateMax || transactionDate > dateMax) dateMax = transactionDate;
         const valueDate = tx.valueDate ? (normaliseDate(tx.valueDate) ?? undefined) : undefined;
         const hash = crypto.createHash("sha256")
           .update(`${input.bankAccountId}-${transactionDate}-${tx.amount}-${tx.description}`)
@@ -429,7 +437,60 @@ const bankImportRouter = router({
         else duplicates++;
       }
 
+      // Save import history
+      if (db && input.filename) {
+        try {
+          await db.insert(importHistory).values({
+            bankAccountId: input.bankAccountId,
+            filename: input.filename,
+            fileType: input.fileType ?? "unknown",
+            s3Key: input.s3Key ?? null,
+            s3Url: input.s3Url ?? null,
+            importBatchId: batchId,
+            transactionsTotal: input.transactions.length,
+            transactionsImported: imported,
+            transactionsDuplicate: duplicates,
+            transactionsSkipped: skipped,
+            dateRangeFrom: dateMin,
+            dateRangeTo: dateMax,
+            importedBy: ctx.user.openId,
+          });
+        } catch (e) {
+          console.error("Failed to save import history:", e);
+        }
+      }
+
       return { imported, duplicates, skipped, batchId };
+    }),
+
+  getImportHistory: protectedProcedure
+    .input(z.object({ bankAccountId: z.number().optional() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return [];
+      const conditions = input.bankAccountId
+        ? [eq(importHistory.bankAccountId, input.bankAccountId)]
+        : [];
+      const rows = await db.select().from(importHistory)
+        .where(conditions.length ? conditions[0] : undefined)
+        .orderBy(desc(importHistory.createdAt))
+        .limit(50);
+      // Enrich with bank account names
+      const accts = await db.select().from(bankAccounts);
+      const acctMap = Object.fromEntries(accts.map(a => [a.id, a.name]));
+      return rows.map(r => ({ ...r, bankAccountName: acctMap[r.bankAccountId] ?? "Unbekannt" }));
+    }),
+
+  getLastImport: protectedProcedure
+    .input(z.object({ bankAccountId: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return null;
+      const [row] = await db.select().from(importHistory)
+        .where(eq(importHistory.bankAccountId, input.bankAccountId))
+        .orderBy(desc(importHistory.createdAt))
+        .limit(1);
+      return row ?? null;
     }),
 
   categorizeWithAI: protectedProcedure

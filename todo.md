@@ -425,3 +425,14 @@
 - [x] Vitest: Saldovortrag-Berechnung (Bilanzkonten übertragen, Erfolgsrechnung abschliessen)
 - [x] Vitest: Rückbuchungen (Gegenbuchung am 01.01. des neuen GJ)
 - [x] Total: 109 Tests bestanden
+
+## Feature: Letzten Kontoauszug laden & Duplikate-Erkennung
+
+- [x] DB: import_history Tabelle (bankAccountId, filename, fileType, s3Key, transactionsImported, transactionsDuplicate, dateRange)
+- [x] Backend: importTransactions speichert Import-Historie (Dateiname, Typ, Anzahl importiert/Duplikate)
+- [x] Backend: getLastImport Endpunkt – letzter Import pro Bankkonto
+- [x] Backend: getImportHistory Endpunkt – alle Imports pro Bankkonto
+- [x] Backend: Duplikate-Erkennung via txHash UNIQUE-Constraint (prüft gegen alle bestehenden Transaktionen)
+- [x] Frontend: "Letzter Import" Info-Box unter Bankkonto-Auswahl (Dateiname, Datum, Anzahl, Zeitraum)
+- [x] Frontend: "Import-Historie" aufklappbare Tabelle mit allen bisherigen Imports
+- [x] Frontend: Duplikate-Feedback beim Import (Toast: "X neue, Y Duplikate übersprungen")

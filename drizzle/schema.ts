@@ -502,3 +502,23 @@ export type InsuranceSetting = typeof insuranceSettings.$inferSelect;
 export type InsertDepreciationSetting = typeof depreciationSettings.$inferInsert;
 export type InsertYearEndBooking = typeof yearEndBookings.$inferInsert;
 
+
+// ─── Import History ──────────────────────────────────────────────────────────
+export const importHistory = mysqlTable("import_history", {
+  id: int("id").autoincrement().primaryKey(),
+  bankAccountId: int("bankAccountId").notNull(),
+  filename: varchar("filename", { length: 500 }).notNull(),
+  fileType: varchar("fileType", { length: 50 }).notNull(), // camt, mt940, csv, pdf
+  s3Key: varchar("s3Key", { length: 500 }),
+  s3Url: varchar("s3Url", { length: 1000 }),
+  importBatchId: varchar("importBatchId", { length: 100 }),
+  transactionsTotal: int("transactionsTotal").default(0).notNull(),
+  transactionsImported: int("transactionsImported").default(0).notNull(),
+  transactionsDuplicate: int("transactionsDuplicate").default(0).notNull(),
+  transactionsSkipped: int("transactionsSkipped").default(0).notNull(),
+  dateRangeFrom: date("dateRangeFrom", { mode: 'string' }),
+  dateRangeTo: date("dateRangeTo", { mode: 'string' }),
+  importedBy: varchar("importedBy", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type ImportHistoryEntry = typeof importHistory.$inferSelect;

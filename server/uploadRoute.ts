@@ -289,6 +289,8 @@ Antworte NUR mit JSON: { "transactions": [...], "accountNumber": "IBAN", "statem
       accountNumber: parsed.accountNumber ?? null,
       statementPeriod: parsed.statementPeriod ?? null,
       totalExtracted: transactions.length,
+      fileKey,
+      fileUrl,
     });
   } catch (err: any) {
     console.error("[PDF Bank Import] Error:", err);

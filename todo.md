@@ -502,3 +502,18 @@
 - [ ] Frontend: Upload-Bereich für eigenen Kontenplan PDF/Excel (spätere Phase)
 - [ ] Frontend: Standard-KMU-Kontenplan als Vorlage für Neukunden (spätere Phase)
 
+
+## Bug: LUKB jm Transaktion bei LUKB mw Filter sichtbar
+
+- [x] Fix: Swisscom-Transaktion hatte falsches Gegenkonto (1033 LUKB jm statt 1032 LUKB mw) – 8 Transaktionen korrigiert
+- [x] Fix: Booking Rules speichern keine Bankkonten mehr als debit/credit (werden aus Transaktion abgeleitet)
+- [x] Fix: approve, bulkApprove und updateTransaction schliessen Bankkonten aus Rule-Learning aus
+
+## Feature: PDF-Bankauszüge ansehen/herunterladen
+
+- [x] Import-Historie: PDF-Spalte mit Augen-Icon zum Öffnen des gespeicherten PDF-Bankauszugs
+
+## Änderung: Manuelles Matching nur in Dokumente, nicht im Bankimport
+
+- [x] Bankimport: Büroklammer-Button und ManualMatch-Dialog entfernt
+- [x] Dokumente: Manuelles Matching bleibt bestehen (einziger Ort dafür)

@@ -630,16 +630,18 @@ Regeln:
       // ── Learn booking rule from this approval ──
       if (tx.counterparty) {
         try {
-          // Extract a clean counterparty pattern (first significant word(s))
+          // Get bank account IDs to exclude from rules (derived from transaction, not rule)
+          const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)).map(ba => ba.accountId);
           const cpClean = tx.counterparty.trim();
-          // Use the booking text as template if user provided a custom description
           const bookingText = input.description ?? tx.description ?? undefined;
-          await upsertBookingRule({
+          const ruleData: Parameters<typeof upsertBookingRule>[0] = {
             counterpartyPattern: cpClean,
             bookingTextTemplate: bookingText,
-            debitAccountId: input.debitAccountId,
-            creditAccountId: input.creditAccountId,
-          });
+          };
+          // Only save non-bank-account IDs in the rule
+          if (!bankAccountIds.includes(input.debitAccountId)) ruleData.debitAccountId = input.debitAccountId;
+          if (!bankAccountIds.includes(input.creditAccountId)) ruleData.creditAccountId = input.creditAccountId;
+          await upsertBookingRule(ruleData);
         } catch (e) {
           console.error("Failed to learn booking rule:", e);
         }
@@ -701,14 +703,23 @@ Regeln:
         const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, transactionId)).limit(1);
         if (tx && tx.counterparty) {
           try {
+            // Get bank account IDs to exclude them from rule learning
+            // (bank accounts are derived from the transaction, not from rules)
+            const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)).map(ba => ba.accountId);
+
             const ruleData: Parameters<typeof upsertBookingRule>[0] = {
               counterpartyPattern: tx.counterparty.trim(),
             };
             // Use the new description as booking text template
             if (data.description) ruleData.bookingTextTemplate = data.description;
-            // Use the new account assignments
-            if (data.suggestedDebitAccountId) ruleData.debitAccountId = data.suggestedDebitAccountId;
-            if (data.suggestedCreditAccountId) ruleData.creditAccountId = data.suggestedCreditAccountId;
+            // Use the new account assignments, but EXCLUDE bank accounts
+            // (bank accounts should be derived from the transaction's own bankAccountId)
+            if (data.suggestedDebitAccountId && !bankAccountIds.includes(data.suggestedDebitAccountId)) {
+              ruleData.debitAccountId = data.suggestedDebitAccountId;
+            }
+            if (data.suggestedCreditAccountId && !bankAccountIds.includes(data.suggestedCreditAccountId)) {
+              ruleData.creditAccountId = data.suggestedCreditAccountId;
+            }
             // Only upsert if we have meaningful changes (at least one account or description)
             if (ruleData.bookingTextTemplate || ruleData.debitAccountId || ruleData.creditAccountId) {
               await upsertBookingRule(ruleData);
@@ -735,6 +746,9 @@ Regeln:
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Get bank account IDs to exclude from rules
+      const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)).map(ba => ba.accountId);
 
       const results = [];
       for (const item of input.transactions) {
@@ -767,12 +781,14 @@ Regeln:
           // ── Learn booking rule from this approval ──
           if (tx.counterparty) {
             try {
-              await upsertBookingRule({
+              const ruleData: Parameters<typeof upsertBookingRule>[0] = {
                 counterpartyPattern: tx.counterparty.trim(),
                 bookingTextTemplate: item.description ?? tx.description ?? undefined,
-                debitAccountId: item.debitAccountId,
-                creditAccountId: item.creditAccountId,
-              });
+              };
+              // Exclude bank accounts from rules (they are derived from the transaction)
+              if (!bankAccountIds.includes(item.debitAccountId)) ruleData.debitAccountId = item.debitAccountId;
+              if (!bankAccountIds.includes(item.creditAccountId)) ruleData.creditAccountId = item.creditAccountId;
+              await upsertBookingRule(ruleData);
             } catch (e) {
               console.error("Failed to learn booking rule:", e);
             }
@@ -854,6 +870,10 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       const rules = await getAllBookingRules();
       if (!rules.length) return { updated: 0, skippedManual: 0, total: 0, message: "Keine gelernten Regeln vorhanden. Verbuchen Sie zuerst einige Transaktionen manuell." };
 
+      // Load bank accounts for auto-filling the correct bank account per transaction
+      const allBankAccounts = await db.select({ id: bankAccounts.id, accountId: bankAccounts.accountId, name: bankAccounts.name })
+        .from(bankAccounts);
+
       // Get all pending transactions
       const conditions = [eq(bankTransactions.status, "pending" as const)];
       if (input.bankAccountId) {
@@ -891,7 +911,12 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         const updateData: Record<string, any> = {};
         let changed = false;
 
-        // Apply account suggestions
+        // Resolve the transaction's own bank account (for debit/credit assignment)
+        const txBankAccount = allBankAccounts.find(ba => ba.id === tx.bankAccountId);
+        const txAccountId = txBankAccount?.accountId;
+        const txAmount = parseFloat(tx.amount as string);
+
+        // Apply account suggestions from rule
         if (matchedRule.debitAccountId) {
           updateData.suggestedDebitAccountId = matchedRule.debitAccountId;
           changed = true;
@@ -899,6 +924,17 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         if (matchedRule.creditAccountId) {
           updateData.suggestedCreditAccountId = matchedRule.creditAccountId;
           changed = true;
+        }
+
+        // Auto-fill bank account: for outgoing payments (negative), credit = own bank; for incoming (positive), debit = own bank
+        if (txAccountId) {
+          if (txAmount < 0 && !updateData.suggestedCreditAccountId) {
+            updateData.suggestedCreditAccountId = txAccountId;
+            changed = true;
+          } else if (txAmount >= 0 && !updateData.suggestedDebitAccountId) {
+            updateData.suggestedDebitAccountId = txAccountId;
+            changed = true;
+          }
         }
 
         // Apply booking text template with date substitution

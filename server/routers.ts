@@ -691,7 +691,34 @@ Regeln:
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const { transactionId, ...data } = input;
-      await updateBankTransaction(transactionId, data);
+      // Mark as manually edited so refresh won't overwrite
+      await updateBankTransaction(transactionId, { ...data, manuallyEdited: true });
+
+      // Also immediately learn/update the booking rule from this edit
+      // so that future refreshes apply the NEW mapping to similar transactions
+      const db = await getDb();
+      if (db) {
+        const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, transactionId)).limit(1);
+        if (tx && tx.counterparty) {
+          try {
+            const ruleData: Parameters<typeof upsertBookingRule>[0] = {
+              counterpartyPattern: tx.counterparty.trim(),
+            };
+            // Use the new description as booking text template
+            if (data.description) ruleData.bookingTextTemplate = data.description;
+            // Use the new account assignments
+            if (data.suggestedDebitAccountId) ruleData.debitAccountId = data.suggestedDebitAccountId;
+            if (data.suggestedCreditAccountId) ruleData.creditAccountId = data.suggestedCreditAccountId;
+            // Only upsert if we have meaningful changes (at least one account or description)
+            if (ruleData.bookingTextTemplate || ruleData.debitAccountId || ruleData.creditAccountId) {
+              await upsertBookingRule(ruleData);
+            }
+          } catch (e) {
+            console.error("Failed to learn booking rule from edit:", e);
+          }
+        }
+      }
+
       return { success: true };
     }),
 
@@ -815,7 +842,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       return { results };
     }),
 
-  // ── Refresh: Apply learned rules to all pending transactions ──
+  // ── Refresh: Apply learned rules to all pending transactions (skip manually edited ones) ──
   refreshSuggestions: protectedProcedure
     .input(z.object({ bankAccountId: z.number().optional() }))
     .mutation(async ({ input, ctx }) => {
@@ -824,7 +851,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       const rules = await getAllBookingRules();
-      if (!rules.length) return { updated: 0, total: 0, message: "Keine gelernten Regeln vorhanden. Verbuchen Sie zuerst einige Transaktionen manuell." };
+      if (!rules.length) return { updated: 0, skippedManual: 0, total: 0, message: "Keine gelernten Regeln vorhanden. Verbuchen Sie zuerst einige Transaktionen manuell." };
 
       // Get all pending transactions
       const conditions = [eq(bankTransactions.status, "pending" as const)];
@@ -835,10 +862,16 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         .where(and(...conditions))
         .orderBy(asc(bankTransactions.transactionDate));
 
-      const allAccounts = await getAllAccounts();
       let updated = 0;
+      let skippedManual = 0;
 
       for (const tx of pending) {
+        // ── SKIP manually edited transactions ──
+        if (tx.manuallyEdited) {
+          skippedManual++;
+          continue;
+        }
+
         const cpName = (tx.counterparty ?? "").toLowerCase();
         if (!cpName) continue;
 
@@ -879,7 +912,6 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
           // Replace date placeholders in template
           let text = matchedRule.bookingTextTemplate;
           // Detect month/year patterns and replace with transaction's month/year
-          // e.g., "SBB GA Februar 2026" → "SBB GA März 2026" for a March transaction
           text = text.replace(/(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+\d{4}/g, `${month} ${year}`);
           // Also handle quarter patterns
           text = text.replace(/\d+\.\s*Quartal\s+\d{4}/g, `${quarter} ${year}`);
@@ -898,7 +930,9 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         }
       }
 
-      return { updated, total: pending.length, message: `${updated} von ${pending.length} Transaktionen mit gelernten Regeln aktualisiert.` };
+      const parts = [`${updated} von ${pending.length} Transaktionen aktualisiert`];
+      if (skippedManual > 0) parts.push(`${skippedManual} manuell bearbeitete übersprungen`);
+      return { updated, skippedManual, total: pending.length, message: parts.join(", ") + "." };
     }),
 
   // ── List all learned booking rules ──

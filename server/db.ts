@@ -389,6 +389,7 @@ export async function updateBankTransaction(txId: number, data: {
   suggestedDebitAccountId?: number | null;
   suggestedCreditAccountId?: number | null;
   aiReasoning?: string;
+  manuallyEdited?: boolean;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -400,6 +401,7 @@ export async function updateBankTransaction(txId: number, data: {
   if (data.suggestedDebitAccountId !== undefined) updateSet.suggestedDebitAccountId = data.suggestedDebitAccountId;
   if (data.suggestedCreditAccountId !== undefined) updateSet.suggestedCreditAccountId = data.suggestedCreditAccountId;
   if (data.aiReasoning !== undefined) updateSet.aiReasoning = data.aiReasoning;
+  if (data.manuallyEdited !== undefined) updateSet.manuallyEdited = data.manuallyEdited;
   if (Object.keys(updateSet).length === 0) return;
   await db.update(bankTransactions).set(updateSet).where(eq(bankTransactions.id, txId));
 }

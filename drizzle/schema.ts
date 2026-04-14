@@ -243,6 +243,8 @@ export const bankTransactions = mysqlTable("bank_transactions", {
   transferPartnerId: int("transferPartnerId"),
   // Is this an internal transfer between bank accounts?
   isTransfer: boolean("isTransfer").default(false),
+  // Was this transaction manually edited by the user? (protects from refresh overwrite)
+  manuallyEdited: boolean("manuallyEdited").default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type BankTransaction = typeof bankTransactions.$inferSelect;

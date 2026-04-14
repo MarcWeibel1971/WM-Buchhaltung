@@ -714,8 +714,18 @@ export default function BankImport() {
                               {tx.aiReasoning?.startsWith("Gelernte Regel") && (
                                 <span title="Gelernte Regel"><BookOpen className="h-3 w-3 text-amber-600" /></span>
                               )}
+                              {(tx as any).manuallyEdited && (
+                                <span title="Manuell bearbeitet (wird beim Refresh übersprungen)"><Pencil className="h-3 w-3 text-blue-600" /></span>
+                              )}
                             </>
-                          ) : "–"}
+                          ) : (
+                            <>
+                              –
+                              {(tx as any).manuallyEdited && (
+                                <span title="Manuell bearbeitet (wird beim Refresh übersprungen)"><Pencil className="h-3 w-3 text-blue-600" /></span>
+                              )}
+                            </>
+                          )}
                           {(tx as any).matchedDocumentId && (() => {
                             const doc = allDocs?.find((d: any) => d.id === (tx as any).matchedDocumentId);
                             return (

@@ -436,3 +436,9 @@
 - [x] Frontend: "Letzter Import" Info-Box unter Bankkonto-Auswahl (Dateiname, Datum, Anzahl, Zeitraum)
 - [x] Frontend: "Import-Historie" aufklappbare Tabelle mit allen bisherigen Imports
 - [x] Frontend: Duplikate-Feedback beim Import (Toast: "X neue, Y Duplikate übersprungen")
+
+## Bug: Refresh (gelernt) überschreibt manuelle Änderungen
+
+- [x] Bug: "Refresh (gelernt)" überschreibt manuell geänderte Buchungstexte und Konten mit alten KI-Vorschlägen
+- [x] Fix: Refresh muss gelernte Regeln auf ÄHNLICHE unbearbeitete Transaktionen anwenden, aber bereits manuell geänderte Transaktionen NICHT überschreiben
+- [x] Sicherstellen, dass Booking Rules korrekt aus manuellen Korrekturen gelernt und beim Refresh priorisiert werden

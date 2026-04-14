@@ -129,6 +129,93 @@ describe("Booking Text Template Substitution", () => {
   });
 });
 
+/**
+ * Simulates the refreshSuggestions logic including the manuallyEdited skip.
+ * Returns { updated, skippedManual } counts.
+ */
+function simulateRefreshSuggestions(
+  transactions: Array<{ id: number; counterparty: string | null; manuallyEdited: boolean; description: string | null }>,
+  rules: Array<{ id: number; counterpartyPattern: string; priority: number; usageCount: number; debitAccountId?: number; creditAccountId?: number; bookingTextTemplate?: string }>
+) {
+  let updated = 0;
+  let skippedManual = 0;
+
+  for (const tx of transactions) {
+    // Skip manually edited transactions
+    if (tx.manuallyEdited) {
+      skippedManual++;
+      continue;
+    }
+
+    const cpName = (tx.counterparty ?? "").toLowerCase();
+    if (!cpName) continue;
+
+    let matchedRule = null;
+    for (const rule of rules) {
+      if (cpName.includes(rule.counterpartyPattern.toLowerCase())) {
+        matchedRule = rule;
+        break;
+      }
+    }
+
+    if (matchedRule) {
+      updated++;
+    }
+  }
+
+  return { updated, skippedManual };
+}
+
+describe("Refresh Suggestions - ManuallyEdited Skip", () => {
+  const rules = [
+    { id: 1, counterpartyPattern: "Sunrise", priority: 20, usageCount: 3, debitAccountId: 4720, creditAccountId: 1032, bookingTextTemplate: "Sunrise 1. Quartal 2026" },
+    { id: 2, counterpartyPattern: "SBB", priority: 20, usageCount: 5, debitAccountId: 4820, creditAccountId: 1032, bookingTextTemplate: "SBB GA Januar 2026" },
+  ];
+
+  it("skips manually edited transactions", () => {
+    const txs = [
+      { id: 1, counterparty: "Sunrise Communications AG", manuallyEdited: true, description: "Sunrise custom text" },
+      { id: 2, counterparty: "Sunrise Communications AG", manuallyEdited: false, description: null },
+      { id: 3, counterparty: "SCHWEIZERISCHE BUNDESBAHNEN SBB", manuallyEdited: false, description: null },
+    ];
+    const result = simulateRefreshSuggestions(txs, rules);
+    expect(result.updated).toBe(2); // Only tx 2 and 3
+    expect(result.skippedManual).toBe(1); // tx 1 skipped
+  });
+
+  it("does not skip non-edited transactions", () => {
+    const txs = [
+      { id: 1, counterparty: "Sunrise Communications AG", manuallyEdited: false, description: null },
+      { id: 2, counterparty: "SCHWEIZERISCHE BUNDESBAHNEN SBB", manuallyEdited: false, description: null },
+    ];
+    const result = simulateRefreshSuggestions(txs, rules);
+    expect(result.updated).toBe(2);
+    expect(result.skippedManual).toBe(0);
+  });
+
+  it("skips all manually edited transactions even if they match rules", () => {
+    const txs = [
+      { id: 1, counterparty: "Sunrise Communications AG", manuallyEdited: true, description: "Custom" },
+      { id: 2, counterparty: "SCHWEIZERISCHE BUNDESBAHNEN SBB", manuallyEdited: true, description: "Custom SBB" },
+    ];
+    const result = simulateRefreshSuggestions(txs, rules);
+    expect(result.updated).toBe(0);
+    expect(result.skippedManual).toBe(2);
+  });
+
+  it("handles mix of edited, unedited, and no-match transactions", () => {
+    const txs = [
+      { id: 1, counterparty: "Sunrise Communications AG", manuallyEdited: true, description: "Custom" },
+      { id: 2, counterparty: "Unknown Company", manuallyEdited: false, description: null },
+      { id: 3, counterparty: "SCHWEIZERISCHE BUNDESBAHNEN SBB", manuallyEdited: false, description: null },
+      { id: 4, counterparty: null, manuallyEdited: false, description: null },
+    ];
+    const result = simulateRefreshSuggestions(txs, rules);
+    expect(result.updated).toBe(1); // Only tx 3 (SBB)
+    expect(result.skippedManual).toBe(1); // tx 1
+  });
+});
+
 describe("Rule Learning Flow", () => {
   it("extracts counterparty pattern from transaction", () => {
     // When approving a transaction, the counterparty name is used as the pattern

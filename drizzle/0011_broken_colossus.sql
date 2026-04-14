@@ -1,0 +1,1 @@
+ALTER TABLE `bank_transactions` ADD `manuallyEdited` boolean DEFAULT false;

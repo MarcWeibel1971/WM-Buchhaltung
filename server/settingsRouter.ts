@@ -10,7 +10,7 @@ import {
   companySettings, insuranceSettings, employees, bankAccounts, bookingRules, accounts,
   openingBalances, journalEntries, journalLines, fiscalYears
 } from "../drizzle/schema";
-import { and, eq, asc, desc } from "drizzle-orm";
+import { and, eq, asc, desc, sql } from "drizzle-orm";
 
 // ─── Company Settings ─────────────────────────────────────────────────────────
 
@@ -503,5 +503,139 @@ export const settingsRouter = router({
       }
 
       return { success: true, totalAssets, totalLiabilities };
+    }),
+
+  // ── Chart of Accounts (Kontenplan) CRUD ────────────────────────────────────────────
+
+  getAllAccounts: protectedProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+    return db.select().from(accounts).orderBy(asc(accounts.number));
+  }),
+
+  createAccount: protectedProcedure
+    .input(z.object({
+      number: z.string().min(1).max(10),
+      name: z.string().min(1).max(200),
+      accountType: z.enum(["asset", "liability", "expense", "revenue", "equity"]),
+      normalBalance: z.enum(["debit", "credit"]),
+      category: z.string().max(100).optional(),
+      subCategory: z.string().max(100).optional(),
+      isBankAccount: z.boolean().optional(),
+      isVatRelevant: z.boolean().optional(),
+      defaultVatRate: z.string().optional(),
+      isActive: z.boolean().optional(),
+      sortOrder: z.number().int().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Check for duplicate number
+      const existing = await db.select().from(accounts).where(eq(accounts.number, input.number)).limit(1);
+      if (existing.length > 0) throw new TRPCError({ code: "CONFLICT", message: `Konto ${input.number} existiert bereits` });
+      const [result] = await db.insert(accounts).values({
+        number: input.number,
+        name: input.name,
+        accountType: input.accountType,
+        normalBalance: input.normalBalance,
+        category: input.category ?? null,
+        subCategory: input.subCategory ?? null,
+        isBankAccount: input.isBankAccount ?? false,
+        isVatRelevant: input.isVatRelevant ?? false,
+        defaultVatRate: input.defaultVatRate ?? null,
+        isActive: input.isActive ?? true,
+        sortOrder: input.sortOrder ?? 0,
+      }).$returningId();
+      return { success: true, id: result.id };
+    }),
+
+  updateAccount: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      number: z.string().min(1).max(10).optional(),
+      name: z.string().min(1).max(200).optional(),
+      accountType: z.enum(["asset", "liability", "expense", "revenue", "equity"]).optional(),
+      normalBalance: z.enum(["debit", "credit"]).optional(),
+      category: z.string().max(100).optional().nullable(),
+      subCategory: z.string().max(100).optional().nullable(),
+      isBankAccount: z.boolean().optional(),
+      isVatRelevant: z.boolean().optional(),
+      defaultVatRate: z.string().optional().nullable(),
+      isActive: z.boolean().optional(),
+      sortOrder: z.number().int().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { id, ...data } = input;
+      // Remove undefined values
+      const cleanData: Record<string, any> = {};
+      for (const [k, v] of Object.entries(data)) {
+        if (v !== undefined) cleanData[k] = v;
+      }
+      if (Object.keys(cleanData).length === 0) return { success: true };
+      await db.update(accounts).set(cleanData).where(eq(accounts.id, id));
+      return { success: true };
+    }),
+
+  deleteAccount: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Check if account has journal lines
+      const [usage] = await db.select({ count: sql`COUNT(*)` })
+        .from(journalLines).where(eq(journalLines.accountId, input.id));
+      if (Number(usage?.count) > 0) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Konto hat ${usage.count} Buchungszeilen und kann nicht gelöscht werden. Deaktivieren Sie es stattdessen.` });
+      }
+      await db.delete(accounts).where(eq(accounts.id, input.id));
+      return { success: true };
+    }),
+
+  updateAccountSortOrder: protectedProcedure
+    .input(z.object({
+      updates: z.array(z.object({
+        id: z.number(),
+        sortOrder: z.number().int(),
+        category: z.string().optional(),
+        subCategory: z.string().optional(),
+      })),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      for (const u of input.updates) {
+        const data: Record<string, any> = { sortOrder: u.sortOrder };
+        if (u.category !== undefined) data.category = u.category;
+        if (u.subCategory !== undefined) data.subCategory = u.subCategory;
+        await db.update(accounts).set(data).where(eq(accounts.id, u.id));
+      }
+      return { success: true };
+    }),
+
+  toggleAccountActive: protectedProcedure
+    .input(z.object({ id: z.number(), isActive: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await db.update(accounts).set({ isActive: input.isActive }).where(eq(accounts.id, input.id));
+      return { success: true };
+    }),
+
+  updateAccountVat: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      isVatRelevant: z.boolean(),
+      defaultVatRate: z.string().optional().nullable(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await db.update(accounts).set({
+        isVatRelevant: input.isVatRelevant,
+        defaultVatRate: input.defaultVatRate ?? null,
+      }).where(eq(accounts.id, input.id));
+      return { success: true };
     }),
 });

@@ -482,3 +482,23 @@
 - [x] Kundenname aus der Bankbeschreibung oder dem gematchten Dokument extrahieren
 - [x] Booking Rule für Gewerbe-Treuhand anpassen
 - [x] Bestehende pending Transaktionen aktualisiert (3 mit Kundenname, 4 ohne weil kein Dokument gematcht)
+
+## Feature: Kontenplan-Verwaltung (Chart of Accounts)
+
+- [x] Sidebar: Neuer Menüpunkt "Kontenplan" nach "Bankkonten" in den Einstellungen
+- [x] Backend: CRUD-Endpunkte für Konten (erstellen, bearbeiten, löschen, aktivieren/deaktivieren)
+- [x] Backend: MWST-Toggle und MWST-Satz pro Konto (updateVat-Endpunkt)
+- [x] Frontend: Kontenplan-Seite mit Baumstruktur (Hauptkategorien > Unterkategorien > Konten)
+- [x] Frontend: Inline-Bearbeitung von Konten (Name, Nummer) via Edit-Dialog
+- [x] Frontend: Aktivieren/Deaktivieren per Toggle-Switch pro Konto
+- [x] Frontend: MWST-Toggle und MWST-Satz-Auswahl pro Konto (8.1%, 2.6%, 3.8%)
+- [x] Frontend: Löschen von Konten (mit Warnung wenn Buchungen vorhanden)
+- [x] Frontend: Suchfunktion (Kontonummer, Name, Kategorie)
+- [x] Frontend: Alle öffnen / Alle schliessen Buttons
+- [x] Frontend: Inaktive Konten ein-/ausblenden Toggle
+- [x] Frontend: Neues Konto erstellen Dialog
+- [x] Fix: Abschreibungen-Seite zeigt Anlagekonten (1100-1899) im Anlagekonto-Dropdown
+- [ ] Frontend: Drag-and-Drop zum Verschieben von Konten (spätere Phase)
+- [ ] Frontend: Upload-Bereich für eigenen Kontenplan PDF/Excel (spätere Phase)
+- [ ] Frontend: Standard-KMU-Kontenplan als Vorlage für Neukunden (spätere Phase)
+

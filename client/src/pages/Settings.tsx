@@ -19,10 +19,12 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Building2, Users, Shield, Landmark, BookOpen, Scale,
+  Building2, Users, Shield, Landmark, BookOpen, Scale, ListTree,
   Pencil, Trash2, Plus, Check, X, AlertTriangle, TrendingDown, Loader2,
+  GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
 } from "lucide-react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
+import { useMemo } from "react";
 import { toast } from "sonner";
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
@@ -30,6 +32,7 @@ import { toast } from "sonner";
 const TABS = [
   { id: "company", label: "Unternehmen", icon: Building2 },
   { id: "bank", label: "Bankkonten", icon: Landmark },
+  { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree },
   { id: "employees", label: "Mitarbeiter", icon: Users },
   { id: "insurance", label: "Versicherungen", icon: Shield },
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
@@ -91,6 +94,7 @@ export default function Settings() {
       <main className="flex-1 overflow-auto p-6">
         {activeTab === "company" && <CompanyTab />}
         {activeTab === "bank" && <BankTab />}
+        {activeTab === "chartOfAccounts" && <ChartOfAccountsTab />}
         {activeTab === "employees" && <EmployeesTab />}
         {activeTab === "insurance" && <InsuranceTab />}
         {activeTab === "rules" && <BookingRulesTab />}
@@ -1269,16 +1273,22 @@ function DepreciationTab() {
   const [formExpenseAccountId, setFormExpenseAccountId] = useState<string>("");
   const [formActive, setFormActive] = useState(true);
 
-  // Filter accounts: only asset accounts (1xxx) for depreciation
+  // Filter accounts: only asset accounts for depreciation (Anlagevermögen: Sachanlagen, Finanzanlagen, Immaterielle Werte)
   const assetAccounts = (allAccounts || []).filter(a => {
     const num = parseInt(a.number);
-    return num >= 1400 && num < 1900; // Anlagevermögen
+    // Include: 1100-1199 (mobile Sachanlagen like Geräte, Hardware, Mobiliar)
+    // 1200-1299 (Finanzanlagen, Beteiligungen)
+    // 1400-1499 (Finanzanlagen gemäss KMU)
+    // 1500-1599 (Mobile Sachanlagen gemäss KMU)
+    // 1600-1699 (Immobile Sachanlagen)
+    // 1700-1799 (Immaterielle Werte)
+    return (num >= 1100 && num < 1300) || (num >= 1400 && num < 1800);
   });
 
-  // Filter accounts: only expense accounts (6xxx) for depreciation expense
+  // Filter accounts: expense accounts for depreciation (4400 Abschreibungen + 6800 gemäss KMU)
   const expenseAccounts = (allAccounts || []).filter(a => {
     const num = parseInt(a.number);
-    return num >= 6800 && num < 6900; // Abschreibungen
+    return (num >= 4400 && num < 4500) || (num >= 6800 && num < 6900);
   });
 
   const resetForm = () => {
@@ -1527,6 +1537,485 @@ function DepreciationTab() {
           </TableBody>
         </Table>
       </Card>
+    </div>
+  );
+}
+
+
+// ─── Chart of Accounts (Kontenplan) Tab ─────────────────────────────────────
+
+const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+  asset: "Aktiven",
+  liability: "Passiven",
+  expense: "Aufwand",
+  revenue: "Ertrag",
+  equity: "Eigenkapital",
+};
+
+const VAT_RATES = [
+  { value: "8.10", label: "8.1% (Normal)" },
+  { value: "2.60", label: "2.6% (Reduziert)" },
+  { value: "3.80", label: "3.8% (Beherbergung)" },
+  { value: "0.00", label: "0% (Befreit)" },
+];
+
+interface AccountRow {
+  id: number;
+  number: string;
+  name: string;
+  accountType: string;
+  normalBalance: string;
+  category: string | null;
+  subCategory: string | null;
+  isBankAccount: boolean | null;
+  isVatRelevant: boolean | null;
+  defaultVatRate: string | null;
+  isActive: boolean;
+  sortOrder: number | null;
+}
+
+interface TreeCategory {
+  key: string;
+  label: string;
+  subCategories: TreeSubCategory[];
+}
+
+interface TreeSubCategory {
+  key: string;
+  label: string;
+  accounts: AccountRow[];
+}
+
+function buildTree(accounts: AccountRow[]): TreeCategory[] {
+  const catMap = new Map<string, Map<string, AccountRow[]>>();
+  
+  // Define the standard category order based on Swiss chart of accounts
+  const catOrder = [
+    "Umlaufvermögen", "Anlagevermögen",  // Aktiven
+    "Fremdkapital", "Eigenkapital",  // Passiven
+    "Drittaufwand", "Personalaufwand", "Mietaufwand", "Zinsaufwand",
+    "Unterhalt und Reparatur", "Abschreibungen", "Versicherungen",
+    "Betriebs- und Hilfsmaterial", "Verwaltungsaufwand", "Werbeaufwand",
+    "Übriger Aufwand",  // Aufwand
+    "Dienstleistungsertrag", "Kapitalertrag", "Übriger Ertrag",  // Ertrag
+  ];
+
+  for (const acc of accounts) {
+    const cat = acc.category || "Ohne Kategorie";
+    const sub = acc.subCategory || "Allgemein";
+    if (!catMap.has(cat)) catMap.set(cat, new Map());
+    const subMap = catMap.get(cat)!;
+    if (!subMap.has(sub)) subMap.set(sub, []);
+    subMap.get(sub)!.push(acc);
+  }
+
+  const tree: TreeCategory[] = [];
+  // Sort by predefined order, then alphabetically for unknown categories
+  const sortedCats = Array.from(catMap.keys()).sort((a: string, b: string) => {
+    const ia = catOrder.indexOf(a);
+    const ib = catOrder.indexOf(b);
+    if (ia >= 0 && ib >= 0) return ia - ib;
+    if (ia >= 0) return -1;
+    if (ib >= 0) return 1;
+    return a.localeCompare(b, "de");
+  });
+
+  for (const cat of sortedCats) {
+    const subMap = catMap.get(cat)!;
+    const subCategories: TreeSubCategory[] = [];
+    subMap.forEach((accs: AccountRow[], sub: string) => {
+      subCategories.push({
+        key: `${cat}::${sub}`,
+        label: sub,
+        accounts: accs.sort((a: AccountRow, b: AccountRow) => a.number.localeCompare(b.number)),
+      });
+    });
+    tree.push({ key: cat, label: cat, subCategories });
+  }
+  return tree;
+}
+
+function ChartOfAccountsTab() {
+  const { data: allAccounts, isLoading, refetch } = trpc.settings.getAllAccounts.useQuery();
+  const updateMut = trpc.settings.updateAccount.useMutation({
+    onSuccess: () => { refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const createMut = trpc.settings.createAccount.useMutation({
+    onSuccess: () => { toast.success("Konto erstellt"); refetch(); setShowAdd(false); resetAddForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMut = trpc.settings.deleteAccount.useMutation({
+    onSuccess: () => { toast.success("Konto gelöscht"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const toggleActiveMut = trpc.settings.toggleAccountActive.useMutation({
+    onSuccess: () => refetch(),
+    onError: (e) => toast.error(e.message),
+  });
+  const updateVatMut = trpc.settings.updateAccountVat.useMutation({
+    onSuccess: () => refetch(),
+    onError: (e) => toast.error(e.message),
+  });
+
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
+  const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set());
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editNumber, setEditNumber] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+
+  // Add form state
+  const [addNumber, setAddNumber] = useState("");
+  const [addName, setAddName] = useState("");
+  const [addType, setAddType] = useState<string>("expense");
+  const [addCategory, setAddCategory] = useState("");
+  const [addSubCategory, setAddSubCategory] = useState("");
+
+  const resetAddForm = () => {
+    setAddNumber(""); setAddName(""); setAddType("expense");
+    setAddCategory(""); setAddSubCategory("");
+  };
+
+  const tree = useMemo(() => {
+    if (!allAccounts) return [];
+    let filtered = allAccounts as AccountRow[];
+    if (!showInactive) filtered = filtered.filter(a => a.isActive);
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(a =>
+        a.number.toLowerCase().includes(term) ||
+        a.name.toLowerCase().includes(term) ||
+        (a.category || "").toLowerCase().includes(term) ||
+        (a.subCategory || "").toLowerCase().includes(term)
+      );
+    }
+    return buildTree(filtered);
+  }, [allAccounts, showInactive, searchTerm]);
+
+  const toggleCat = (key: string) => {
+    setExpandedCats(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleSub = (key: string) => {
+    setExpandedSubs(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    const cats = new Set<string>(tree.map((c: TreeCategory) => c.key));
+    const subs = new Set<string>(tree.flatMap((c: TreeCategory) => c.subCategories.map((s: TreeSubCategory) => s.key)));
+    setExpandedCats(cats);
+    setExpandedSubs(subs);
+  };
+
+  const collapseAll = () => {
+    setExpandedCats(new Set());
+    setExpandedSubs(new Set());
+  };
+
+  const startEdit = (acc: AccountRow) => {
+    setEditingId(acc.id);
+    setEditName(acc.name);
+    setEditNumber(acc.number);
+  };
+
+  const saveEdit = (acc: AccountRow) => {
+    updateMut.mutate({
+      id: acc.id,
+      name: editName !== acc.name ? editName : undefined,
+      number: editNumber !== acc.number ? editNumber : undefined,
+    });
+    setEditingId(null);
+  };
+
+  const handleCreateAccount = () => {
+    const num = parseInt(addNumber);
+    let normalBalance: "debit" | "credit" = "debit";
+    let accountType = addType as "asset" | "liability" | "expense" | "revenue" | "equity";
+    if (accountType === "liability" || accountType === "revenue" || accountType === "equity") {
+      normalBalance = "credit";
+    }
+    createMut.mutate({
+      number: addNumber,
+      name: addName,
+      accountType,
+      normalBalance,
+      category: addCategory || undefined,
+      subCategory: addSubCategory || undefined,
+    });
+  };
+
+  const totalAccounts = allAccounts?.length ?? 0;
+  const activeAccounts = allAccounts?.filter(a => a.isActive).length ?? 0;
+
+  if (isLoading) return <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Kontenplan</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {activeAccounts} aktive Konten von {totalAccounts} total
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={expandAll}>Alle öffnen</Button>
+          <Button variant="outline" size="sm" onClick={collapseAll}>Alle schliessen</Button>
+          <Button size="sm" onClick={() => setShowAdd(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Neues Konto
+          </Button>
+        </div>
+      </div>
+
+      {/* Search and filter */}
+      <div className="flex gap-3 items-center">
+        <Input
+          placeholder="Suche nach Kontonummer, Name, Kategorie..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          className="max-w-md"
+        />
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={showInactive}
+            onCheckedChange={setShowInactive}
+          />
+          <Label className="text-sm">Inaktive anzeigen</Label>
+        </div>
+      </div>
+
+      {/* Add account dialog */}
+      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Neues Konto erstellen</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Kontonummer *</Label>
+                <Input value={addNumber} onChange={e => setAddNumber(e.target.value)} placeholder="z.B. 4710" />
+              </div>
+              <div>
+                <Label>Kontoname *</Label>
+                <Input value={addName} onChange={e => setAddName(e.target.value)} placeholder="z.B. Fachliteratur" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Kontotyp</Label>
+                <Select value={addType} onValueChange={setAddType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(ACCOUNT_TYPE_LABELS).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Kategorie</Label>
+                <Input value={addCategory} onChange={e => setAddCategory(e.target.value)} placeholder="z.B. Verwaltungsaufwand" />
+              </div>
+              <div>
+                <Label>Unterkategorie</Label>
+                <Input value={addSubCategory} onChange={e => setAddSubCategory(e.target.value)} placeholder="z.B. Fachliteratur" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowAdd(false); resetAddForm(); }}>Abbrechen</Button>
+            <Button onClick={handleCreateAccount} disabled={!addNumber || !addName || createMut.isPending}>
+              {createMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Plus className="h-4 w-4 mr-1" />}
+              Erstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Tree view */}
+      <div className="space-y-1">
+        {tree.map((cat: TreeCategory) => (
+          <div key={cat.key} className="border rounded-lg overflow-hidden">
+            {/* Category header */}
+            <button
+              className="w-full flex items-center gap-2 px-4 py-3 bg-muted/50 hover:bg-muted transition-colors text-left font-semibold"
+              onClick={() => toggleCat(cat.key)}
+            >
+              {expandedCats.has(cat.key) ? (
+                <ChevronDown className="h-4 w-4 shrink-0" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0" />
+              )}
+              <span>{cat.label}</span>
+              <Badge variant="secondary" className="ml-auto text-xs">
+                {cat.subCategories.reduce((sum: number, s: TreeSubCategory) => sum + s.accounts.length, 0)} Konten
+              </Badge>
+            </button>
+
+            {expandedCats.has(cat.key) && (
+              <div className="pl-4">
+                {cat.subCategories.map((sub: TreeSubCategory) => (
+                  <div key={sub.key}>
+                    {/* Subcategory header */}
+                    <button
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left text-sm font-medium text-muted-foreground"
+                      onClick={() => toggleSub(sub.key)}
+                    >
+                      {expandedSubs.has(sub.key) ? (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span>{sub.label}</span>
+                      <span className="ml-auto text-xs">{sub.accounts.length}</span>
+                    </button>
+
+                    {expandedSubs.has(sub.key) && (
+                      <div className="pl-6">
+                        {sub.accounts.map((acc: AccountRow) => (
+                          <div
+                            key={acc.id}
+                            className={`flex items-center gap-3 px-3 py-2 border-b last:border-b-0 text-sm group hover:bg-muted/20 transition-colors ${
+                              !acc.isActive ? "opacity-50" : ""
+                            }`}
+                          >
+                            {/* Account number */}
+                            {editingId === acc.id ? (
+                              <Input
+                                value={editNumber}
+                                onChange={e => setEditNumber(e.target.value)}
+                                className="w-20 h-7 text-sm font-mono"
+                              />
+                            ) : (
+                              <span className="font-mono text-xs w-12 shrink-0 font-semibold">{acc.number}</span>
+                            )}
+
+                            {/* Account name */}
+                            {editingId === acc.id ? (
+                              <Input
+                                value={editName}
+                                onChange={e => setEditName(e.target.value)}
+                                className="flex-1 h-7 text-sm"
+                                onKeyDown={e => { if (e.key === "Enter") saveEdit(acc); if (e.key === "Escape") setEditingId(null); }}
+                              />
+                            ) : (
+                              <span className="flex-1 truncate">{acc.name}</span>
+                            )}
+
+                            {/* Account type badge */}
+                            <Badge variant="outline" className="text-xs shrink-0">
+                              {ACCOUNT_TYPE_LABELS[acc.accountType] || acc.accountType}
+                            </Badge>
+
+                            {/* VAT toggle */}
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Switch
+                                checked={!!acc.isVatRelevant}
+                                onCheckedChange={(checked) => {
+                                  updateVatMut.mutate({
+                                    id: acc.id,
+                                    isVatRelevant: checked,
+                                    defaultVatRate: checked ? (acc.defaultVatRate || "8.10") : null,
+                                  });
+                                }}
+                              />
+                              <span className="text-xs text-muted-foreground w-10">MWST</span>
+                            </div>
+
+                            {/* VAT rate selector (only if VAT relevant) */}
+                            {acc.isVatRelevant ? (
+                              <Select
+                                value={acc.defaultVatRate || "8.10"}
+                                onValueChange={(val) => {
+                                  updateVatMut.mutate({
+                                    id: acc.id,
+                                    isVatRelevant: true,
+                                    defaultVatRate: val,
+                                  });
+                                }}
+                              >
+                                <SelectTrigger className="w-28 h-7 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {VAT_RATES.map(r => (
+                                    <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <div className="w-28" />
+                            )}
+
+                            {/* Active toggle */}
+                            <button
+                              className="shrink-0"
+                              onClick={() => toggleActiveMut.mutate({ id: acc.id, isActive: !acc.isActive })}
+                              title={acc.isActive ? "Deaktivieren" : "Aktivieren"}
+                            >
+                              {acc.isActive ? (
+                                <Eye className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <EyeOff className="h-4 w-4 text-gray-400" />
+                              )}
+                            </button>
+
+                            {/* Edit / Save / Cancel */}
+                            {editingId === acc.id ? (
+                              <div className="flex gap-1 shrink-0">
+                                <Button size="sm" variant="ghost" onClick={() => saveEdit(acc)}>
+                                  <Check className="h-4 w-4 text-green-600" />
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Button size="sm" variant="ghost" onClick={() => startEdit(acc)}>
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  size="sm" variant="ghost"
+                                  onClick={() => {
+                                    if (confirm(`Konto ${acc.number} ${acc.name} wirklich löschen?`))
+                                      deleteMut.mutate({ id: acc.id });
+                                  }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {tree.length === 0 && !isLoading && (
+        <div className="text-center py-8 text-muted-foreground">
+          {searchTerm ? "Keine Konten gefunden für diese Suche." : "Noch keine Konten vorhanden."}
+        </div>
+      )}
     </div>
   );
 }

@@ -318,7 +318,30 @@ const journalRouter = router({
     }),
 });
 
-// ─── Bank Import Router ───────────────────────────────────────────────────────
+// ─── Bank Import Router ───────────────────────────────────────────────────────────────────────
+// In-memory undo snapshot store (per user)
+type UndoSnapshot = {
+  id: string;
+  actionName: string;
+  timestamp: number;
+  transactions: Array<{
+    id: number;
+    description: string | null;
+    suggestedDebitAccountId: number | null;
+    suggestedCreditAccountId: number | null;
+    aiConfidence: number | null;
+    aiReasoning: string | null;
+    suggestedBookingText: string | null;
+    isTransfer: boolean | null;
+    transferPartnerId: number | null;
+    manuallyEdited: boolean | null;
+    matchedDocumentId: number | null;
+    matchScore: number | null;
+    status: string;
+  }>;
+};
+const undoSnapshots = new Map<number, UndoSnapshot>();
+
 const bankImportRouter = router({
   getBankAccounts: publicProcedure.query(() => getBankAccounts()),
   updateBankAccount: protectedProcedure
@@ -1234,6 +1257,94 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         counterpartyName: r.counterparty ?? '',
         bankAccountName: r.bankAccountId ? bankAccountMap[r.bankAccountId] ?? '' : '',
       }));
+    }),
+
+  // ── Snapshot: Save current state of pending transactions before a bulk action ──
+  createSnapshot: protectedProcedure
+    .input(z.object({ actionName: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Get all pending transactions
+      const pending = await db.select().from(bankTransactions)
+        .where(eq(bankTransactions.status, 'pending'));
+      // Store snapshot in memory (server-side cache)
+      const snapshotId = `snap_${Date.now()}`;
+      undoSnapshots.set(ctx.user.id as number, {
+        id: snapshotId,
+        actionName: input.actionName,
+        timestamp: Date.now(),
+        transactions: pending.map(tx => ({
+          id: tx.id,
+          description: tx.description,
+          suggestedDebitAccountId: tx.suggestedDebitAccountId,
+          suggestedCreditAccountId: tx.suggestedCreditAccountId,
+          aiConfidence: tx.aiConfidence,
+          aiReasoning: tx.aiReasoning,
+          suggestedBookingText: tx.suggestedBookingText,
+          isTransfer: tx.isTransfer,
+          transferPartnerId: tx.transferPartnerId,
+          manuallyEdited: tx.manuallyEdited,
+          matchedDocumentId: tx.matchedDocumentId,
+          matchScore: tx.matchScore,
+          status: tx.status,
+        })),
+      });
+      return { snapshotId, count: pending.length };
+    }),
+
+  // ── Get current snapshot info (for showing the undo button) ──
+  getSnapshot: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const snapshot = undoSnapshots.get(ctx.user.id as number);
+      if (!snapshot) return null;
+      return {
+        id: snapshot.id,
+        actionName: snapshot.actionName,
+        timestamp: snapshot.timestamp,
+        transactionCount: snapshot.transactions.length,
+      };
+    }),
+
+  // ── Restore: Revert transactions to the snapshot state ──
+  restoreSnapshot: protectedProcedure
+    .mutation(async ({ ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const snapshot = undoSnapshots.get(ctx.user.id as number);
+      if (!snapshot) throw new TRPCError({ code: "NOT_FOUND", message: "Kein Snapshot vorhanden" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      let restored = 0;
+      for (const txSnap of snapshot.transactions) {
+        await db.update(bankTransactions).set({
+          description: txSnap.description,
+          suggestedDebitAccountId: txSnap.suggestedDebitAccountId,
+          suggestedCreditAccountId: txSnap.suggestedCreditAccountId,
+          aiConfidence: txSnap.aiConfidence,
+          aiReasoning: txSnap.aiReasoning,
+          suggestedBookingText: txSnap.suggestedBookingText,
+          isTransfer: txSnap.isTransfer ?? false,
+          transferPartnerId: txSnap.transferPartnerId,
+          manuallyEdited: txSnap.manuallyEdited ?? false,
+          matchedDocumentId: txSnap.matchedDocumentId,
+          matchScore: txSnap.matchScore,
+          status: txSnap.status as "pending" | "matched" | "ignored",
+        }).where(eq(bankTransactions.id, txSnap.id));
+        restored++;
+      }
+      // Remove snapshot after restore
+      undoSnapshots.delete(ctx.user.id as number);
+      return { restored, actionName: snapshot.actionName };
+    }),
+
+  // ── Clear snapshot (dismiss undo option) ──
+  clearSnapshot: protectedProcedure
+    .mutation(async ({ ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      undoSnapshots.delete(ctx.user.id as number);
+      return { success: true };
     }),
 });
 

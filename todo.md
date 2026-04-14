@@ -551,3 +551,9 @@
 ## Bug: Kontoübertrag-Duplikate bei zwei Bankauszügen
 
 - [x] Bankimport: Duplikaterkennung für Kontoüberträge – automatische Erkennung nach jedem Import
+
+## Feature: Bankimport – Rückgängig-Button
+
+- [x] Bankimport: Snapshot-Mechanismus – vor jeder Bulk-Aktion den Zustand der betroffenen Transaktionen speichern
+- [x] Bankimport: Rückgängig-Button in der Toolbar anzeigen (nur wenn ein Snapshot vorhanden ist)
+- [x] Bankimport: Restore-Funktion – gespeicherten Snapshot wiederherstellen und Änderungen rückgängig machen

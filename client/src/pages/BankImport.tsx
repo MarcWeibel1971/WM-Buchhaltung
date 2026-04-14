@@ -216,6 +216,32 @@ export default function BankImport() {
     onError: (e) => toast.error(e.message),
   });
 
+  // ── Undo/Snapshot mutations ──
+  const { data: currentSnapshot, refetch: refetchSnapshot } = trpc.bankImport.getSnapshot.useQuery();
+  const createSnapshotMutation = trpc.bankImport.createSnapshot.useMutation();
+  const restoreSnapshotMutation = trpc.bankImport.restoreSnapshot.useMutation({
+    onSuccess: (data) => {
+      toast.success(`"${data.actionName}" rückgängig gemacht (${data.restored} Transaktionen wiederhergestellt)`);
+      refetchTxs();
+      refetchSnapshot();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const clearSnapshotMutation = trpc.bankImport.clearSnapshot.useMutation({
+    onSuccess: () => refetchSnapshot(),
+  });
+
+  // Helper: wrap a bulk action with snapshot creation
+  const withSnapshot = async (actionName: string, action: () => void) => {
+    try {
+      await createSnapshotMutation.mutateAsync({ actionName });
+      await refetchSnapshot();
+    } catch (e) {
+      console.error("Snapshot failed", e);
+    }
+    action();
+  };
+
   const parsePdfMutation = trpc.creditCard.parsePdf.useMutation({
     onSuccess: (data) => {
       if (!data.items?.length) { toast.error("Keine Positionen in der Abrechnung erkannt"); return; }
@@ -604,7 +630,7 @@ export default function BankImport() {
             {isPending && pendingIds.length > 0 && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
                 disabled={categorizeMutation.isPending}
-                onClick={() => categorizeMutation.mutate({ transactionIds: pendingIds })}>
+                onClick={() => withSnapshot("KI kategorisieren", () => categorizeMutation.mutate({ transactionIds: pendingIds }))}>
                 <Zap className="h-3 w-3" />
                 {categorizeMutation.isPending ? "KI läuft..." : `KI kategorisieren (${pendingIds.length})`}
               </Button>
@@ -612,7 +638,7 @@ export default function BankImport() {
             {isPending && allPendingIds.length > 0 && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
                 disabled={bookingTextMutation.isPending}
-                onClick={() => bookingTextMutation.mutate({ transactionIds: allPendingIds })}>
+                onClick={() => withSnapshot("Buchungstexte generieren", () => bookingTextMutation.mutate({ transactionIds: allPendingIds }))}>
                 <FileText className="h-3 w-3" />
                 {bookingTextMutation.isPending ? "Texte werden generiert..." : "Buchungstexte generieren"}
               </Button>
@@ -620,7 +646,7 @@ export default function BankImport() {
             {isPending && allPendingIds.length > 0 && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
                 disabled={refreshMutation.isPending}
-                onClick={() => refreshMutation.mutate({ bankAccountId: pendingFilter })}>
+                onClick={() => withSnapshot("Refresh (gelernt)", () => refreshMutation.mutate({ bankAccountId: pendingFilter }))}>
                 <RefreshCw className={`h-3 w-3 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
                 {refreshMutation.isPending ? "Aktualisiere..." : "Refresh (gelernt)"}
               </Button>
@@ -628,9 +654,22 @@ export default function BankImport() {
             {isPending && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
                 disabled={detectTransfersMutation.isPending}
-                onClick={() => detectTransfersMutation.mutate()}>
+                onClick={() => withSnapshot("Kontoüberträge erkennen", () => detectTransfersMutation.mutate())}>
                 <RefreshCw className={`h-3 w-3 ${detectTransfersMutation.isPending ? "animate-spin" : ""}`} />
                 {detectTransfersMutation.isPending ? "Erkenne..." : "Kontoüberträge erkennen"}
+              </Button>
+            )}
+            {/* Rückgängig-Button */}
+            {currentSnapshot && (
+              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-red-300 text-red-700 hover:bg-red-50"
+                disabled={restoreSnapshotMutation.isPending}
+                onClick={() => {
+                  if (confirm(`"${currentSnapshot.actionName}" rückgängig machen? (${currentSnapshot.transactionCount} Transaktionen werden wiederhergestellt)`)) {
+                    restoreSnapshotMutation.mutate();
+                  }
+                }}>
+                <Undo2 className="h-3 w-3" />
+                {restoreSnapshotMutation.isPending ? "Stelle wieder her..." : `Rückgängig: ${currentSnapshot.actionName}`}
               </Button>
             )}
             {isPending && selectedTxIds.size > 0 && readyToApprove.length > 0 && (

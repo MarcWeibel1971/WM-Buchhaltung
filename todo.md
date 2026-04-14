@@ -379,3 +379,9 @@
 - [x] Backend: getTransactions Endpunkt – Banktransaktionen für Mitarbeiter/Monat abrufen (Suche über Buchungstext mit Mitarbeiter-Code)
 - [x] Frontend: Klickbare Lohnzeilen mit Chevron-Icon und aufklappbarem Bereich
 - [x] Frontend: Banktransaktionen-Tabelle (Datum, Beschreibung, Bankkonto, Betrag CHF, Status) mit Total-Zeile
+
+## Feature: Kontoauszug-Verbesserungen
+- [x] Frontend: Buchungstext aufklappbar – Klick auf Zeile zeigt langen Buchungstext vollständig an (statt nur Tooltip)
+- [x] Frontend: Suchfeld für Buchungstext im Kontoauszug
+- [x] Frontend: Datumsbereich-Filter (von/bis) im Kontoauszug mit Filter-Total und Ergebniszähler
+- [x] Frontend: Lupe/Stift-Icon in Kontoauszug-Zeile öffnet Buchungsdetail bzw. Bearbeiten-Dialog direkt (ohne Umweg über Journal)

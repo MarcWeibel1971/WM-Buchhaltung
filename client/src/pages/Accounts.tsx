@@ -1,10 +1,12 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useMemo } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { Search, BookOpen, Printer, ArrowLeft, ChevronRight, Download } from "lucide-react";
+import { Search, BookOpen, Printer, ArrowLeft, ChevronRight, ChevronDown, ChevronUp, Edit2, Calendar, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { toast } from "sonner";
 import BookingDetailDialog from "@/components/BookingDetailDialog";
 
 function formatCHF(val: number) {
@@ -21,12 +23,142 @@ const ACCOUNT_TYPE_LABELS: Record<string, string> = {
 
 const FISCAL_YEARS = [2026, 2025, 2024, 2023];
 
+// ─── Edit Entry Dialog (reusable) ────────────────────────────────────────────
+function EditEntryDialog({ entry, onClose, onSaved }: {
+  entry: any; onClose: () => void; onSaved: () => void;
+}) {
+  const { data: accounts } = trpc.accounts.list.useQuery();
+  const { data: detail } = trpc.journal.getWithLines.useQuery({ entryId: entry.id });
+  const [lines, setLines] = useState<Array<{ accountId: number; side: "debit" | "credit"; amount: string }>>([]);
+  const [initialized, setInitialized] = useState(false);
+
+  if (detail && !initialized) {
+    setLines(detail.lines.map((l: any) => ({ accountId: l.line.accountId, side: l.line.side, amount: l.line.amount as string })));
+    setInitialized(true);
+  }
+
+  const approveMutation = trpc.journal.approve.useMutation({
+    onSuccess: onSaved,
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const debitTotal = lines.filter(l => l.side === "debit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
+  const creditTotal = lines.filter(l => l.side === "credit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
+  const balanced = Math.abs(debitTotal - creditTotal) < 0.01;
+  const isSimple = lines.length === 2;
+
+  const handleAmountChange = (i: number, val: string) => {
+    if (isSimple) {
+      const otherIdx = i === 0 ? 1 : 0;
+      const newLines = [...lines];
+      newLines[i] = { ...lines[i], amount: val };
+      newLines[otherIdx] = { ...lines[otherIdx], amount: val };
+      setLines(newLines);
+    } else {
+      const newLines = [...lines];
+      newLines[i] = { ...lines[i], amount: val };
+      setLines(newLines);
+    }
+  };
+
+  const handleSwapAccounts = () => {
+    if (lines.length < 2) return;
+    const newLines = lines.map(l => ({
+      ...l,
+      side: l.side === "debit" ? "credit" as const : "debit" as const,
+    }));
+    setLines(newLines);
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="w-[min(95vw,48rem)] max-w-none">
+        <DialogHeader>
+          <DialogTitle>Buchung bearbeiten – {entry.entryNumber || `#${entry.id}`}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">{entry.description}</p>
+          <div className="space-y-2">
+            {lines.map((line, i) => (
+              <div key={i} className="flex gap-2 items-center">
+                <Select value={String(line.accountId)} onValueChange={v => {
+                  const newLines = [...lines]; newLines[i] = { ...line, accountId: parseInt(v) }; setLines(newLines);
+                }}>
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Konto wählen" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-64">
+                    {(accounts ?? []).map((a: any) => (
+                      <SelectItem key={a.id} value={String(a.id)}>
+                        {a.number} – {a.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={line.side} onValueChange={v => {
+                  const newLines = [...lines]; newLines[i] = { ...line, side: v as any }; setLines(newLines);
+                }}>
+                  <SelectTrigger className="w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="debit">Soll</SelectItem>
+                    <SelectItem value="credit">Haben</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  className="w-32 font-mono text-right"
+                  value={line.amount}
+                  onChange={e => handleAmountChange(i, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSwapAccounts}
+              className="gap-2 text-xs"
+            >
+              ⇄ Konten tauschen
+            </Button>
+            {!balanced && (
+              <p className="text-xs text-red-500">
+                Soll ({debitTotal.toFixed(2)}) ≠ Haben ({creditTotal.toFixed(2)})
+              </p>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Abbrechen</Button>
+          <Button
+            disabled={!balanced || approveMutation.isPending}
+            onClick={() => approveMutation.mutate({ entryId: entry.id, lines })}
+          >
+            Genehmigen
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Account Detail View ──────────────────────────────────────────────────────
 function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; fiscalYear: number; onBack: () => void }) {
   const printRef = useRef<HTMLDivElement>(null);
   const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
+  const [expandedRowIdx, setExpandedRowIdx] = useState<number | null>(null);
+  const [editEntry, setEditEntry] = useState<any>(null);
+
+  // Filters
+  const [searchText, setSearchText] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const { data, isLoading } = trpc.accounts.getLedger.useQuery({ accountId, fiscalYear });
+  const utils = trpc.useUtils();
 
   const account = data?.account;
   const lines = data?.lines ?? [];
@@ -46,12 +178,40 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
     });
   }, [lines, openingBalance]);
 
+  // Apply filters
+  const filteredLines = useMemo(() => {
+    return linesWithBalance.filter((item: any) => {
+      // Text search
+      if (searchText) {
+        const desc = (item.entry.description || "").toLowerCase();
+        const entryNum = String(item.entry.entryNumber || item.entry.id);
+        if (!desc.includes(searchText.toLowerCase()) && !entryNum.includes(searchText)) {
+          return false;
+        }
+      }
+      // Date range filter
+      if (dateFrom || dateTo) {
+        const bookingDate = item.entry.bookingDate;
+        if (!bookingDate) return false;
+        if (dateFrom && bookingDate < dateFrom) return false;
+        if (dateTo && bookingDate > dateTo) return false;
+      }
+      return true;
+    });
+  }, [linesWithBalance, searchText, dateFrom, dateTo]);
+
+  const hasFilters = searchText || dateFrom || dateTo;
+
   const closingBalance = linesWithBalance.length > 0
     ? linesWithBalance[linesWithBalance.length - 1].runningBalance
     : openingBalance;
 
   const totalDebit = lines.reduce((sum: number, l: any) => l.line.side === "debit" ? sum + parseFloat(l.line.amount) : sum, 0);
   const totalCredit = lines.reduce((sum: number, l: any) => l.line.side === "credit" ? sum + parseFloat(l.line.amount) : sum, 0);
+
+  // Filtered totals
+  const filteredDebit = filteredLines.reduce((sum: number, l: any) => l.line.side === "debit" ? sum + parseFloat(l.line.amount) : sum, 0);
+  const filteredCredit = filteredLines.reduce((sum: number, l: any) => l.line.side === "credit" ? sum + parseFloat(l.line.amount) : sum, 0);
 
   const handlePrint = () => {
     const content = printRef.current;
@@ -147,17 +307,69 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
         </div>
       </div>
 
+      {/* Search & Date Filters */}
+      <div className="flex flex-wrap gap-3 items-end">
+        <div className="relative flex-1 min-w-48">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buchungstext suchen..."
+            value={searchText}
+            onChange={e => { setSearchText(e.target.value); setExpandedRowIdx(null); }}
+            className="pl-9"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={e => { setDateFrom(e.target.value); setExpandedRowIdx(null); }}
+              className="w-36 text-sm"
+              placeholder="Von"
+            />
+          </div>
+          <span className="text-muted-foreground text-sm">–</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={e => { setDateTo(e.target.value); setExpandedRowIdx(null); }}
+            className="w-36 text-sm"
+            placeholder="Bis"
+          />
+        </div>
+        {hasFilters && (
+          <Button variant="ghost" size="sm" onClick={() => { setSearchText(""); setDateFrom(""); setDateTo(""); setExpandedRowIdx(null); }}>
+            <X className="h-4 w-4 mr-1" /> Filter zurücksetzen
+          </Button>
+        )}
+      </div>
+
+      {/* Filter info */}
+      {hasFilters && (
+        <div className="text-xs text-muted-foreground">
+          {filteredLines.length} von {linesWithBalance.length} Buchungen
+          {(filteredDebit > 0 || filteredCredit > 0) && (
+            <span className="ml-3">
+              | Soll: <span className="font-mono font-semibold text-green-700">{formatCHF(filteredDebit)}</span>
+              {" "}| Haben: <span className="font-mono font-semibold text-red-600">{formatCHF(filteredCredit)}</span>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Transaction table */}
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden" ref={printRef}>
         <div className="overflow-x-auto">
           <table className="accounting-table" style={{ tableLayout: "fixed", width: "100%" }}>
             <colgroup>
-              <col style={{ width: "8rem" }} />{/* Datum */}
+              <col style={{ width: "7.5rem" }} />{/* Datum */}
               <col style={{ width: "auto" }} />{/* Buchungstext – flexibel */}
-              <col style={{ width: "7rem" }} />{/* Beleg-Nr. */}
-              <col style={{ width: "9rem" }} />{/* Soll CHF */}
-              <col style={{ width: "9rem" }} />{/* Haben CHF */}
-              <col style={{ width: "9rem" }} />{/* Saldo CHF */}
+              <col style={{ width: "5.5rem" }} />{/* Beleg-Nr. */}
+              <col style={{ width: "8.5rem" }} />{/* Soll CHF */}
+              <col style={{ width: "8.5rem" }} />{/* Haben CHF */}
+              <col style={{ width: "8.5rem" }} />{/* Saldo CHF */}
+              <col style={{ width: "3rem" }} />{/* Aktionen */}
             </colgroup>
             <thead>
               <tr>
@@ -167,6 +379,7 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
                 <th className="text-right">Soll CHF</th>
                 <th className="text-right">Haben CHF</th>
                 <th className="text-right">Saldo CHF</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -178,34 +391,134 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
                 <td></td>
                 <td></td>
                 <td className="text-right font-mono text-sm font-semibold">{formatCHF(openingBalance)}</td>
+                <td></td>
               </tr>
 
-              {linesWithBalance.length === 0 ? (
+              {filteredLines.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <td colSpan={7} className="text-center py-8 text-muted-foreground">
                     <BookOpen className="h-6 w-6 mx-auto mb-2 opacity-30" />
-                    Keine Buchungen in diesem Geschäftsjahr
+                    {hasFilters ? "Keine Buchungen für diesen Filter" : "Keine Buchungen in diesem Geschäftsjahr"}
                   </td>
                 </tr>
-              ) : linesWithBalance.map((item: any, idx: number) => (
-                <tr key={idx} className="cursor-pointer hover:bg-muted/20" onClick={() => setDetailEntryId(item.entry.id)}>
-                  <td className="font-mono text-xs text-center">{item.entry.bookingDate ? new Date(item.entry.bookingDate + 'T00:00:00').toLocaleDateString('de-CH') : '–'}</td>
-                  <td className="text-sm truncate" title={item.entry.description}>{item.entry.description}</td>
-                  <td className="font-mono text-xs text-muted-foreground text-center">{item.entry.id}</td>
-                  <td className="text-right font-mono text-sm">
-                    {item.line.side === "debit" ? formatCHF(parseFloat(item.line.amount)) : ""}
-                  </td>
-                  <td className="text-right font-mono text-sm">
-                    {item.line.side === "credit" ? formatCHF(parseFloat(item.line.amount)) : ""}
-                  </td>
-                  <td className={`text-right font-mono text-sm font-medium ${item.runningBalance >= 0 ? "" : "text-red-600"}`}>
-                    {formatCHF(item.runningBalance)}
-                  </td>
-                </tr>
-              ))}
+              ) : filteredLines.map((item: any, idx: number) => {
+                const isExpanded = expandedRowIdx === idx;
+                const description = item.entry.description || "–";
+                const isLongText = description.length > 60;
+
+                return (
+                  <>
+                    <tr
+                      key={idx}
+                      className={`cursor-pointer hover:bg-muted/20 ${isExpanded ? 'bg-muted/30' : ''}`}
+                      onClick={() => setExpandedRowIdx(isExpanded ? null : idx)}
+                    >
+                      <td className="font-mono text-xs text-center">
+                        {item.entry.bookingDate ? new Date(item.entry.bookingDate + 'T00:00:00').toLocaleDateString('de-CH') : '–'}
+                      </td>
+                      <td className="text-sm">
+                        <div className="flex items-start gap-1">
+                          {isLongText && (
+                            isExpanded
+                              ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                              : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                          )}
+                          <span className={isExpanded ? "" : "truncate block"}>{description}</span>
+                        </div>
+                      </td>
+                      <td className="font-mono text-xs text-muted-foreground text-center">{item.entry.id}</td>
+                      <td className="text-right font-mono text-sm">
+                        {item.line.side === "debit" ? formatCHF(parseFloat(item.line.amount)) : ""}
+                      </td>
+                      <td className="text-right font-mono text-sm">
+                        {item.line.side === "credit" ? formatCHF(parseFloat(item.line.amount)) : ""}
+                      </td>
+                      <td className={`text-right font-mono text-sm font-medium ${item.runningBalance >= 0 ? "" : "text-red-600"}`}>
+                        {formatCHF(item.runningBalance)}
+                      </td>
+                      <td className="text-center" onClick={e => e.stopPropagation()}>
+                        {item.entry.status === "pending" ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            title="Buchung bearbeiten"
+                            onClick={() => setEditEntry(item.entry)}
+                          >
+                            <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            title="Buchungsdetail anzeigen"
+                            onClick={() => setDetailEntryId(item.entry.id)}
+                          >
+                            <Search className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                    {/* Expanded detail row */}
+                    {isExpanded && (
+                      <tr key={`detail-${idx}`}>
+                        <td colSpan={7} className="bg-muted/10 px-6 py-3 border-t-0">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <div className="text-xs font-semibold text-muted-foreground mb-1 uppercase tracking-wide">Buchungstext</div>
+                              <p className="text-sm leading-relaxed">{description}</p>
+                            </div>
+                            <div className="space-y-2">
+                              <div>
+                                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Beleg-Nr.: </span>
+                                <span className="font-mono text-xs">{item.entry.entryNumber || `#${item.entry.id}`}</span>
+                              </div>
+                              <div>
+                                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status: </span>
+                                <span className="text-xs">
+                                  {item.entry.status === "pending" ? <span className="badge-pending">Ausstehend</span>
+                                    : item.entry.status === "approved" ? <span className="badge-approved">Genehmigt</span>
+                                    : <span className="badge-rejected">Abgelehnt</span>}
+                                </span>
+                              </div>
+                              {item.entry.aiReasoning && (
+                                <div>
+                                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">KI-Begründung: </span>
+                                  <span className="text-xs italic text-muted-foreground">{item.entry.aiReasoning}</span>
+                                </div>
+                              )}
+                              <div className="flex gap-2 mt-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs gap-1"
+                                  onClick={() => setDetailEntryId(item.entry.id)}
+                                >
+                                  <Search className="h-3 w-3" /> Buchungsdetail
+                                </Button>
+                                {item.entry.status === "pending" && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs gap-1"
+                                    onClick={() => setEditEntry(item.entry)}
+                                  >
+                                    <Edit2 className="h-3 w-3" /> Bearbeiten
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                );
+              })}
 
               {/* Closing balance row */}
-              {linesWithBalance.length > 0 && (
+              {filteredLines.length > 0 && !hasFilters && (
                 <tr className="total-row" style={{ fontWeight: 700, borderTop: "2px solid var(--border)" }}>
                   <td></td>
                   <td className="text-sm font-bold">Schlusssaldo</td>
@@ -215,6 +528,19 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
                   <td className={`text-right font-mono text-sm font-bold ${closingBalance >= 0 ? "" : "text-red-600"}`}>
                     {formatCHF(closingBalance)}
                   </td>
+                  <td></td>
+                </tr>
+              )}
+              {/* Filtered totals row */}
+              {hasFilters && filteredLines.length > 0 && (
+                <tr className="total-row" style={{ fontWeight: 700, borderTop: "2px solid var(--border)" }}>
+                  <td></td>
+                  <td className="text-sm font-bold">Filter-Total ({filteredLines.length} Buchungen)</td>
+                  <td></td>
+                  <td className="text-right font-mono text-sm font-bold">{formatCHF(filteredDebit)}</td>
+                  <td className="text-right font-mono text-sm font-bold">{formatCHF(filteredCredit)}</td>
+                  <td></td>
+                  <td></td>
                 </tr>
               )}
             </tbody>
@@ -228,6 +554,18 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
         open={detailEntryId !== null}
         onOpenChange={(open) => { if (!open) setDetailEntryId(null); }}
       />
+
+      {/* Edit Entry Dialog */}
+      {editEntry && (
+        <EditEntryDialog
+          entry={editEntry}
+          onClose={() => setEditEntry(null)}
+          onSaved={() => {
+            setEditEntry(null);
+            utils.accounts.getLedger.invalidate();
+          }}
+        />
+      )}
     </div>
   );
 }

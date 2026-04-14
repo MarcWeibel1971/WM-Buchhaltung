@@ -564,3 +564,7 @@
 - [x] Lohn Bug 2: Refresh/Sync findet März-Lohnzahlungen nicht – Regex für deutsche Umlaute (März) korrigiert, Banktransaktionen als zusätzliche Quelle
 - [x] Lohn Bug 3: Monatlich "Lohnausweis" → "Lohnabrechnung" umbenennen (Lohnausweis nur jährlich)
 - [x] Lohn Bug 4: Offizieller Lohnausweis als PDF nach Schweizer Formular 11 – exaktes Layout nachgebaut
+
+## Feature: Lohnausweis PDF – Originalformular als Hintergrund
+
+- [x] Lohnausweis PDF: Originales Formular 11 als AcroForm-Vorlage verwenden und Felder pixelgenau über Formularfelder befüllen (pdf-lib getForm/getTextField/setText/flatten)

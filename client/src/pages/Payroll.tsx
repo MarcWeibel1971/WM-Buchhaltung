@@ -813,6 +813,23 @@ function AnnualPayrollView({ year, employees, company, annualEmpId, setAnnualEmp
     { enabled: selectedEmpId !== null }
   );
 
+  const lohnausweisPdfMutation = trpc.payroll.generateLohnausweisPdf.useMutation({
+    onSuccess: (res) => {
+      const byteChars = atob(res.base64);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArr], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Lohnausweis PDF erstellt');
+    },
+    onError: (e: any) => toast.error(`Fehler: ${e.message}`),
+  });
+
   return (
     <div className="space-y-4">
       {/* Employee selector */}
@@ -835,8 +852,13 @@ function AnnualPayrollView({ year, employees, company, annualEmpId, setAnnualEmp
             <Button variant="outline" className="gap-2" onClick={() => generateJahreslohnausweis(summary, selectedEmp, company)}>
               <FileText className="h-4 w-4" /> Interner Lohnausweis
             </Button>
-            <Button variant="default" className="gap-2" onClick={() => generateOfficialLohnausweis(summary, selectedEmp, company)}>
-              <Award className="h-4 w-4" /> Offizieller Lohnausweis (Form. 11)
+            <Button variant="default" className="gap-2"
+              disabled={lohnausweisPdfMutation.isPending}
+              onClick={() => {
+                if (!selectedEmpId) return;
+                lohnausweisPdfMutation.mutate({ year, employeeId: selectedEmpId });
+              }}>
+              <Award className={`h-4 w-4 ${lohnausweisPdfMutation.isPending ? 'animate-spin' : ''}`} /> {lohnausweisPdfMutation.isPending ? 'Wird erstellt...' : 'Offizieller Lohnausweis (Form. 11)'}
             </Button>
           </div>
         )}

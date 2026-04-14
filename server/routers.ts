@@ -18,7 +18,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
@@ -2327,6 +2327,132 @@ const payrollRouter = router({
         bankAccountName: bankAccMap.get(tx.bankAccountId) ?? 'Unbekannt',
       }));
     }),
+
+  generateLohnausweisPdf: protectedProcedure
+    .input(z.object({ year: z.number(), employeeId: z.number() }))
+    .mutation(async ({ input }) => {
+      const { PDFDocument } = await import('pdf-lib');
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+
+      // Fetch employee
+      const [emp] = await db.select().from(employees).where(eq(employees.id, input.employeeId));
+      if (!emp) throw new TRPCError({ code: 'NOT_FOUND', message: 'Mitarbeiter nicht gefunden' });
+
+      // Fetch company settings
+      const [company] = await db.select().from(companySettings);
+
+      // Fetch payroll entries for the year
+      const rows = await db.select().from(payrollEntries)
+        .where(and(eq(payrollEntries.year, input.year), eq(payrollEntries.employeeId, input.employeeId)))
+        .orderBy(payrollEntries.month);
+
+      // Calculate totals
+      let totalGross = 0, totalAhvEmp = 0, totalBvgEmp = 0, totalNet = 0;
+      for (const r of rows) {
+        totalGross += parseFloat(r.grossSalary as string);
+        totalAhvEmp += parseFloat((r.ahvEmployee as string) ?? '0');
+        totalBvgEmp += parseFloat((r.bvgEmployee as string) ?? '0');
+        totalNet += parseFloat(r.netSalary as string);
+      }
+
+      // Download the official Lohnausweis Form 11 template PDF from CDN
+      // This is an AcroForm PDF with fillable fields
+      const templateUrl = 'https://d2xsxph8kpxj0f.cloudfront.net/114467201/g3uYPYRzWxJLqW5bmLAtac/WeibelMarcArlesheim,Lohnausweis2024_14cdeaee.pdf';
+      const templateBytes = await fetch(templateUrl).then(r => r.arrayBuffer());
+      const pdfDoc = await PDFDocument.load(templateBytes);
+
+      // Get the form and fill in all fields
+      const form = pdfDoc.getForm();
+
+      // Format CHF as whole francs (official form uses only whole amounts)
+      const chf = (v: number) => String(Math.round(v));
+
+      // Determine employment period
+      const startDate = emp.employmentStart ? new Date(emp.employmentStart) : new Date(input.year, 0, 1);
+      const endDate = emp.employmentEnd ? new Date(emp.employmentEnd) : new Date(input.year, 11, 31);
+      const von = `${String(startDate.getDate()).padStart(2,'0')}.${String(startDate.getMonth()+1).padStart(2,'0')}.${String(startDate.getFullYear()).slice(-2)}`;
+      const bis = `${String(endDate.getDate()).padStart(2,'0')}.${String(endDate.getMonth()+1).padStart(2,'0')}.${String(endDate.getFullYear()).slice(-2)}`;
+
+      // === FILL FORM FIELDS ===
+
+      // AHV-Nr (Neue AHV-Nr)
+      form.getTextField('C2').setText(emp.ahvNumber ?? '');
+
+      // Year
+      form.getTextField('D').setText(String(input.year));
+
+      // Employment period
+      form.getTextField('E-von').setText(von);
+      form.getTextField('E-bis').setText(bis);
+
+      // Employee name and address
+      const empName = `${emp.firstName ?? ''} ${emp.lastName ?? ''}`.trim();
+      form.getTextField('HAnrede').setText(empName);
+      form.getTextField('HName').setText(emp.street ?? '');
+      const empCity = [emp.zipCode, emp.city].filter(Boolean).join(' ');
+      form.getTextField('HAdresse').setText(empCity);
+      form.getTextField('HPostfach').setText('');
+
+      // Amount fields
+      // Ziffer 1: Lohn/Rente
+      form.getTextField('1').setText(chf(totalGross));
+      // Ziffer 8: Bruttolohn total
+      form.getTextField('8').setText(chf(totalGross));
+      // Ziffer 9: AHV/IV/EO/ALV/NBUV
+      form.getTextField('9').setText(chf(totalAhvEmp));
+      // Ziffer 10.1: BVG ordentliche Beiträge
+      form.getTextField('10-1').setText(chf(totalBvgEmp));
+      // Total Abzüge (Ziffer 9 + 10)
+      const totalDeductions = Math.round(totalAhvEmp) + Math.round(totalBvgEmp);
+      form.getTextField('abzuege').setText(String(totalDeductions));
+      // Ziffer 11: Nettolohn
+      form.getTextField('11').setText(chf(totalNet));
+
+      // Clear unused amount fields to ensure they're empty
+      const emptyFields = ['2-1', '2-2', '2-3-1', '2-3-2', '3-1', '3-2', '4-1', '4-2',
+        '5', '6', '7-1', '7-1-2', '10-2', '12',
+        '13-1-1-2', '13-1-2-1', '13-1-2-2', '13-2-1-2', '13-2-2-2',
+        '13-2-3-1', '13-2-3-2', '13-3', '14-1', '14-2'];
+      for (const fieldName of emptyFields) {
+        try { form.getTextField(fieldName).setText(''); } catch { /* field may not exist */ }
+      }
+
+      // Bemerkungen (Ziffer 15)
+      if (emp.lohnausweisRemarks) {
+        const lines = emp.lohnausweisRemarks.split('\n');
+        if (lines[0]) form.getTextField('15-1').setText(lines[0]);
+        if (lines[1]) form.getTextField('15-2').setText(lines[1]);
+      } else {
+        form.getTextField('15-1').setText('');
+        form.getTextField('15-2').setText('');
+      }
+
+      // Ort und Datum
+      const today = new Date();
+      const ortDatum = `${company?.city ?? 'Luzern'}, ${String(today.getDate()).padStart(2,'0')}.${String(today.getMonth()+1).padStart(2,'0')}.${String(today.getFullYear()).slice(-2)}`;
+      form.getTextField('OrtDatum').setText(ortDatum);
+
+      // Company info (Unterschrift)
+      form.getTextField('Unterschrift1.0').setText(company?.companyName ?? 'WM Weibel Mueller AG');
+      const contactName = process.env.OWNER_NAME ?? '';
+      form.getTextField('Unterschrift1.1').setText(contactName);
+      form.getTextField('Unterschrift1.2').setText(company?.street ?? '');
+      const companyCity = [company?.zipCode, company?.city].filter(Boolean).join(' ');
+      form.getTextField('Unterschrift1.3').setText(companyCity);
+      form.getTextField('Unterschrift1.4').setText(company?.phone ? `Tel. ${company.phone}` : '');
+
+      // Checkbox A: Lohnausweis (always checked)
+      form.getCheckBox('A').check();
+
+      // Flatten the form so it becomes a static PDF (non-editable)
+      form.flatten();
+
+      // Serialize the PDF
+      const pdfBytes = await pdfDoc.save();
+      const base64 = Buffer.from(pdfBytes).toString('base64');
+      return { base64, filename: `Lohnausweis_${emp.code}_${input.year}.pdf` };
+    }),
 });
 
 // ─── Reports Router ───────────────────────────────────────────────────────────
@@ -2366,8 +2492,7 @@ const vatRouter = router({
       const endDate = toDateStr(input.endDate) as string;
 
       // Get company settings to determine VAT method
-      const { companySettings: csTable } = await import("../drizzle/schema");
-      const [settings] = await db.select().from(csTable).limit(1);
+      const [settings] = await db.select().from(companySettings).limit(1);
       const vatMethod = settings?.vatMethod ?? "effective";
       const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
 

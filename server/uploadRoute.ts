@@ -69,7 +69,13 @@ uploadRouter.post("/document", upload.single("file"), async (req, res) => {
   "counterpartyIban": "IBAN oder null",
   "referenceNumber": "Referenznummer oder null",
   "description": "Kurzbeschreibung des Belegs (max 100 Zeichen)",
-  "documentType": "invoice_in" (Eingangsrechnung) | "invoice_out" (Ausgangsrechnung) | "receipt" | "other",
+  "documentType": Einer der folgenden Werte (WICHTIG – wähle den passendsten!):
+    - "invoice_in" = Eingangsrechnung (Rechnung von einem Lieferanten AN uns, z.B. Hostpoint, Gewerbe-Treuhand, Mobility, AXA, Velokurier etc.)
+    - "invoice_out" = Ausgangsrechnung (Rechnung VON uns an einen Kunden)
+    - "receipt" = Quittung/Kassenbeleg (Barbelege, Kassenbons)
+    - "bank_statement" = Kontoauszug/Kreditkartenabrechnung (VISA, Bankauszug, Kreditkartenabrechnung)
+    - "other" = nur wenn keiner der obigen Typen passt
+  Hinweis: Die meisten Belege in einer KMU-Buchhaltung sind Eingangsrechnungen ("invoice_in") oder Kreditkartenabrechnungen ("bank_statement").
   "suggestedAccount": "Kontonummer aus Schweizer KMU-Kontenrahmen oder null",
   "rawText": "Vollständiger extrahierter Text des Belegs"
 }
@@ -123,6 +129,20 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       console.warn("[Document] LLM extraction failed:", llmErr);
     }
 
+    // Determine document type: use explicit form value, or AI-detected type, or fallback to "other"
+    const VALID_DOC_TYPES = ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"];
+    let detectedDocType = "other";
+    if (documentType && VALID_DOC_TYPES.includes(documentType)) {
+      detectedDocType = documentType;
+    } else if (aiMetadata) {
+      try {
+        const parsed = JSON.parse(aiMetadata);
+        if (parsed.documentType && VALID_DOC_TYPES.includes(parsed.documentType)) {
+          detectedDocType = parsed.documentType;
+        }
+      } catch { /* ignore */ }
+    }
+
     // Save to database
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "Datenbank nicht verfügbar" });
@@ -133,7 +153,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       s3Url: url,
       mimeType: req.file.mimetype,
       fileSize: req.file.size,
-      documentType: (documentType as any) ?? "other",
+      documentType: detectedDocType as any,
       journalEntryId: journalEntryId ? parseInt(journalEntryId) : undefined,
       bankTransactionId: bankTransactionId ? parseInt(bankTransactionId) : undefined,
       extractedText,

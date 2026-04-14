@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Paperclip, Link2, Search } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -59,6 +59,10 @@ export default function BankImport() {
 
   // Invoice preview dialog state
   const [previewDoc, setPreviewDoc] = useState<any>(null);
+
+  // Manual match dialog state
+  const [matchDialogTxId, setMatchDialogTxId] = useState<number | null>(null);
+  const [matchSearch, setMatchSearch] = useState("");
 
   // Sort state for bank transactions table
   const [sortCol, setSortCol] = useState<string>("date");
@@ -239,6 +243,24 @@ export default function BankImport() {
       if (data.found === 0) toast.info("Keine neuen Kontoüberträge erkannt");
       else toast.success(`${data.found} Kontoüberträge erkannt und markiert`);
       refetchTxs();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  // Manual document matching
+  const { data: unmatchedDocs } = trpc.documents.listUnmatched.useQuery(
+    { search: matchSearch || undefined, limit: 50 },
+    { enabled: matchDialogTxId !== null }
+  );
+
+  const manualMatchMutation = trpc.documents.manualMatch.useMutation({
+    onSuccess: () => {
+      toast.success("Dokument manuell verknüpft");
+      setMatchDialogTxId(null);
+      setMatchSearch("");
+      refetchTxs();
+      utils.documents.list.invalidate();
+      utils.documents.listUnmatched.invalidate();
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -769,6 +791,12 @@ export default function BankImport() {
                               onClick={() => openEditDialog(tx)}>
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
+                            {!(tx as any).matchedDocumentId && (
+                              <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-blue-600" title="Dokument manuell verknüpfen"
+                                onClick={() => { setMatchDialogTxId(tx.id); setMatchSearch(""); }}>
+                                <Paperclip className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                             {isCC && !isTransfer && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-orange-600" title="Kreditkartenbeleg verbuchen"
                                 onClick={() => {
@@ -1204,6 +1232,85 @@ export default function BankImport() {
               </a>
             )}
             <Button variant="outline" onClick={() => setPreviewDoc(null)}>Schliessen</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Manual Document Match Dialog ─── */}
+      <Dialog open={matchDialogTxId !== null} onOpenChange={open => { if (!open) { setMatchDialogTxId(null); setMatchSearch(""); } }}>
+        <DialogContent className="w-[min(95vw,42rem)] max-w-none max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Paperclip className="h-5 w-5 text-blue-600" />
+              Dokument manuell verknüpfen
+            </DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const tx = transactions?.find((t: any) => t.id === matchDialogTxId);
+                if (!tx) return "Wählen Sie ein Dokument aus der Liste";
+                return `Transaktion: ${tx.counterparty ?? 'Unbekannt'} – CHF ${formatCHF(tx.amount)} vom ${tx.transactionDate ? new Date(tx.transactionDate as string).toLocaleDateString('de-CH') : '–'}`;
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 px-1">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Dokument suchen (Dateiname, Gegenpartei...)" 
+              value={matchSearch}
+              onChange={e => setMatchSearch(e.target.value)}
+              className="flex-1"
+            />
+          </div>
+          <div className="flex-1 overflow-y-auto min-h-0 space-y-2 pr-1">
+            {!unmatchedDocs?.length ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <FileText className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Keine unverknüpften Dokumente gefunden</p>
+              </div>
+            ) : (
+              unmatchedDocs.map((doc: any) => {
+                let meta: any = null;
+                try { if (doc.aiMetadata) meta = JSON.parse(doc.aiMetadata); } catch {}
+                const typeLabels: Record<string, string> = {
+                  invoice_in: "Eingangsrechnung",
+                  invoice_out: "Ausgangsrechnung",
+                  receipt: "Quittung",
+                  bank_statement: "Kontoauszug",
+                  other: "Sonstiges",
+                };
+                return (
+                  <div key={doc.id} className="flex items-start gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 cursor-pointer transition-colors"
+                    onClick={() => {
+                      if (matchDialogTxId && confirm(`"${doc.filename}" mit dieser Transaktion verknüpfen?`)) {
+                        manualMatchMutation.mutate({ documentId: doc.id, transactionId: matchDialogTxId });
+                      }
+                    }}>
+                    <div className="flex-shrink-0 w-10 h-10 rounded bg-red-50 dark:bg-red-950/30 flex items-center justify-center">
+                      <FileText className="h-5 w-5 text-red-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{doc.filename}</p>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground mt-0.5">
+                        <span className="inline-flex items-center gap-1">
+                          {typeLabels[doc.documentType] ?? doc.documentType}
+                        </span>
+                        {meta?.counterparty && <span>Gegenpartei: <span className="font-medium text-foreground">{meta.counterparty}</span></span>}
+                        {meta?.totalAmount != null && <span>CHF <span className="font-medium text-foreground font-mono">{formatCHF(Number(meta.totalAmount))}</span></span>}
+                        {meta?.documentDate && <span>{meta.documentDate}</span>}
+                      </div>
+                      {meta?.description && <p className="text-xs text-muted-foreground mt-0.5 truncate">{meta.description}</p>}
+                    </div>
+                    <Button size="sm" variant="outline" className="flex-shrink-0 h-8 px-3 text-xs gap-1 text-blue-600 border-blue-300 hover:bg-blue-50"
+                      disabled={manualMatchMutation.isPending}>
+                      <Link2 className="h-3 w-3" /> Verknüpfen
+                    </Button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setMatchDialogTxId(null); setMatchSearch(""); }}>Abbrechen</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

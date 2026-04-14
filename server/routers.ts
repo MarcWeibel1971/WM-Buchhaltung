@@ -2167,6 +2167,80 @@ const documentsRouter = router({
       const improvements = improveBookingSuggestionFromDocument(metadata, {});
       return { matched: true, document: doc, metadata, improvements };
     }),
+
+  // List unmatched documents for manual matching
+  listUnmatched: protectedProcedure
+    .input(z.object({
+      search: z.string().optional(),
+      limit: z.number().default(50),
+    }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { and, eq: eqOp, or, like, desc: descOp, isNull } = await import("drizzle-orm");
+      const conditions = [
+        or(
+          eqOp(docs.matchStatus, 'unmatched'),
+          isNull(docs.matchStatus),
+        ),
+      ];
+      if (input.search) {
+        const q = `%${input.search}%`;
+        conditions.push(
+          or(
+            like(docs.filename, q),
+            like(docs.aiMetadata, q),
+            like(docs.notes, q),
+          )!
+        );
+      }
+      const rows = await db.select().from(docs)
+        .where(and(...conditions))
+        .orderBy(descOp(docs.createdAt))
+        .limit(input.limit);
+      return rows;
+    }),
+
+  // Manual match: link a document to a bank transaction
+  manualMatch: protectedProcedure
+    .input(z.object({
+      documentId: z.number(),
+      transactionId: z.number(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs, bankTransactions: txns } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+
+      // Verify document exists
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+
+      // Verify transaction exists
+      const [tx] = await db.select().from(txns).where(eqOp(txns.id, input.transactionId));
+      if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Transaktion nicht gefunden" });
+
+      // Update document
+      await db.update(docs)
+        .set({
+          bankTransactionId: input.transactionId,
+          matchStatus: 'manual',
+          matchScore: 100,
+        })
+        .where(eqOp(docs.id, input.documentId));
+
+      // Update bank transaction
+      await db.update(txns)
+        .set({
+          matchedDocumentId: input.documentId,
+          matchScore: 100,
+        })
+        .where(eqOp(txns.id, input.transactionId));
+
+      return { success: true };
+    }),
 });
 
 // ─── App Router ───────────────────────────────────────────────────────────────

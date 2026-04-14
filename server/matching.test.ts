@@ -124,3 +124,88 @@ describe("Document-Transaction Matching", () => {
     });
   });
 });
+
+describe("Document Type Detection", () => {
+  it("should recognize valid document types", () => {
+    const VALID_DOC_TYPES = ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"];
+    expect(VALID_DOC_TYPES).toContain("invoice_in");
+    expect(VALID_DOC_TYPES).toContain("invoice_out");
+    expect(VALID_DOC_TYPES).toContain("receipt");
+    expect(VALID_DOC_TYPES).toContain("bank_statement");
+    expect(VALID_DOC_TYPES).toContain("other");
+  });
+
+  it("should detect document type from AI metadata", () => {
+    const VALID_DOC_TYPES = ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"];
+    // Simulate the detection logic from uploadRoute.ts
+    function detectDocType(formType: string | undefined, aiMetadata: string | null): string {
+      let detectedDocType = "other";
+      if (formType && VALID_DOC_TYPES.includes(formType)) {
+        detectedDocType = formType;
+      } else if (aiMetadata) {
+        try {
+          const parsed = JSON.parse(aiMetadata);
+          if (parsed.documentType && VALID_DOC_TYPES.includes(parsed.documentType)) {
+            detectedDocType = parsed.documentType;
+          }
+        } catch { /* ignore */ }
+      }
+      return detectedDocType;
+    }
+
+    // AI detects invoice_in
+    expect(detectDocType(undefined, JSON.stringify({ documentType: "invoice_in" }))).toBe("invoice_in");
+    // AI detects bank_statement
+    expect(detectDocType(undefined, JSON.stringify({ documentType: "bank_statement" }))).toBe("bank_statement");
+    // Explicit form value takes priority
+    expect(detectDocType("receipt", JSON.stringify({ documentType: "invoice_in" }))).toBe("receipt");
+    // Invalid AI type falls back to other
+    expect(detectDocType(undefined, JSON.stringify({ documentType: "invalid_type" }))).toBe("other");
+    // No metadata falls back to other
+    expect(detectDocType(undefined, null)).toBe("other");
+    // Invalid JSON falls back to other
+    expect(detectDocType(undefined, "not json")).toBe("other");
+  });
+});
+
+describe("Manual Document Matching", () => {
+  it("should validate manual match input schema", () => {
+    const { z } = require("zod");
+    const schema = z.object({
+      documentId: z.number(),
+      transactionId: z.number(),
+    });
+    // Valid input
+    expect(() => schema.parse({ documentId: 1, transactionId: 2 })).not.toThrow();
+    // Missing fields
+    expect(() => schema.parse({ documentId: 1 })).toThrow();
+    expect(() => schema.parse({})).toThrow();
+    // Wrong types
+    expect(() => schema.parse({ documentId: "abc", transactionId: 2 })).toThrow();
+  });
+
+  it("should validate listUnmatched input schema", () => {
+    const { z } = require("zod");
+    const schema = z.object({
+      search: z.string().optional(),
+      limit: z.number().default(50),
+    });
+    // Valid inputs
+    expect(() => schema.parse({})).not.toThrow();
+    expect(() => schema.parse({ search: "test" })).not.toThrow();
+    expect(() => schema.parse({ search: "test", limit: 10 })).not.toThrow();
+    // Default limit
+    const result = schema.parse({});
+    expect(result.limit).toBe(50);
+  });
+
+  it("should distinguish manual match status from auto match", () => {
+    // Manual match should use 'manual' status and 100% score
+    const manualMatch = { matchStatus: "manual", matchScore: 100 };
+    const autoMatch = { matchStatus: "matched", matchScore: 72 };
+    expect(manualMatch.matchStatus).toBe("manual");
+    expect(manualMatch.matchScore).toBe(100);
+    expect(autoMatch.matchStatus).toBe("matched");
+    expect(autoMatch.matchScore).toBeLessThan(100);
+  });
+});

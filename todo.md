@@ -454,3 +454,17 @@
 - [x] Frontend: Geschäftsjahr pro Dokument editierbar (Dropdown/Select)
 - [x] Frontend: Statistik-Karten nur für das gewählte GJ anzeigen
 - [x] Migration: Bestehende 13 Dokumente auf GJ 2026 migriert
+
+## Feature: Automatische Dokumententyp-Erkennung
+
+- [x] Backend: LLM-Prompt beim Upload anpassen, damit documentType korrekt erkannt wird (invoice_in, invoice_out, receipt, bank_statement, other)
+- [x] Backend: documentType aus KI-Analyse in DB speichern statt immer "other"
+- [x] Bestehende Dokumente nachträglich mit korrektem Typ aktualisieren (Migration)
+
+## Feature: Manuelles Dokument-Transaktions-Matching im Bankimport
+
+- [x] Backend: Neuer Endpunkt documents.manualMatch – Dokument manuell mit einer Banktransaktion verknüpfen
+- [x] Backend: Neuer Endpunkt documents.listUnmatched – Unverknüpfte Dokumente mit Suchfunktion auflisten
+- [x] Frontend Bankimport: Paperclip-Button pro Transaktion zum manuellen Verknüpfen
+- [x] Frontend Bankimport: Dialog mit Suchfeld und Liste unverknüpfter Dokumente (Typ, Gegenpartei, Betrag, Datum)
+- [x] Frontend Bankimport: Visuelles Feedback nach erfolgreichem manuellen Match (Toast + Refresh)

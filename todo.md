@@ -374,3 +374,8 @@
 
 - [x] Frontend: Bankimport – Sortierung für alle Spalten (Datum, Buchungstext, Lieferant, Soll-Konto, Haben-Konto, Betrag, Status)
 - [x] Frontend: Journal – Sortierung für alle Spalten (Nr, Datum, Typ, Beschreibung, Konto, Gegenkonto, Betrag, Quelle, Status)
+
+## Feature: Aufklappbare Banktransaktionen in Lohnbuchhaltung
+- [x] Backend: getTransactions Endpunkt – Banktransaktionen für Mitarbeiter/Monat abrufen (Suche über Buchungstext mit Mitarbeiter-Code)
+- [x] Frontend: Klickbare Lohnzeilen mit Chevron-Icon und aufklappbarem Bereich
+- [x] Frontend: Banktransaktionen-Tabelle (Datum, Beschreibung, Bankkonto, Betrag CHF, Status) mit Total-Zeile

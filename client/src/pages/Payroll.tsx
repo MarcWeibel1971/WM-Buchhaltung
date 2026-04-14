@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { Plus, Check, FileText, Users, CalendarDays, Award, RefreshCw, Calculator } from "lucide-react";
+import { Plus, Check, FileText, Users, CalendarDays, Award, RefreshCw, Calculator, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -519,11 +519,16 @@ export default function Payroll() {
   const { fiscalYear: year } = useFiscalYear();
   const [showCreate, setShowCreate] = useState(false);
   const [annualEmpId, setAnnualEmpId] = useState<number | null>(null);
+  const [expandedPayroll, setExpandedPayroll] = useState<{ employeeId: number; month: number } | null>(null);
 
   const { data: employees } = trpc.payroll.getEmployees.useQuery();
   const { data: payrollList, refetch } = trpc.payroll.list.useQuery({ year });
   const { data: insuranceSettings } = trpc.settings.getInsuranceSettings.useQuery();
   const { data: company } = trpc.settings.getCompanySettings.useQuery();
+  const { data: txnData, isLoading: txnLoading } = trpc.payroll.getTransactions.useQuery(
+    { employeeId: expandedPayroll?.employeeId!, year, month: expandedPayroll?.month! },
+    { enabled: expandedPayroll !== null }
+  );
   const utils = trpc.useUtils();
 
   const approveMutation = trpc.payroll.approve.useMutation({
@@ -630,42 +635,111 @@ export default function Payroll() {
                         Keine Lohnabrechnungen für {year}
                       </td>
                     </tr>
-                  ) : payrollList.map(({ payroll: p, employee: emp }) => (
-                    <tr key={p.id}>
-                      <td className="text-sm font-medium">{MONTHS[p.month - 1]}</td>
-                      <td className="text-sm">{emp.firstName} {emp.lastName} ({emp.code})</td>
-                      <td className="text-right font-mono text-sm">{formatCHF(p.grossSalary as string)}</td>
-                      <td className="text-right font-mono text-sm text-muted-foreground">
-                        {formatCHF((parseFloat(p.ahvEmployee as string) + parseFloat(p.ahvEmployer as string)).toFixed(2))}
-                      </td>
-                      <td className="text-right font-mono text-sm text-muted-foreground">
-                        {formatCHF((parseFloat(p.bvgEmployee as string) + parseFloat(p.bvgEmployer as string)).toFixed(2))}
-                      </td>
-                      <td className="text-right font-mono text-sm font-semibold">{formatCHF(p.netSalary as string)}</td>
-                      <td>
-                        {p.status === "draft"
-                          ? <span className="badge-pending">Entwurf</span>
-                          : <span className="badge-approved">Verbucht</span>}
-                      </td>
-                      <td className="text-right">
-                        {p.status === "draft" && (
-                          <Button size="sm" variant="default" className="h-7 text-xs gap-1"
-                            onClick={() => approveMutation.mutate({ payrollId: p.id })}>
-                            <Check className="h-3 w-3" /> Verbuchen
-                          </Button>
+                  ) : payrollList.map(({ payroll: p, employee: emp }) => {
+                    const isExpanded = expandedPayroll?.employeeId === p.employeeId && expandedPayroll?.month === p.month;
+                    return (
+                      <>
+                        <tr
+                          key={p.id}
+                          className={`cursor-pointer hover:bg-muted/20 ${isExpanded ? 'bg-muted/30' : ''}`}
+                          onClick={() => setExpandedPayroll(isExpanded ? null : { employeeId: p.employeeId, month: p.month })}
+                        >
+                          <td className="text-sm font-medium">
+                            <div className="flex items-center gap-1.5">
+                              {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                              {MONTHS[p.month - 1]}
+                            </div>
+                          </td>
+                          <td className="text-sm">{emp.firstName} {emp.lastName} ({emp.code})</td>
+                          <td className="text-right font-mono text-sm">{formatCHF(p.grossSalary as string)}</td>
+                          <td className="text-right font-mono text-sm text-muted-foreground">
+                            {formatCHF((parseFloat(p.ahvEmployee as string) + parseFloat(p.ahvEmployer as string)).toFixed(2))}
+                          </td>
+                          <td className="text-right font-mono text-sm text-muted-foreground">
+                            {formatCHF((parseFloat(p.bvgEmployee as string) + parseFloat(p.bvgEmployer as string)).toFixed(2))}
+                          </td>
+                          <td className="text-right font-mono text-sm font-semibold">{formatCHF(p.netSalary as string)}</td>
+                          <td>
+                            {p.status === "draft"
+                              ? <span className="badge-pending">Entwurf</span>
+                              : <span className="badge-approved">Verbucht</span>}
+                          </td>
+                          <td className="text-right" onClick={e => e.stopPropagation()}>
+                            {p.status === "draft" && (
+                              <Button size="sm" variant="default" className="h-7 text-xs gap-1"
+                                onClick={() => approveMutation.mutate({ payrollId: p.id })}>
+                                <Check className="h-3 w-3" /> Verbuchen
+                              </Button>
+                            )}
+                            {p.status === "approved" && (
+                              <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                                onClick={() => {
+                                  const empData = employees?.find(e => e.id === p.employeeId);
+                                  generateLohnausweis(p, empData, company);
+                                }}>
+                                <FileText className="h-3 w-3" /> Lohnausweis
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                        {/* Expanded bank transactions */}
+                        {isExpanded && (
+                          <tr key={`txn-${p.id}`}>
+                            <td colSpan={8} className="bg-muted/20 px-6 py-3">
+                              <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Banktransaktionen</div>
+                              {txnLoading ? (
+                                <div className="text-sm text-muted-foreground py-2">Lade Transaktionen...</div>
+                              ) : !txnData?.length ? (
+                                <div className="text-sm text-muted-foreground py-2">Keine Banktransaktionen für diesen Monat gefunden</div>
+                              ) : (
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="text-xs text-muted-foreground">
+                                      <th className="text-left pb-1 font-medium">Datum</th>
+                                      <th className="text-left pb-1 font-medium">Beschreibung</th>
+                                      <th className="text-left pb-1 font-medium">Bankkonto</th>
+                                      <th className="text-right pb-1 font-medium">Betrag CHF</th>
+                                      <th className="text-left pb-1 font-medium">Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {txnData.map(tx => (
+                                      <tr key={tx.id} className="border-t border-border/30">
+                                        <td className="py-1.5 font-mono text-xs">
+                                          {new Date(tx.transactionDate).toLocaleDateString('de-CH')}
+                                        </td>
+                                        <td className="py-1.5 text-xs">
+                                          {tx.suggestedBookingText || tx.description || '–'}
+                                        </td>
+                                        <td className="py-1.5 text-xs text-muted-foreground">
+                                          {tx.bankAccountName}
+                                        </td>
+                                        <td className={`py-1.5 text-right font-mono text-xs font-semibold ${parseFloat(tx.amount as string) < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                          {formatCHF(tx.amount as string)}
+                                        </td>
+                                        <td className="py-1.5 text-xs">
+                                          {tx.status === 'pending' ? <span className="badge-pending">Ausstehend</span>
+                                            : tx.status === 'matched' ? <span className="badge-approved">Verbucht</span>
+                                            : <span className="text-muted-foreground">{tx.status}</span>}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    <tr className="border-t-2 border-border/50">
+                                      <td colSpan={3} className="py-1.5 text-xs font-semibold">Total</td>
+                                      <td className="py-1.5 text-right font-mono text-xs font-bold">
+                                        {formatCHF(txnData.reduce((sum, tx) => sum + parseFloat(tx.amount as string), 0).toFixed(2))}
+                                      </td>
+                                      <td></td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              )}
+                            </td>
+                          </tr>
                         )}
-                        {p.status === "approved" && (
-                          <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
-                            onClick={() => {
-                              const empData = employees?.find(e => e.id === p.employeeId);
-                              generateLohnausweis(p, empData, company);
-                            }}>
-                            <FileText className="h-3 w-3" /> Lohnausweis
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                      </>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

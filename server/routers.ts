@@ -1853,6 +1853,72 @@ const payrollRouter = router({
 
       return { success: true, entryId };
     }),
+
+  // Get bank transactions linked to a payroll entry (by employee code + month/year)
+  getTransactions: publicProcedure
+    .input(z.object({ employeeId: z.number(), year: z.number(), month: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Get the employee
+      const [emp] = await db.select().from(employees).where(eq(employees.id, input.employeeId)).limit(1);
+      if (!emp) return [];
+
+      const empCode = emp.code?.toLowerCase() ?? '';
+
+      // Month names for matching
+      const MONTH_NAMES: Record<number, string[]> = {
+        1: ['januar', 'jan'], 2: ['februar', 'feb'], 3: ['märz', 'maerz', 'mar'],
+        4: ['april', 'apr'], 5: ['mai'], 6: ['juni', 'jun'],
+        7: ['juli', 'jul'], 8: ['august', 'aug'], 9: ['september', 'sep'],
+        10: ['oktober', 'okt'], 11: ['november', 'nov'], 12: ['dezember', 'dez'],
+      };
+      const monthNames = MONTH_NAMES[input.month] ?? [];
+
+      // Search bank transactions that match the employee and month
+      // Pattern: "Lohn {empCode} {monthName} {year}" in description or suggestedBookingText
+      const yearStart = `${input.year}-01-01`;
+      const yearEnd = `${input.year}-12-31`;
+      const allTxns = await db.select({
+        id: bankTransactions.id,
+        transactionDate: bankTransactions.transactionDate,
+        amount: bankTransactions.amount,
+        description: bankTransactions.description,
+        suggestedBookingText: bankTransactions.suggestedBookingText,
+        counterparty: bankTransactions.counterparty,
+        status: bankTransactions.status,
+        bankAccountId: bankTransactions.bankAccountId,
+      }).from(bankTransactions).where(
+        and(
+          sql`${bankTransactions.transactionDate} >= ${yearStart}`,
+          sql`${bankTransactions.transactionDate} <= ${yearEnd}`,
+          sql`(${bankTransactions.description} LIKE ${'%Lohn%'} OR ${bankTransactions.suggestedBookingText} LIKE ${'%Lohn%'})`
+        )
+      );
+
+      // Filter by employee code and month
+      const matched = allTxns.filter(tx => {
+        const text = ((tx.description ?? '') + ' ' + (tx.suggestedBookingText ?? '')).toLowerCase();
+        // Must contain employee code
+        if (!text.includes(empCode)) return false;
+        // Must contain month name
+        const hasMonth = monthNames.some(m => text.includes(m));
+        if (!hasMonth) return false;
+        // Must contain year
+        if (!text.includes(String(input.year))) return false;
+        return true;
+      });
+
+      // Enrich with bank account name
+      const bankAccs = await db.select().from(bankAccounts);
+      const bankAccMap = new Map(bankAccs.map(b => [b.id, b.name]));
+
+      return matched.map(tx => ({
+        ...tx,
+        bankAccountName: bankAccMap.get(tx.bankAccountId) ?? 'Unbekannt',
+      }));
+    }),
 });
 
 // ─── Reports Router ───────────────────────────────────────────────────────────

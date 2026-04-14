@@ -475,3 +475,10 @@
 - [x] Frontend Dokumente: Paperclip-Button bei offenen Dokumenten zum manuellen Verknüpfen mit einer Banktransaktion
 - [x] Frontend Dokumente: Dialog zur Auswahl einer ungematchten Banktransaktion (Datum, Buchungstext, Betrag, Bankkonto)
 - [x] Frontend Dokumente: Visuelles Feedback nach erfolgreichem Match (Toast + Status-Refresh)
+
+## Fix: Gewerbe-Treuhand Buchungstext mit Kundenname statt "Fremdhonorar"
+
+- [x] Buchungstext für Gewerbe-Treuhand soll "Gewerbe-Treuhand [Kundenname]" lauten statt "Fremdhonorar Gewerbe-Treuhand {period}"
+- [x] Kundenname aus der Bankbeschreibung oder dem gematchten Dokument extrahieren
+- [x] Booking Rule für Gewerbe-Treuhand anpassen
+- [x] Bestehende pending Transaktionen aktualisiert (3 mit Kundenname, 4 ohne weil kein Dokument gematcht)

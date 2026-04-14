@@ -541,7 +541,7 @@ Regeln:
 - Miete: Debit 4100, Credit ${ownAccountNumber}
 - Zinsen: Debit 4220, Credit ${ownAccountNumber}
 - Gewerbe-Treuhand AG: Debit 3000 (Fremdhonorar), NICHT 4740 – dies sind Fremdhonorare für ausgelagerte Buchhaltungsmandate
-- Gewerbe-Treuhand AG Buchungstext: 'Fremdhonorar Gewerbe-Treuhand – [Kundenname] [Periode]' (Kundenname aus Beschreibung/Referenz)`;
+- Gewerbe-Treuhand AG Buchungstext: 'Gewerbe-Treuhand [Kundenname]' (Kundenname aus Beschreibung/Referenz, KEIN 'Fremdhonorar' im Text, KEINE Periode)`;
 
           const response = await invokeLLM({
             messages: [{ role: "user", content: prompt }],
@@ -821,6 +821,7 @@ Regeln:
 - Aktueller Monat: ${month} ${year}, Quartal: ${quarter} ${year}
 - Bei Lohnzahlungen: "Lohn [Kürzel] [Monat] [Jahr]"
 - Bei Daueraufträgen/Abos: Lieferant + Periode
+- Bei Gewerbe-Treuhand AG: "Gewerbe-Treuhand [Kundenname]" (Kundenname aus Beschreibung/Referenz extrahieren, KEIN 'Fremdhonorar', KEINE Periode)
 - Kein "CHF", keine Beträge im Text
 
 Antworte NUR mit dem Buchungstext, nichts anderes.`
@@ -904,7 +905,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         if (matchedRule.bookingTextTemplate) {
           const dateStr = tx.transactionDate as string;
           const d = new Date(dateStr);
-          const monthNames = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+          const monthNames = ["Januar","Februar","M\u00e4rz","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
           const month = monthNames[d.getMonth()] ?? "";
           const year = d.getFullYear();
           const quarter = `${Math.ceil((d.getMonth() + 1) / 3)}. Quartal`;
@@ -912,9 +913,37 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
           // Replace date placeholders in template
           let text = matchedRule.bookingTextTemplate;
           // Detect month/year patterns and replace with transaction's month/year
-          text = text.replace(/(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+\d{4}/g, `${month} ${year}`);
+          text = text.replace(/(Januar|Februar|M\u00e4rz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+\d{4}/g, `${month} ${year}`);
           // Also handle quarter patterns
           text = text.replace(/\d+\.\s*Quartal\s+\d{4}/g, `${quarter} ${year}`);
+
+          // ── Special handling for Gewerbe-Treuhand: extract customer name from matched document ──
+          const cpLower = (tx.counterparty ?? "").toLowerCase();
+          if (cpLower.includes("gewerbe-treuhand") || cpLower.includes("gewerbe treuhand")) {
+            let customerName = "";
+            // Try to extract customer name from matched document
+            if (tx.matchedDocumentId) {
+              try {
+                const { documents: docsTbl } = await import("../drizzle/schema");
+                const [matchedDoc] = await db.select().from(docsTbl).where(eq(docsTbl.id, tx.matchedDocumentId)).limit(1);
+                if (matchedDoc) {
+                  // Try from filename: "Gewerbe-Treuhand RG722597 Manser Urs.pdf" -> "Manser Urs"
+                  const fnMatch = matchedDoc.filename.match(/Gewerbe[\-\s]?Treuhand\s+\S+\s+(.+?)\.(pdf|jpg|png)/i);
+                  if (fnMatch) customerName = fnMatch[1].trim();
+                  // Also try from AI metadata description
+                  if (!customerName && matchedDoc.aiMetadata) {
+                    try {
+                      const meta = JSON.parse(matchedDoc.aiMetadata);
+                      // e.g. "Finanzbuchhaltung 2024 und 2025 f\u00fcr Urs Manser"
+                      const descMatch = (meta.description ?? "").match(/f\u00fcr\s+(.+)/i);
+                      if (descMatch) customerName = descMatch[1].trim();
+                    } catch {}
+                  }
+                }
+              } catch {}
+            }
+            text = customerName ? `Gewerbe-Treuhand ${customerName}` : "Gewerbe-Treuhand";
+          }
 
           updateData.description = text;
           changed = true;

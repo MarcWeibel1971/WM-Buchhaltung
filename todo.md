@@ -782,3 +782,6 @@
 - [x] Frontend: Logo-Upload bei Unternehmensdaten (mit Vorschau, bereits vorhanden)
 - [x] Frontend: Neuer Unterbereich "Vorlagen" in Einstellungen
 - [x] Frontend: Vorlagen hochladen, anzeigen, löschen (Rechnungsvorlagen, Briefvorlagen)
+
+## UI Cleanup
+- [x] QR-Rechnung Tab aus Einstellungen-Sidebar entfernen

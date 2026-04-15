@@ -48,7 +48,6 @@ const TABS = [
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
   { id: "opening", label: "Eröffnungssalden", icon: Scale },
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
-  { id: "qrRechnung", label: "QR-Rechnung", icon: FileText },
   { id: "suppliers", label: "Lieferanten", icon: Truck },
   { id: "customers", label: "Kunden", icon: UserCheck },
   { id: "templates", label: "Vorlagen", icon: FileStack },

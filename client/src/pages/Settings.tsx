@@ -22,8 +22,8 @@ import {
   Building2, Users, Shield, Landmark, BookOpen, Scale, ListTree,
   Pencil, Trash2, Plus, Check, X, AlertTriangle, TrendingDown, Loader2,
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
-  QrCode, ShieldCheck, FileText, Download, UserX, ClipboardList,
-  ArrowUpDown, FileSpreadsheet, LayoutTemplate,
+  ShieldCheck, FileText, Download, UserX, ClipboardList,
+  ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
 } from "lucide-react";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -48,7 +48,9 @@ const TABS = [
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
   { id: "opening", label: "Eröffnungssalden", icon: Scale },
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
-  { id: "qrBill", label: "QR-Rechnung", icon: QrCode },
+  { id: "suppliers", label: "Lieferanten", icon: Truck },
+  { id: "customers", label: "Kunden", icon: UserCheck },
+  { id: "templates", label: "Vorlagen", icon: FileStack },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
 ] as const;
 
@@ -112,14 +114,78 @@ export default function Settings() {
         {activeTab === "rules" && <BookingRulesTab />}
         {activeTab === "opening" && <OpeningBalancesTab />}
         {activeTab === "depreciation" && <DepreciationTab />}
-        {activeTab === "qrBill" && <QrBillTab />}
+        {activeTab === "suppliers" && <SuppliersTab />}
+        {activeTab === "customers" && <CustomersTab />}
+        {activeTab === "templates" && <TemplatesTab />}
         {activeTab === "dsg" && <DsgTab />}
       </main>
     </div>
   );
 }
 
-// ─── Company Tab ──────────────────────────────────────────────────────────────
+// ─── Company Logo Upload ───────────────────────────────────────────────────────────
+
+function CompanyLogoUpload({ logoUrl, onUploaded }: { logoUrl: string | null; onUploaded: () => void }) {
+  const uploadMut = trpc.settings.uploadCompanyLogo.useMutation({
+    onSuccess: () => { toast.success("Logo hochgeladen"); onUploaded(); },
+    onError: (e) => toast.error(`Logo-Upload fehlgeschlagen: ${e.message}`),
+  });
+  const deleteMut = trpc.settings.deleteCompanyLogo.useMutation({
+    onSuccess: () => { toast.success("Logo entfernt"); onUploaded(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Bitte ein Bild auswählen (PNG, JPG, SVG)');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Datei zu gross (max. 5 MB)');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      uploadMut.mutate({ base64, filename: file.name, mimeType: file.type });
+    };
+    reader.readAsDataURL(file);
+    // Reset input so the same file can be re-selected
+    e.target.value = '';
+  };
+
+  return (
+    <div className="flex items-center gap-6">
+      <div className="w-40 h-20 border-2 border-dashed rounded-lg flex items-center justify-center bg-muted/30 overflow-hidden">
+        {logoUrl ? (
+          <img src={logoUrl} alt="Firmenlogo" className="max-w-full max-h-full object-contain p-2" />
+        ) : (
+          <span className="text-muted-foreground text-xs text-center px-2">Kein Logo</span>
+        )}
+      </div>
+      <div className="flex flex-col gap-2">
+        <label className="cursor-pointer">
+          <input type="file" accept="image/*" className="hidden" onChange={handleFileSelect} disabled={uploadMut.isPending} />
+          <Button variant="outline" size="sm" asChild disabled={uploadMut.isPending}>
+            <span>
+              {uploadMut.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+              {logoUrl ? 'Logo ändern' : 'Logo hochladen'}
+            </span>
+          </Button>
+        </label>
+        {logoUrl && (
+          <Button variant="ghost" size="sm" onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="text-destructive hover:text-destructive">
+            <Trash2 className="h-4 w-4 mr-2" /> Entfernen
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Company Tab ──────────────────────────────────────────────────────────────────
 
 function CompanyTab() {
   const { data, isLoading, refetch } = trpc.settings.getCompanySettings.useQuery();
@@ -205,6 +271,14 @@ function CompanyTab() {
           </div>
         )}
       </div>
+
+      {/* ── Company Logo ── */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Firmenlogo</CardTitle><CardDescription>Logo für Rechnungen und die Webseite</CardDescription></CardHeader>
+        <CardContent>
+          <CompanyLogoUpload logoUrl={(current as Record<string, unknown>).logoUrl as string | null} onUploaded={() => refetch()} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader><CardTitle className="text-base">Firmenangaben</CardTitle></CardHeader>
@@ -1068,11 +1142,56 @@ function BookingRulesTab() {
 
 // ─── Opening Balances Tab ─────────────────────────────────────────────────────
 
+// Sortable row for drag & drop in opening balances
+function SortableOBRow({ row, value, onChange }: {
+  row: { accountId: number; accountNumber: string; accountName: string; isActive: boolean };
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.accountId });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  return (
+    <tr ref={setNodeRef} style={style} className={`border-t border-border/40 hover:bg-muted/20 ${!row.isActive ? 'opacity-50' : ''}`}>
+      <td className="px-1 py-1.5 w-8">
+        <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground hover:text-foreground">
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      </td>
+      <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground w-20">{row.accountNumber}</td>
+      <td className="px-2 py-1.5 text-sm">
+        {row.accountName}
+        {!row.isActive && <Badge variant="outline" className="ml-2 text-[10px] py-0">inaktiv</Badge>}
+      </td>
+      <td className="px-2 py-1.5 text-right">
+        <Input
+          type="number"
+          step="0.01"
+          className="h-7 text-right font-mono text-sm w-36 ml-auto"
+          value={value}
+          placeholder="0.00"
+          onChange={e => onChange(e.target.value)}
+        />
+      </td>
+    </tr>
+  );
+}
+
 function OpeningBalancesTab() {
   const { fiscalYear } = useFiscalYear();
   const [editYear, setEditYear] = useState(fiscalYear);
   const [localBalances, setLocalBalances] = useState<Record<number, string>>({});
   const [isDirty, setIsDirty] = useState(false);
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [addNumber, setAddNumber] = useState("");
+  const [addName, setAddName] = useState("");
+  const [addType, setAddType] = useState<"asset" | "liability" | "equity">("asset");
+  const [addCategory, setAddCategory] = useState("");
+  const [localOrder, setLocalOrder] = useState<{ assets: number[]; liabilities: number[] }>({ assets: [], liabilities: [] });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
 
   const { data: rows, isLoading, refetch } = trpc.settings.getOpeningBalances.useQuery(
     { fiscalYear: editYear },
@@ -1085,55 +1204,58 @@ function OpeningBalancesTab() {
       setIsDirty(false);
       refetch();
     },
-    onError: (err) => {
-      toast.error(err.message);
+    onError: (err) => { toast.error(err.message); },
+  });
+
+  const createAccountMut = trpc.settings.createAccount.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Konto ${addNumber} erstellt und zum Kontenplan hinzugefügt`);
+      setShowAddAccount(false);
+      setAddNumber(""); setAddName(""); setAddType("asset"); setAddCategory("");
+      refetch();
     },
+    onError: (err) => { toast.error(err.message); },
   });
 
-  // Sync local state when data loads
-  useState(() => {
-    if (rows) {
-      const init: Record<number, string> = {};
-      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
-      setLocalBalances(init);
-    }
-  });
-
-  // Re-init when rows change (year switch)
+  // Re-init when rows change
   const prevYear = useRef(editYear);
   useEffect(() => {
-    if (rows && editYear !== prevYear.current) {
-      prevYear.current = editYear;
-      const init: Record<number, string> = {};
-      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
-      setLocalBalances(init);
-      setIsDirty(false);
-    } else if (rows && !isDirty) {
-      const init: Record<number, string> = {};
-      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
-      setLocalBalances(init);
+    if (rows) {
+      if (editYear !== prevYear.current || !isDirty) {
+        prevYear.current = editYear;
+        const init: Record<number, string> = {};
+        rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
+        setLocalBalances(init);
+        if (editYear !== prevYear.current) setIsDirty(false);
+      }
+      // Init local order
+      const assetIds = rows.filter(r => r.accountType === "asset").map(r => r.accountId);
+      const liabIds = rows.filter(r => r.accountType === "liability" || r.accountType === "equity").map(r => r.accountId);
+      setLocalOrder({ assets: assetIds, liabilities: liabIds });
     }
   }, [rows, editYear]);
 
   const getValue = (accountId: number) => localBalances[accountId] ?? "";
-
   const handleChange = (accountId: number, val: string) => {
     setLocalBalances(prev => ({ ...prev, [accountId]: val }));
     setIsDirty(true);
   };
 
-  // Compute totals
-  const assets = rows?.filter(r => r.accountType === "asset") ?? [];
-  const liabilities = rows?.filter(r => r.accountType === "liability" || r.accountType === "equity") ?? [];
+  // Ordered rows
+  const assetRows = useMemo(() => {
+    if (!rows) return [];
+    const assetMap = new Map(rows.filter(r => r.accountType === "asset").map(r => [r.accountId, r]));
+    return localOrder.assets.map(id => assetMap.get(id)).filter(Boolean) as NonNullable<typeof rows>;
+  }, [rows, localOrder.assets]);
 
-  const totalAssets = assets.reduce((sum, r) => {
-    const v = parseFloat(localBalances[r.accountId] || "0") || 0;
-    return sum + v;
-  }, 0);
-  const totalLiabilities = liabilities.reduce((sum, r) => {
-    const v = parseFloat(localBalances[r.accountId] || "0") || 0;
-    return sum + v;
-  }, 0);
+  const liabilityRows = useMemo(() => {
+    if (!rows) return [];
+    const liabMap = new Map(rows.filter(r => r.accountType === "liability" || r.accountType === "equity").map(r => [r.accountId, r]));
+    return localOrder.liabilities.map(id => liabMap.get(id)).filter(Boolean) as NonNullable<typeof rows>;
+  }, [rows, localOrder.liabilities]);
+
+  const totalAssets = assetRows.reduce((sum, r) => sum + (parseFloat(localBalances[r.accountId] || "0") || 0), 0);
+  const totalLiabilities = liabilityRows.reduce((sum, r) => sum + (parseFloat(localBalances[r.accountId] || "0") || 0), 0);
   const diff = Math.abs(totalAssets - totalLiabilities);
   const isBalanced = diff < 0.01;
 
@@ -1145,13 +1267,41 @@ function OpeningBalancesTab() {
     saveMut.mutate({ fiscalYear: editYear, balances });
   };
 
+  const handleAddAccount = () => {
+    if (!addNumber || !addName) { toast.error("Kontonummer und Name sind erforderlich"); return; }
+    const normalBalance = addType === "asset" ? "debit" as const : "credit" as const;
+    createAccountMut.mutate({
+      number: addNumber,
+      name: addName,
+      accountType: addType,
+      normalBalance,
+      category: addCategory || undefined,
+      isActive: true,
+      sortOrder: 0,
+    });
+  };
+
+  const handleDragEnd = (group: "assets" | "liabilities") => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setLocalOrder(prev => {
+      const list = [...prev[group]];
+      const oldIndex = list.indexOf(active.id as number);
+      const newIndex = list.indexOf(over.id as number);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      return { ...prev, [group]: arrayMove(list, oldIndex, newIndex) };
+    });
+    setIsDirty(true);
+  };
+
   const formatCHF = (n: number) =>
     new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 
   const renderAccountGroup = (
     title: string,
-    accounts: typeof rows,
-    total: number
+    groupRows: NonNullable<typeof rows>,
+    total: number,
+    group: "assets" | "liabilities"
   ) => (
     <div className="mb-6">
       <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
@@ -1161,33 +1311,31 @@ function OpeningBalancesTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-muted/50 text-xs font-semibold text-muted-foreground">
-              <th className="text-left px-3 py-2 w-20">Konto</th>
-              <th className="text-left px-3 py-2">Bezeichnung</th>
-              <th className="text-right px-3 py-2 w-40">Saldo CHF</th>
+              <th className="w-8"></th>
+              <th className="text-left px-2 py-2 w-20">Konto</th>
+              <th className="text-left px-2 py-2">Bezeichnung</th>
+              <th className="text-right px-2 py-2 w-40">Saldo CHF</th>
             </tr>
           </thead>
-          <tbody>
-            {accounts?.map(r => (
-              <tr key={r.accountId} className="border-t border-border/40 hover:bg-muted/20">
-                <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{r.accountNumber}</td>
-                <td className="px-3 py-1.5 text-sm">{r.accountName}</td>
-                <td className="px-3 py-1.5 text-right">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    className="h-7 text-right font-mono text-sm w-36 ml-auto"
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd(group)}>
+            <SortableContext items={groupRows.map(r => r.accountId)} strategy={verticalListSortingStrategy}>
+              <tbody>
+                {groupRows.map(r => (
+                  <SortableOBRow
+                    key={r.accountId}
+                    row={r}
                     value={getValue(r.accountId)}
-                    placeholder="0.00"
-                    onChange={e => handleChange(r.accountId, e.target.value)}
+                    onChange={(val) => handleChange(r.accountId, val)}
                   />
-                </td>
-              </tr>
-            ))}
-            <tr className="border-t-2 border-border bg-muted/30 font-semibold">
-              <td colSpan={2} className="px-3 py-2 text-sm">Total {title}</td>
-              <td className="px-3 py-2 text-right font-mono text-sm">{formatCHF(total)}</td>
-            </tr>
-          </tbody>
+                ))}
+                <tr className="border-t-2 border-border bg-muted/30 font-semibold">
+                  <td></td>
+                  <td colSpan={2} className="px-2 py-2 text-sm">Total {title}</td>
+                  <td className="px-2 py-2 text-right font-mono text-sm">{formatCHF(total)}</td>
+                </tr>
+              </tbody>
+            </SortableContext>
+          </DndContext>
         </table>
       </div>
     </div>
@@ -1200,20 +1348,31 @@ function OpeningBalancesTab() {
         <div>
           <h1 className="text-2xl font-bold">Eröffnungssalden</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Manuelle Erfassung der Eröffnungssalden für das erste Geschäftsjahr.
+            Manuelle Erfassung der Eröffnungssalden. Nur aktive Konten aus dem Kontenplan werden angezeigt.
             Aktiven müssen gleich Passiven sein.
           </p>
         </div>
-        <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
-          <SelectTrigger className="w-28">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {[2026, 2025, 2024, 2023].map(y => (
-              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setShowAddAccount(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Neues Konto
+          </Button>
+          <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[2026, 2025, 2024, 2023].map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Info box */}
+      <div className="flex items-start gap-2 p-3 rounded-lg mb-4 text-xs bg-blue-50 border border-blue-200 text-blue-800">
+        <GripVertical className="h-4 w-4 shrink-0 mt-0.5" />
+        <span>Konten per Drag & Drop umsortieren. Neue Konten werden automatisch im Kontenplan erstellt. Inaktive Konten im Kontenplan werden hier ausgeblendet.</span>
       </div>
 
       {/* Balance indicator */}
@@ -1241,8 +1400,8 @@ function OpeningBalancesTab() {
         </div>
       ) : (
         <>
-          {renderAccountGroup("Aktiven", assets, totalAssets)}
-          {renderAccountGroup("Passiven (Fremdkapital & Eigenkapital)", liabilities, totalLiabilities)}
+          {renderAccountGroup("Aktiven", assetRows, totalAssets, "assets")}
+          {renderAccountGroup("Passiven (Fremdkapital & Eigenkapital)", liabilityRows, totalLiabilities, "liabilities")}
 
           {/* Save button */}
           <div className="flex items-center justify-between pt-2">
@@ -1259,6 +1418,53 @@ function OpeningBalancesTab() {
           </div>
         </>
       )}
+
+      {/* Add Account Dialog */}
+      <Dialog open={showAddAccount} onOpenChange={setShowAddAccount}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Neues Konto erstellen</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-xs text-muted-foreground">
+              Das Konto wird sowohl hier in den Eröffnungssalden als auch im Kontenplan erstellt.
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Kontonummer</Label>
+                <Input value={addNumber} onChange={e => setAddNumber(e.target.value)} placeholder="z.B. 1099" />
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs">Bezeichnung</Label>
+                <Input value={addName} onChange={e => setAddName(e.target.value)} placeholder="z.B. Bankkonto ZKB" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Kontotyp</Label>
+                <Select value={addType} onValueChange={v => setAddType(v as any)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="asset">Aktiven</SelectItem>
+                    <SelectItem value="liability">Fremdkapital</SelectItem>
+                    <SelectItem value="equity">Eigenkapital</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Kategorie (optional)</Label>
+                <Input value={addCategory} onChange={e => setAddCategory(e.target.value)} placeholder="z.B. Flüssige Mittel" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddAccount(false)}>Abbrechen</Button>
+            <Button onClick={handleAddAccount} disabled={createAccountMut.isPending}>
+              {createAccountMut.isPending ? "Erstellen..." : "Erstellen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1661,12 +1867,31 @@ function buildTree(accounts: AccountRow[]): TreeCategory[] {
 
 function ChartOfAccountsTab() {
   const { data: allAccounts, isLoading, refetch } = trpc.settings.getAllAccounts.useQuery();
+  const utils = trpc.useUtils();
   const updateMut = trpc.settings.updateAccount.useMutation({
-    onSuccess: () => { refetch(); },
+    onSuccess: (data) => {
+      refetch();
+      if (data.bankAccountCreated) {
+        toast.success("Bankkonto automatisch in Bankkonten erstellt");
+        utils.settings.getBankAccounts.invalidate();
+      } else if (data.bankAccountRemoved) {
+        toast.info("Bankkonto-Eintrag entfernt");
+        utils.settings.getBankAccounts.invalidate();
+      } else if (data.bankAccountKept) {
+        toast.warning(data.reason || "Bankkonto hat Transaktionen und wurde beibehalten");
+      }
+    },
     onError: (e) => toast.error(e.message),
   });
   const createMut = trpc.settings.createAccount.useMutation({
-    onSuccess: () => { toast.success("Konto erstellt"); refetch(); setShowAdd(false); resetAddForm(); },
+    onSuccess: (data) => {
+      toast.success("Konto erstellt");
+      if (data.bankAccountCreated) {
+        toast.success("Bankkonto automatisch in Bankkonten erstellt");
+        utils.settings.getBankAccounts.invalidate();
+      }
+      refetch(); setShowAdd(false); resetAddForm();
+    },
     onError: (e) => toast.error(e.message),
   });
   const deleteMut = trpc.settings.deleteAccount.useMutation({
@@ -1722,10 +1947,11 @@ function ChartOfAccountsTab() {
   const [addType, setAddType] = useState<string>("expense");
   const [addCategory, setAddCategory] = useState("");
   const [addSubCategory, setAddSubCategory] = useState("");
+  const [addIsBankAccount, setAddIsBankAccount] = useState(false);
 
   const resetAddForm = () => {
     setAddNumber(""); setAddName(""); setAddType("expense");
-    setAddCategory(""); setAddSubCategory("");
+    setAddCategory(""); setAddSubCategory(""); setAddIsBankAccount(false);
   };
 
   const tree = useMemo(() => {
@@ -1801,6 +2027,7 @@ function ChartOfAccountsTab() {
       normalBalance,
       category: addCategory || undefined,
       subCategory: addSubCategory || undefined,
+      isBankAccount: addIsBankAccount,
     });
   };
 
@@ -1891,6 +2118,13 @@ function ChartOfAccountsTab() {
                 <Label>Unterkategorie</Label>
                 <Input value={addSubCategory} onChange={e => setAddSubCategory(e.target.value)} placeholder="z.B. Fachliteratur" />
               </div>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Switch
+                checked={addIsBankAccount}
+                onCheckedChange={setAddIsBankAccount}
+              />
+              <Label className="text-sm">Bankkonto (erstellt automatisch Eintrag unter Bankkonten)</Label>
             </div>
           </div>
           <DialogFooter>
@@ -1988,6 +2222,13 @@ function ChartOfAccountsTab() {
                             <Badge variant="outline" className="text-xs shrink-0">
                               {ACCOUNT_TYPE_LABELS[acc.accountType] || acc.accountType}
                             </Badge>
+
+                            {/* Bank account indicator */}
+                            {acc.isBankAccount && (
+                              <Badge variant="secondary" className="text-xs shrink-0 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                Bank
+                              </Badge>
+                            )}
 
                             {/* VAT toggle */}
                             <div className="flex items-center gap-1 shrink-0">
@@ -2285,123 +2526,6 @@ function SortableAccountList({ accounts, dragEnabled, onDragEnd, children }: {
   );
 }
 
-
-// ─── QR-Rechnung Tab ─────────────────────────────────────────────────────────
-
-function QrBillTab() {
-  const { data: qrData, isLoading } = trpc.qrBill.getQrSettings.useQuery();
-  const saveMut = trpc.qrBill.saveQrSettings.useMutation({
-    onSuccess: () => { toast.success("QR-Rechnungs-Einstellungen gespeichert"); utils.qrBill.getQrSettings.invalidate(); },
-    onError: (e) => toast.error(e.message),
-  });
-  const utils = trpc.useUtils();
-
-  const [iban, setIban] = useReactState("");
-  const [refType, setRefType] = useReactState<"QRR" | "SCOR" | "NON">("QRR");
-  const [currency, setCurrency] = useReactState<"CHF" | "EUR">("CHF");
-  const [additionalInfo, setAdditionalInfo] = useReactState("");
-  const [initialized, setInitialized] = useReactState(false);
-
-  // Initialize form from loaded data
-  if (qrData && !initialized) {
-    setIban(qrData.iban ?? "");
-    setRefType(qrData.referenceType as "QRR" | "SCOR" | "NON");
-    setCurrency(qrData.currency as "CHF" | "EUR");
-    setAdditionalInfo(qrData.additionalInfo ?? "");
-    setInitialized(true);
-  }
-
-  const handleSave = () => {
-    if (!iban.trim()) { toast.error("IBAN ist erforderlich"); return; }
-    saveMut.mutate({ iban: iban.trim(), referenceType: refType, currency, additionalInfo: additionalInfo || undefined });
-  };
-
-  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>;
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold">QR-Rechnung Einstellungen</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Konfigurieren Sie die IBAN und Referenzart für die Generierung von Swiss QR-Rechnungen (Formular mit QR-Zahlungsteil).
-        </p>
-      </div>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Zahlungsempfänger (Creditor)</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <Label>IBAN *</Label>
-              <Input
-                value={iban}
-                onChange={e => setIban(e.target.value)}
-                placeholder="CH44 3199 9123 0008 8901 2"
-                className="font-mono"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Für QR-Referenz (QRR) wird eine QR-IBAN benötigt. Für SCOR oder ohne Referenz eine normale IBAN.
-              </p>
-            </div>
-            <div>
-              <Label>Referenztyp</Label>
-              <Select value={refType} onValueChange={(v) => setRefType(v as any)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="QRR">QR-Referenz (QRR)</SelectItem>
-                  <SelectItem value="SCOR">Structured Creditor Reference (SCOR)</SelectItem>
-                  <SelectItem value="NON">Ohne Referenz</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Währung</Label>
-              <Select value={currency} onValueChange={(v) => setCurrency(v as any)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CHF">CHF</SelectItem>
-                  <SelectItem value="EUR">EUR</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-2">
-              <Label>Zusätzliche Informationen (optional)</Label>
-              <Input
-                value={additionalInfo}
-                onChange={e => setAdditionalInfo(e.target.value)}
-                placeholder="z.B. Rechnungsnummer oder Mitteilung"
-                maxLength={140}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end pt-2">
-            <Button onClick={handleSave} disabled={saveMut.isPending}>
-              {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Speichern
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Hinweise</CardTitle></CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-          <p>
-            Die QR-Rechnung ist seit dem 1. Oktober 2022 der offizielle Zahlungsstandard in der Schweiz.
-            Sie ersetzt die alten Einzahlungsscheine (ESR/ES).
-          </p>
-          <p>
-            <strong>QR-IBAN:</strong> Beginnt mit CH oder LI, die Bankenclearing-Nummer (Position 5–9) liegt im Bereich 30000–31999.
-            Fragen Sie Ihre Bank nach Ihrer QR-IBAN.
-          </p>
-          <p>
-            <strong>Referenztypen:</strong> QRR (26+1 Stellen, automatisch generiert), SCOR (ISO 11649), oder ohne Referenz.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 // ─── DSG (Datenschutz) Tab ───────────────────────────────────────────────────
 
@@ -2785,6 +2909,1084 @@ function PrivacySection() {
           </p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+
+// ─── Suppliers (Lieferanten) Tab ─────────────────────────────────────────────
+
+function SuppliersTab() {
+  const [search, setSearch] = useReactState("");
+  const [showInactive, setShowInactive] = useReactState(false);
+  const [showDialog, setShowDialog] = useReactState(false);
+  const [editSupplier, setEditSupplier] = useReactState<any>(null);
+  const [showImportDialog, setShowImportDialog] = useReactState(false);
+  const [importPreview, setImportPreview] = useReactState<Array<{name:string;street?:string;zipCode?:string;city?:string;country?:string;iban?:string;bic?:string;paymentTermDays?:number;contactPerson?:string;email?:string;phone?:string;notes?:string}>>([]);
+
+  // Form state
+  const [formName, setFormName] = useReactState("");
+  const [formStreet, setFormStreet] = useReactState("");
+  const [formZip, setFormZip] = useReactState("");
+  const [formCity, setFormCity] = useReactState("");
+  const [formCountry, setFormCountry] = useReactState("Schweiz");
+  const [formIban, setFormIban] = useReactState("");
+  const [formBic, setFormBic] = useReactState("");
+  const [formPaymentDays, setFormPaymentDays] = useReactState("30");
+  const [formContact, setFormContact] = useReactState("");
+  const [formEmail, setFormEmail] = useReactState("");
+  const [formPhone, setFormPhone] = useReactState("");
+  const [formNotes, setFormNotes] = useReactState("");
+  const [formAccountId, setFormAccountId] = useReactState<string>("");
+  const [formMatchPattern, setFormMatchPattern] = useReactState("");
+
+  const { data: suppliersList, refetch } = trpc.suppliers.list.useQuery({
+    includeInactive: showInactive,
+    search: search || undefined,
+  });
+  const { data: accountsList } = trpc.accounts.list.useQuery();
+  const expenseAccounts = useMemo(() =>
+    (accountsList ?? []).filter(a => a.accountType === "expense" && a.isActive).sort((a, b) => a.number.localeCompare(b.number)),
+    [accountsList]
+  );
+
+  const createMut = trpc.suppliers.create.useMutation({
+    onSuccess: () => { toast.success("Lieferant erstellt"); refetch(); setShowDialog(false); resetForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateMut = trpc.suppliers.update.useMutation({
+    onSuccess: () => { toast.success("Lieferant aktualisiert"); refetch(); setShowDialog(false); resetForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMut = trpc.suppliers.delete.useMutation({
+    onSuccess: () => { toast.success("Lieferant deaktiviert"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const importFromDocsMut = trpc.suppliers.importFromDocuments.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import: ${data.created} erstellt, ${data.linked} verknüpft, ${data.skipped} übersprungen`);
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const importFromListMut = trpc.suppliers.importFromList.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import: ${data.created} erstellt, ${data.skipped} übersprungen`);
+      refetch();
+      setShowImportDialog(false);
+      setImportPreview([]);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function resetForm() {
+    setFormName(""); setFormStreet(""); setFormZip(""); setFormCity("");
+    setFormCountry("Schweiz"); setFormIban(""); setFormBic("");
+    setFormPaymentDays("30"); setFormContact(""); setFormEmail("");
+    setFormPhone(""); setFormNotes(""); setFormAccountId(""); setFormMatchPattern("");
+    setEditSupplier(null);
+  }
+
+  function openCreate() {
+    resetForm();
+    setShowDialog(true);
+  }
+
+  function openEdit(s: any) {
+    setEditSupplier(s);
+    setFormName(s.name || "");
+    setFormStreet(s.street || "");
+    setFormZip(s.zipCode || "");
+    setFormCity(s.city || "");
+    setFormCountry(s.country || "Schweiz");
+    setFormIban(s.iban || "");
+    setFormBic(s.bic || "");
+    setFormPaymentDays(String(s.paymentTermDays ?? 30));
+    setFormContact(s.contactPerson || "");
+    setFormEmail(s.email || "");
+    setFormPhone(s.phone || "");
+    setFormNotes(s.notes || "");
+    setFormAccountId(s.defaultDebitAccountId ? String(s.defaultDebitAccountId) : "");
+    setFormMatchPattern(s.matchPattern || "");
+    setShowDialog(true);
+  }
+
+  function handleSave() {
+    if (!formName.trim()) { toast.error("Name ist erforderlich"); return; }
+    const data = {
+      name: formName.trim(),
+      street: formStreet || undefined,
+      zipCode: formZip || undefined,
+      city: formCity || undefined,
+      country: formCountry || undefined,
+      iban: formIban || undefined,
+      bic: formBic || undefined,
+      paymentTermDays: parseInt(formPaymentDays) || 30,
+      contactPerson: formContact || undefined,
+      email: formEmail || undefined,
+      phone: formPhone || undefined,
+      notes: formNotes || undefined,
+      defaultDebitAccountId: formAccountId ? parseInt(formAccountId) : undefined,
+      matchPattern: formMatchPattern || undefined,
+    };
+    if (editSupplier) {
+      updateMut.mutate({ id: editSupplier.id, ...data });
+    } else {
+      createMut.mutate(data);
+    }
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+      const parsed = rows.map((r: Record<string, any>) => {
+        const name = String(r["Name"] ?? r["Firma"] ?? r["Lieferant"] ?? r["name"] ?? r["company"] ?? "").trim();
+        const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
+        const zipCode = String(r["PLZ"] ?? r["Postleitzahl"] ?? r["zipCode"] ?? r["zip"] ?? "").trim() || undefined;
+        const city = String(r["Ort"] ?? r["Stadt"] ?? r["city"] ?? "").trim() || undefined;
+        const country = String(r["Land"] ?? r["country"] ?? "").trim() || undefined;
+        const iban = String(r["IBAN"] ?? r["iban"] ?? "").trim() || undefined;
+        const bic = String(r["BIC"] ?? r["SWIFT"] ?? r["bic"] ?? "").trim() || undefined;
+        const paymentTermDays = parseInt(String(r["Zahlungsfrist"] ?? r["paymentTermDays"] ?? r["Tage"] ?? "")) || undefined;
+        const contactPerson = String(r["Kontakt"] ?? r["Kontaktperson"] ?? r["contactPerson"] ?? "").trim() || undefined;
+        const email = String(r["E-Mail"] ?? r["Email"] ?? r["email"] ?? "").trim() || undefined;
+        const phone = String(r["Telefon"] ?? r["Tel"] ?? r["phone"] ?? "").trim() || undefined;
+        const notes = String(r["Notizen"] ?? r["Bemerkung"] ?? r["notes"] ?? "").trim() || undefined;
+        return { name, street, zipCode, city, country, iban, bic, paymentTermDays, contactPerson, email, phone, notes };
+      }).filter(s => s.name.length > 0);
+      setImportPreview(parsed);
+      toast.success(`${parsed.length} Lieferanten aus Datei gelesen`);
+    } catch (err) {
+      toast.error("Fehler beim Lesen der Datei");
+    }
+    e.target.value = "";
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Lieferanten-Stammdaten</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Lieferanten mit IBAN, Zahlungsfristen und Kontaktdaten für ISO 20022 Zahlungen
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => importFromDocsMut.mutate()} disabled={importFromDocsMut.isPending}>
+            {importFromDocsMut.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+            Aus Rechnungen
+          </Button>
+          <Button variant="outline" onClick={() => { setShowImportDialog(true); setImportPreview([]); }}>
+            <Upload className="h-4 w-4 mr-2" /> CSV/Excel Import
+          </Button>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" /> Neuer Lieferant
+          </Button>
+        </div>
+      </div>
+
+      {/* Import from documents result */}
+      {importFromDocsMut.data && (
+        <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2 text-sm">
+              <Check className="h-4 w-4 text-green-600" />
+              <span className="font-medium">Rechnungs-Import abgeschlossen:</span>
+              <span>{importFromDocsMut.data.created} neu erstellt, {importFromDocsMut.data.linked} verknüpft, {importFromDocsMut.data.skipped} übersprungen</span>
+              <span className="text-muted-foreground">({importFromDocsMut.data.total} Rechnungen geprüft)</span>
+            </div>
+            {importFromDocsMut.data.details.length > 0 && (
+              <div className="mt-2 max-h-32 overflow-y-auto">
+                {importFromDocsMut.data.details.map((d, i) => (
+                  <div key={i} className="text-xs text-muted-foreground">
+                    {d.supplierName} – {d.action}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="flex items-center gap-4">
+        <Input
+          placeholder="Suche nach Name, Ort oder IBAN..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="max-w-sm"
+        />
+        <div className="flex items-center gap-2">
+          <Switch checked={showInactive} onCheckedChange={setShowInactive} />
+          <Label className="text-sm text-muted-foreground">Inaktive anzeigen</Label>
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Adresse</TableHead>
+                <TableHead>IBAN</TableHead>
+                <TableHead>Zahlungsfrist</TableHead>
+                <TableHead>Aufwandkonto</TableHead>
+                <TableHead>Kontakt</TableHead>
+                <TableHead className="w-[100px]">Aktionen</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(!suppliersList || suppliersList.length === 0) ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    Keine Lieferanten erfasst
+                  </TableCell>
+                </TableRow>
+              ) : suppliersList.map(s => (
+                <TableRow key={s.id} className={!s.isActive ? "opacity-50" : ""}>
+                  <TableCell className="font-medium">
+                    {s.name}
+                    {!s.isActive && <Badge variant="secondary" className="ml-2 text-xs">Inaktiv</Badge>}
+                    {s.notes === "Automatisch aus Rechnung erstellt" && <Badge variant="outline" className="ml-2 text-xs text-blue-600 border-blue-300">Auto</Badge>}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {[s.street, [s.zipCode, s.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                  </TableCell>
+                  <TableCell className="text-sm font-mono">
+                    {s.iban ? s.iban.replace(/(.{4})/g, "$1 ").trim() : <span className="text-orange-500 text-xs">Keine IBAN</span>}
+                  </TableCell>
+                  <TableCell className="text-sm">{s.paymentTermDays} Tage</TableCell>
+                  <TableCell className="text-sm">
+                    {(s as any).defaultDebitAccount
+                      ? `${(s as any).defaultDebitAccount.number} ${(s as any).defaultDebitAccount.name}`
+                      : <span className="text-muted-foreground">–</span>}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {s.contactPerson || s.email || s.phone || "–"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(s)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      {s.isActive && (
+                        <Button size="icon" variant="ghost" className="text-destructive" onClick={() => {
+                          if (confirm(`Lieferant "${s.name}" wirklich deaktivieren?`)) {
+                            deleteMut.mutate({ id: s.id });
+                          }
+                        }}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* Create/Edit Dialog */}
+      <Dialog open={showDialog} onOpenChange={(open) => { if (!open) { setShowDialog(false); resetForm(); } }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editSupplier ? "Lieferant bearbeiten" : "Neuer Lieferant"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Name *</Label>
+                <Input value={formName} onChange={e => setFormName(e.target.value)} placeholder="z.B. AXA Versicherungen AG" />
+              </div>
+              <div>
+                <Label>Kontaktperson</Label>
+                <Input value={formContact} onChange={e => setFormContact(e.target.value)} placeholder="Max Mustermann" />
+              </div>
+            </div>
+            <div>
+              <Label>Strasse</Label>
+              <Input value={formStreet} onChange={e => setFormStreet(e.target.value)} placeholder="Musterstrasse 1" />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>PLZ</Label>
+                <Input value={formZip} onChange={e => setFormZip(e.target.value)} placeholder="6000" />
+              </div>
+              <div>
+                <Label>Ort</Label>
+                <Input value={formCity} onChange={e => setFormCity(e.target.value)} placeholder="Luzern" />
+              </div>
+              <div>
+                <Label>Land</Label>
+                <Input value={formCountry} onChange={e => setFormCountry(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>IBAN</Label>
+                <Input value={formIban} onChange={e => setFormIban(e.target.value)} placeholder="CH93 0076 2011 6238 5295 7" className="font-mono" />
+              </div>
+              <div>
+                <Label>BIC / SWIFT</Label>
+                <Input value={formBic} onChange={e => setFormBic(e.target.value)} placeholder="UBSWCHZH80A" className="font-mono" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>E-Mail</Label>
+                <Input value={formEmail} onChange={e => setFormEmail(e.target.value)} type="email" placeholder="info@lieferant.ch" />
+              </div>
+              <div>
+                <Label>Telefon</Label>
+                <Input value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="+41 41 000 00 00" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Zahlungsfrist (Tage)</Label>
+                <Input value={formPaymentDays} onChange={e => setFormPaymentDays(e.target.value)} type="number" />
+              </div>
+              <div>
+                <Label>Standard-Aufwandkonto</Label>
+                <Select value={formAccountId} onValueChange={setFormAccountId}>
+                  <SelectTrigger><SelectValue placeholder="Konto wählen" /></SelectTrigger>
+                  <SelectContent>
+                    {expenseAccounts.map(a => (
+                      <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label>Match-Pattern (für Bankimport)</Label>
+              <Input value={formMatchPattern} onChange={e => setFormMatchPattern(e.target.value)} placeholder="z.B. AXA, Mobility, Swisscom" />
+              <p className="text-xs text-muted-foreground mt-1">
+                Komma-getrennte Begriffe, die in Bankimport-Transaktionen automatisch diesem Lieferanten zugeordnet werden.
+              </p>
+            </div>
+            <div>
+              <Label>Notizen</Label>
+              <Textarea value={formNotes} onChange={e => setFormNotes(e.target.value)} rows={3} placeholder="Interne Notizen..." />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDialog(false); resetForm(); }}>Abbrechen</Button>
+            <Button onClick={handleSave} disabled={createMut.isPending || updateMut.isPending}>
+              {(createMut.isPending || updateMut.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {editSupplier ? "Speichern" : "Erstellen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CSV/Excel Import Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Lieferanten importieren (CSV/Excel)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Laden Sie eine Excel- oder CSV-Datei hoch. Unterstützte Spalten:
+              <strong> Name/Firma/Lieferant</strong>, Strasse/Adresse, PLZ, Ort/Stadt, Land, IBAN, BIC/SWIFT, Zahlungsfrist, Kontakt/Kontaktperson, E-Mail/Email, Telefon/Tel, Notizen/Bemerkung.
+              Duplikate (gleicher Name oder IBAN) werden automatisch übersprungen.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                id="supplier-import-file"
+                onChange={handleImportFile}
+              />
+              <Button variant="outline" asChild>
+                <label htmlFor="supplier-import-file" className="cursor-pointer">
+                  <Upload className="h-4 w-4 mr-2" /> Datei wählen
+                </label>
+              </Button>
+            </div>
+            {importPreview.length > 0 && (
+              <div className="border rounded-lg max-h-64 overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Adresse</TableHead>
+                      <TableHead>IBAN</TableHead>
+                      <TableHead>E-Mail</TableHead>
+                      <TableHead>Zahlungsfrist</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview.slice(0, 50).map((s, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium text-sm">{s.name}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {[s.street, [s.zipCode, s.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">{s.iban || "–"}</TableCell>
+                        <TableCell className="text-xs">{s.email || "–"}</TableCell>
+                        <TableCell className="text-xs">{s.paymentTermDays ? `${s.paymentTermDays} Tage` : "–"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {importPreview.length > 50 && (
+                  <p className="text-xs text-muted-foreground p-2 text-center">... und {importPreview.length - 50} weitere</p>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowImportDialog(false); setImportPreview([]); }}>Abbrechen</Button>
+            <Button
+              onClick={() => importFromListMut.mutate({ suppliers: importPreview })}
+              disabled={importPreview.length === 0 || importFromListMut.isPending}
+            >
+              {importFromListMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
+              {importPreview.length} Lieferanten importieren
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Customers (Kunden) Tab ──────────────────────────────────────────────────
+
+function CustomersTab() {
+  const [search, setSearch] = useReactState("");
+  const [showDialog, setShowDialog] = useReactState(false);
+  const [editCustomer, setEditCustomer] = useReactState<any>(null);
+  const [showServiceDialog, setShowServiceDialog] = useReactState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = useReactState<number | null>(null);
+  const [expandedCustomer, setExpandedCustomer] = useReactState<number | null>(null);
+  const [showImportDialog, setShowImportDialog] = useReactState(false);
+  const [importPreview, setImportPreview] = useReactState<Array<{name:string;company?:string;street?:string;zipCode?:string;city?:string;country?:string;email?:string;phone?:string;salutation?:string;notes?:string}>>([]);
+
+  // Customer form
+  const [cName, setCName] = useReactState("");
+  const [cCompany, setCCompany] = useReactState("");
+  const [cStreet, setCStreet] = useReactState("");
+  const [cZip, setCZip] = useReactState("");
+  const [cCity, setCCity] = useReactState("");
+  const [cCountry, setCCountry] = useReactState("Schweiz");
+  const [cEmail, setCEmail] = useReactState("");
+  const [cPhone, setCPhone] = useReactState("");
+  const [cSalutation, setCSalutation] = useReactState("");
+  const [cNotes, setCNotes] = useReactState("");
+
+  // Service form
+  const [sDesc, setSDesc] = useReactState("");
+  const [sAccountId, setSAccountId] = useReactState("");
+  const [sHourlyRate, setSHourlyRate] = useReactState("");
+  const [sIsDefault, setSIsDefault] = useReactState(false);
+  const [editService, setEditService] = useReactState<any>(null);
+
+  const { data: customersList, refetch } = trpc.customers.list.useQuery({ search: search || undefined });
+  const { data: accountsList } = trpc.accounts.list.useQuery();
+  const revenueAccounts = useMemo(() =>
+    (accountsList ?? []).filter(a => a.accountType === "revenue" && a.isActive).sort((a, b) => a.number.localeCompare(b.number)),
+    [accountsList]
+  );
+
+  const createCust = trpc.customers.create.useMutation({
+    onSuccess: () => { toast.success("Kunde erstellt"); refetch(); setShowDialog(false); resetCustForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateCust = trpc.customers.update.useMutation({
+    onSuccess: () => { toast.success("Kunde aktualisiert"); refetch(); setShowDialog(false); resetCustForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteCust = trpc.customers.delete.useMutation({
+    onSuccess: () => { toast.success("Kunde deaktiviert"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const addService = trpc.customers.addService.useMutation({
+    onSuccess: () => { toast.success("Dienstleistung hinzugefügt"); refetch(); setShowServiceDialog(false); resetServiceForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateService = trpc.customers.updateService.useMutation({
+    onSuccess: () => { toast.success("Dienstleistung aktualisiert"); refetch(); setShowServiceDialog(false); resetServiceForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteService = trpc.customers.deleteService.useMutation({
+    onSuccess: () => { toast.success("Dienstleistung entfernt"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const importFromListMut = trpc.customers.importFromList.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import: ${data.created} erstellt, ${data.skipped} übersprungen`);
+      refetch();
+      setShowImportDialog(false);
+      setImportPreview([]);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function resetCustForm() {
+    setCName(""); setCCompany(""); setCStreet(""); setCZip(""); setCCity("");
+    setCCountry("Schweiz"); setCEmail(""); setCPhone(""); setCSalutation(""); setCNotes("");
+    setEditCustomer(null);
+  }
+
+  function resetServiceForm() {
+    setSDesc(""); setSAccountId(""); setSHourlyRate(""); setSIsDefault(false); setEditService(null);
+  }
+
+  function openCreateCust() { resetCustForm(); setShowDialog(true); }
+
+  function openEditCust(c: any) {
+    setEditCustomer(c);
+    setCName(c.name || ""); setCCompany(c.company || ""); setCStreet(c.street || "");
+    setCZip(c.zipCode || ""); setCCity(c.city || ""); setCCountry(c.country || "Schweiz");
+    setCEmail(c.email || ""); setCPhone(c.phone || ""); setCSalutation(c.salutation || "");
+    setCNotes(c.notes || "");
+    setShowDialog(true);
+  }
+
+  function handleSaveCust() {
+    if (!cName.trim()) { toast.error("Name ist erforderlich"); return; }
+    const data = {
+      name: cName.trim(), company: cCompany || undefined, street: cStreet || undefined,
+      zipCode: cZip || undefined, city: cCity || undefined, country: cCountry || undefined,
+      email: cEmail || undefined, phone: cPhone || undefined, salutation: cSalutation || undefined,
+      notes: cNotes || undefined,
+    };
+    if (editCustomer) {
+      updateCust.mutate({ id: editCustomer.id, ...data });
+    } else {
+      createCust.mutate(data);
+    }
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+      const parsed = rows.map((r: Record<string, any>) => {
+        const name = String(r["Name"] ?? r["Kunde"] ?? r["Kontakt"] ?? r["name"] ?? "").trim();
+        const company = String(r["Firma"] ?? r["Unternehmen"] ?? r["company"] ?? "").trim() || undefined;
+        const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
+        const zipCode = String(r["PLZ"] ?? r["Postleitzahl"] ?? r["zipCode"] ?? r["zip"] ?? "").trim() || undefined;
+        const city = String(r["Ort"] ?? r["Stadt"] ?? r["city"] ?? "").trim() || undefined;
+        const country = String(r["Land"] ?? r["country"] ?? "").trim() || undefined;
+        const email = String(r["E-Mail"] ?? r["Email"] ?? r["email"] ?? "").trim() || undefined;
+        const phone = String(r["Telefon"] ?? r["Tel"] ?? r["phone"] ?? "").trim() || undefined;
+        const salutation = String(r["Anrede"] ?? r["salutation"] ?? "").trim() || undefined;
+        const notes = String(r["Notizen"] ?? r["Bemerkung"] ?? r["notes"] ?? "").trim() || undefined;
+        return { name, company, street, zipCode, city, country, email, phone, salutation, notes };
+      }).filter(c => c.name.length > 0);
+      setImportPreview(parsed);
+      toast.success(`${parsed.length} Kunden aus Datei gelesen`);
+    } catch (err) {
+      toast.error("Fehler beim Lesen der Datei");
+    }
+    e.target.value = "";
+  }
+
+  function openAddService(custId: number) {
+    resetServiceForm();
+    setSelectedCustomerId(custId);
+    setShowServiceDialog(true);
+  }
+
+  function openEditService(svc: any, custId: number) {
+    setEditService(svc);
+    setSelectedCustomerId(custId);
+    setSDesc(svc.description || "");
+    setSAccountId(svc.revenueAccountId ? String(svc.revenueAccountId) : "");
+    setSHourlyRate(svc.hourlyRate ? String(svc.hourlyRate) : "");
+    setSIsDefault(svc.isDefault || false);
+    setShowServiceDialog(true);
+  }
+
+  function handleSaveService() {
+    if (!sDesc.trim() || !sAccountId) { toast.error("Beschreibung und Ertragskonto sind erforderlich"); return; }
+    const data = {
+      customerId: selectedCustomerId!,
+      description: sDesc.trim(),
+      revenueAccountId: parseInt(sAccountId),
+      hourlyRate: sHourlyRate ? parseFloat(sHourlyRate) : undefined,
+      isDefault: sIsDefault,
+    };
+    if (editService) {
+      updateService.mutate({ id: editService.id, ...data });
+    } else {
+      addService.mutate(data);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Kunden-Stammdaten</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Kunden mit Dienstleistungen und Ertragskonten-Zuordnung
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setShowImportDialog(true); setImportPreview([]); }}>
+            <Upload className="h-4 w-4 mr-2" /> CSV/Excel Import
+          </Button>
+          <Button onClick={openCreateCust}>
+            <Plus className="h-4 w-4 mr-2" /> Neuer Kunde
+          </Button>
+        </div>
+      </div>
+
+      <Input
+        placeholder="Suche nach Name, Firma oder Ort..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        className="max-w-sm"
+      />
+
+      <div className="space-y-3">
+        {(!customersList || customersList.length === 0) ? (
+          <Card>
+            <CardContent className="py-8 text-center text-muted-foreground">
+              Keine Kunden erfasst
+            </CardContent>
+          </Card>
+        ) : customersList.map((c: any) => (
+          <Card key={c.id} className={!c.isActive ? "opacity-50" : ""}>
+            <CardHeader className="py-3 px-4 cursor-pointer" onClick={() => setExpandedCustomer(expandedCustomer === c.id ? null : c.id)}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {expandedCustomer === c.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  <div>
+                    <div className="font-semibold">{c.name}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {[c.company, [c.zipCode, c.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}
+                      {c.email && ` · ${c.email}`}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs">
+                    {(c.services ?? []).length} Dienstleistung{(c.services ?? []).length !== 1 ? "en" : ""}
+                  </Badge>
+                  <Button size="icon" variant="ghost" onClick={(e) => { e.stopPropagation(); openEditCust(c); }}>
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {c.isActive && (
+                    <Button size="icon" variant="ghost" className="text-destructive" onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Kunde "${c.name}" wirklich deaktivieren?`)) deleteCust.mutate({ id: c.id });
+                    }}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </CardHeader>
+            {expandedCustomer === c.id && (
+              <CardContent className="pt-0 px-4 pb-4">
+                <div className="border-t pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold">Dienstleistungen & Ertragskonten</h4>
+                    <Button size="sm" variant="outline" onClick={() => openAddService(c.id)}>
+                      <Plus className="h-3 w-3 mr-1" /> Dienstleistung
+                    </Button>
+                  </div>
+                  {(!c.services || c.services.length === 0) ? (
+                    <p className="text-sm text-muted-foreground py-2">Keine Dienstleistungen zugeordnet</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Dienstleistung</TableHead>
+                          <TableHead>Ertragskonto</TableHead>
+                          <TableHead>Stundenansatz</TableHead>
+                          <TableHead>Standard</TableHead>
+                          <TableHead className="w-[80px]"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {c.services.map((svc: any) => (
+                          <TableRow key={svc.id}>
+                            <TableCell className="font-medium">{svc.description}</TableCell>
+                            <TableCell className="text-sm">
+                              {svc.revenueAccount ? `${svc.revenueAccount.number} ${svc.revenueAccount.name}` : "–"}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {svc.hourlyRate ? `CHF ${Number(svc.hourlyRate).toFixed(2)}/h` : "–"}
+                            </TableCell>
+                            <TableCell>
+                              {svc.isDefault && <Badge className="text-xs bg-green-100 text-green-800">Primär</Badge>}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEditService(svc, c.id)}>
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => {
+                                  if (confirm("Dienstleistung entfernen?")) deleteService.mutate({ id: svc.id });
+                                }}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  {c.salutation && (
+                    <p className="text-xs text-muted-foreground mt-2">Anrede: {c.salutation}</p>
+                  )}
+                  {c.notes && (
+                    <p className="text-xs text-muted-foreground mt-1">Notizen: {c.notes}</p>
+                  )}
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        ))}
+      </div>
+
+      {/* Customer Dialog */}
+      <Dialog open={showDialog} onOpenChange={(open) => { if (!open) { setShowDialog(false); resetCustForm(); } }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editCustomer ? "Kunde bearbeiten" : "Neuer Kunde"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Name *</Label>
+                <Input value={cName} onChange={e => setCName(e.target.value)} placeholder="Peter Meier" />
+              </div>
+              <div>
+                <Label>Firma</Label>
+                <Input value={cCompany} onChange={e => setCCompany(e.target.value)} placeholder="Meier AG" />
+              </div>
+            </div>
+            <div>
+              <Label>Anrede (für Rechnungen)</Label>
+              <Input value={cSalutation} onChange={e => setCSalutation(e.target.value)} placeholder="Sehr geehrter Herr Meier" />
+            </div>
+            <div>
+              <Label>Strasse</Label>
+              <Input value={cStreet} onChange={e => setCStreet(e.target.value)} placeholder="Musterstrasse 1" />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>PLZ</Label>
+                <Input value={cZip} onChange={e => setCZip(e.target.value)} placeholder="6000" />
+              </div>
+              <div>
+                <Label>Ort</Label>
+                <Input value={cCity} onChange={e => setCCity(e.target.value)} placeholder="Luzern" />
+              </div>
+              <div>
+                <Label>Land</Label>
+                <Input value={cCountry} onChange={e => setCCountry(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>E-Mail</Label>
+                <Input value={cEmail} onChange={e => setCEmail(e.target.value)} type="email" />
+              </div>
+              <div>
+                <Label>Telefon</Label>
+                <Input value={cPhone} onChange={e => setCPhone(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <Label>Notizen</Label>
+              <Textarea value={cNotes} onChange={e => setCNotes(e.target.value)} rows={3} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDialog(false); resetCustForm(); }}>Abbrechen</Button>
+            <Button onClick={handleSaveCust} disabled={createCust.isPending || updateCust.isPending}>
+              {(createCust.isPending || updateCust.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {editCustomer ? "Speichern" : "Erstellen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CSV/Excel Import Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Kunden importieren (CSV/Excel)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Laden Sie eine Excel- oder CSV-Datei hoch. Unterstützte Spalten:
+              <strong> Name/Kunde/Kontakt</strong>, Firma/Unternehmen, Strasse/Adresse, PLZ, Ort/Stadt, Land, E-Mail/Email, Telefon/Tel, Anrede, Notizen/Bemerkung.
+              Duplikate (gleicher Name oder Firma) werden automatisch übersprungen.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                id="customer-import-file"
+                onChange={handleImportFile}
+              />
+              <Button variant="outline" asChild>
+                <label htmlFor="customer-import-file" className="cursor-pointer">
+                  <Upload className="h-4 w-4 mr-2" /> Datei wählen
+                </label>
+              </Button>
+            </div>
+            {importPreview.length > 0 && (
+              <div className="border rounded-lg max-h-64 overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Firma</TableHead>
+                      <TableHead>Adresse</TableHead>
+                      <TableHead>E-Mail</TableHead>
+                      <TableHead>Telefon</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview.slice(0, 50).map((c, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium text-sm">{c.name}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{c.company || "–"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {[c.street, [c.zipCode, c.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                        </TableCell>
+                        <TableCell className="text-xs">{c.email || "–"}</TableCell>
+                        <TableCell className="text-xs">{c.phone || "–"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {importPreview.length > 50 && (
+                  <p className="text-xs text-muted-foreground p-2 text-center">... und {importPreview.length - 50} weitere</p>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowImportDialog(false); setImportPreview([]); }}>Abbrechen</Button>
+            <Button
+              onClick={() => importFromListMut.mutate({ customers: importPreview })}
+              disabled={importPreview.length === 0 || importFromListMut.isPending}
+            >
+              {importFromListMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
+              {importPreview.length} Kunden importieren
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Service Dialog */}
+      <Dialog open={showServiceDialog} onOpenChange={(open) => { if (!open) { setShowServiceDialog(false); resetServiceForm(); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editService ? "Dienstleistung bearbeiten" : "Neue Dienstleistung"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label>Beschreibung *</Label>
+              <Input value={sDesc} onChange={e => setSDesc(e.target.value)} placeholder="z.B. Finanzberatung, Steuererklärung" />
+            </div>
+            <div>
+              <Label>Ertragskonto *</Label>
+              <Select value={sAccountId} onValueChange={setSAccountId}>
+                <SelectTrigger><SelectValue placeholder="Ertragskonto wählen" /></SelectTrigger>
+                <SelectContent>
+                  {revenueAccounts.map(a => (
+                    <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Stundenansatz (CHF)</Label>
+              <Input value={sHourlyRate} onChange={e => setSHourlyRate(e.target.value)} type="number" step="0.50" placeholder="250.00" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={sIsDefault} onCheckedChange={setSIsDefault} />
+              <Label>Primäre Dienstleistung (häufigste)</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowServiceDialog(false); resetServiceForm(); }}>Abbrechen</Button>
+            <Button onClick={handleSaveService} disabled={addService.isPending || updateService.isPending}>
+              {editService ? "Speichern" : "Hinzufügen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Templates (Vorlagen) Tab ────────────────────────────────────────────────
+
+function TemplatesTab() {
+  const [showUpload, setShowUpload] = useReactState(false);
+  const [uploadName, setUploadName] = useReactState("");
+  const [uploadType, setUploadType] = useReactState("invoice");
+  const [uploadDesc, setUploadDesc] = useReactState("");
+  const [uploadFile, setUploadFile] = useReactState<File | null>(null);
+
+  const { data: templatesList, refetch } = trpc.settings.listTemplates.useQuery();
+  const uploadMut = trpc.settings.uploadTemplate.useMutation({
+    onSuccess: () => { toast.success("Vorlage hochgeladen"); refetch(); setShowUpload(false); resetUploadForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMut = trpc.settings.deleteTemplate.useMutation({
+    onSuccess: () => { toast.success("Vorlage gelöscht"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const setDefaultMut = trpc.settings.setDefaultTemplate.useMutation({
+    onSuccess: () => { toast.success("Standardvorlage gesetzt"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function resetUploadForm() {
+    setUploadName(""); setUploadType("invoice"); setUploadDesc(""); setUploadFile(null);
+  }
+
+  async function handleUpload() {
+    if (!uploadFile || !uploadName.trim()) { toast.error("Name und Datei sind erforderlich"); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      uploadMut.mutate({
+        name: uploadName.trim(),
+        templateType: uploadType as any,
+        description: uploadDesc || undefined,
+        fileData: base64,
+        fileName: uploadFile.name,
+        mimeType: uploadFile.type,
+        fileSize: uploadFile.size,
+      });
+    };
+    reader.readAsDataURL(uploadFile);
+  }
+
+  const typeLabels: Record<string, string> = {
+    invoice: "Rechnung", letter: "Brief", contract: "Vertrag", other: "Sonstiges",
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Vorlagen</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Rechnungsvorlagen, Briefvorlagen und andere Dokumentvorlagen verwalten
+          </p>
+        </div>
+        <Button onClick={() => setShowUpload(true)}>
+          <Upload className="h-4 w-4 mr-2" /> Vorlage hochladen
+        </Button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {(!templatesList || templatesList.length === 0) ? (
+          <Card className="col-span-full">
+            <CardContent className="py-8 text-center text-muted-foreground">
+              Keine Vorlagen hochgeladen
+            </CardContent>
+          </Card>
+        ) : templatesList.map((t: any) => (
+          <Card key={t.id}>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">{t.name}</CardTitle>
+                <Badge variant="outline" className="text-xs">{typeLabels[t.templateType] || t.templateType}</Badge>
+              </div>
+              {t.description && <CardDescription className="text-xs">{t.description}</CardDescription>}
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-muted-foreground">
+                  {(t.fileSize / 1024).toFixed(0)} KB · {t.mimeType?.split("/")[1]?.toUpperCase()}
+                  {t.isDefault && <Badge className="ml-2 text-xs bg-green-100 text-green-800">Standard</Badge>}
+                </div>
+                <div className="flex gap-1">
+                  {!t.isDefault && (
+                    <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => setDefaultMut.mutate({ id: t.id, templateType: t.templateType })}>
+                      Als Standard
+                    </Button>
+                  )}
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => window.open(t.s3Url, "_blank")}>
+                    <Eye className="h-3 w-3" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => {
+                    if (confirm(`Vorlage "${t.name}" wirklich löschen?`)) deleteMut.mutate({ id: t.id });
+                  }}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Upload Dialog */}
+      <Dialog open={showUpload} onOpenChange={(open) => { if (!open) { setShowUpload(false); resetUploadForm(); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Vorlage hochladen</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label>Name *</Label>
+              <Input value={uploadName} onChange={e => setUploadName(e.target.value)} placeholder="z.B. Rechnung Standard" />
+            </div>
+            <div>
+              <Label>Typ</Label>
+              <Select value={uploadType} onValueChange={setUploadType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="invoice">Rechnung</SelectItem>
+                  <SelectItem value="letter">Brief</SelectItem>
+                  <SelectItem value="contract">Vertrag</SelectItem>
+                  <SelectItem value="other">Sonstiges</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Beschreibung</Label>
+              <Input value={uploadDesc} onChange={e => setUploadDesc(e.target.value)} placeholder="Optionale Beschreibung" />
+            </div>
+            <div>
+              <Label>Datei *</Label>
+              <Input type="file" accept=".pdf,.docx,.doc,.xlsx,.xls,.png,.jpg" onChange={e => setUploadFile(e.target.files?.[0] || null)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowUpload(false); resetUploadForm(); }}>Abbrechen</Button>
+            <Button onClick={handleUpload} disabled={uploadMut.isPending}>
+              {uploadMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Hochladen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

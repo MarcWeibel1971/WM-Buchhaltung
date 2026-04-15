@@ -106,6 +106,34 @@
       "when": 1776227144725,
       "tag": "0014_odd_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "5",
+      "when": 1776244180915,
+      "tag": "0015_fast_krista_starr",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
+      "when": 1776245505229,
+      "tag": "0016_new_argent",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1776255256162,
+      "tag": "0017_early_pride",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1776258275520,
+      "tag": "0018_blushing_the_enforcers",
+      "breakpoints": true
     }
   ]
 }

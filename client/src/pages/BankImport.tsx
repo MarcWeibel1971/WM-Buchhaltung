@@ -39,7 +39,7 @@ export default function BankImport() {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [pendingFilter, setPendingFilter] = useState<number | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">("pending");
-  const [showCreditorExport, setShowCreditorExport] = useState(false);
+  // showCreditorExport removed – now at /zahlungen/kreditoren
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const ccPdfInputRef = useRef<HTMLInputElement>(null);
@@ -673,11 +673,11 @@ export default function BankImport() {
                 {detectTransfersMutation.isPending ? "Erkenne..." : "Kontoüberträge erkennen"}
               </Button>
             )}
-            {/* Creditor payment export - from Documents/Invoices */}
+            {/* Link to Kreditoren page */}
             <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-purple-300 text-purple-700 hover:bg-purple-50"
-              onClick={() => setShowCreditorExport(true)}>
+              onClick={() => window.location.href = "/zahlungen/kreditoren"}>
               <Banknote className="h-3 w-3" />
-              ISO 20022 Rechnungszahlung
+              Kreditorenzahlungen
             </Button>
             {/* Rückgängig-Button */}
             {currentSnapshot && (
@@ -1555,17 +1555,13 @@ export default function BankImport() {
         </DialogContent>
       </Dialog>
 
-      {/* Creditor Payment Export Dialog - from Documents/Invoices */}
-      <CreditorExportDialog
-        open={showCreditorExport}
-        onOpenChange={setShowCreditorExport}
-      />
     </div>
   );
 }
 
-// ─── Creditor Export Dialog (from Documents/Invoices) ────────────────────────
-function CreditorExportDialog({ open, onOpenChange }: {
+// CreditorExportDialog removed – now at /zahlungen/kreditoren
+// Keeping this comment for reference
+function _REMOVED_CreditorExportDialog({ open, onOpenChange }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {

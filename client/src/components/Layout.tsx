@@ -2,8 +2,8 @@ import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, BookOpen, Building2, CreditCard,
-  Users, BarChart3, Receipt, LogOut, ChevronRight,
-  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode
+  Users, BarChart3, Receipt, LogOut, ChevronRight, ChevronDown,
+  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet, Clock
 } from "lucide-react";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -11,9 +11,23 @@ import { cn } from "@/lib/utils";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const NAV_ITEMS = [
+type NavItem = {
+  href: string;
+  icon: any;
+  label: string;
+  children?: NavItem[];
+};
+
+const NAV_ITEMS: NavItem[] = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/journal", icon: BookOpen, label: "Journal" },
+  {
+    href: "/zahlungen", icon: Wallet, label: "Zahlungen",
+    children: [
+      { href: "/zahlungen/debitoren", icon: QrCode, label: "Debitoren" },
+      { href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditoren" },
+    ],
+  },
   { href: "/bank-import", icon: Building2, label: "Bankimport" },
   { href: "/credit-card", icon: CreditCard, label: "Kreditkarte" },
   { href: "/payroll", icon: Users, label: "Lohnbuchhaltung" },
@@ -21,7 +35,7 @@ const NAV_ITEMS = [
   { href: "/reports", icon: BarChart3, label: "Berichte" },
   { href: "/documents", icon: Paperclip, label: "Dokumente" },
   { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
-  { href: "/qr-rechnung", icon: QrCode, label: "QR-Rechnung" },
+  { href: "/time-tracking", icon: Clock, label: "Zeiterfassung" },
   { href: "/settings", icon: Settings, label: "Einstellungen" },
 ];
 
@@ -30,10 +44,152 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { fiscalYear, setFiscalYear, fiscalYears } = useFiscalYear();
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
+    // Auto-expand Zahlungen if we're on a Zahlungen sub-page
+    const initial = new Set<string>();
+    if (location.startsWith("/zahlungen")) initial.add("/zahlungen");
+    return initial;
+  });
 
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
+  const { data: companyData } = trpc.settings.getCompanySettings.useQuery();
 
   const pendingCount = (stats?.pendingEntries ?? 0) + (stats?.pendingBankTransactions ?? 0);
+
+  const toggleSection = (href: string) => {
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      if (next.has(href)) next.delete(href); else next.add(href);
+      return next;
+    });
+  };
+
+  const isItemActive = (item: NavItem): boolean => {
+    if (item.children) {
+      return item.children.some(child => location === child.href || location.startsWith(child.href + "/"));
+    }
+    return location === item.href || (item.href !== "/" && location.startsWith(item.href));
+  };
+
+  // Ensure Zahlungen is expanded when navigating to a sub-page
+  if (location.startsWith("/zahlungen") && !expandedSections.has("/zahlungen")) {
+    setExpandedSections(prev => { const next = new Set(prev); next.add("/zahlungen"); return next; });
+  }
+
+  const renderNavItem = (item: NavItem) => {
+    const hasChildren = item.children && item.children.length > 0;
+    const isActive = isItemActive(item);
+    const isExpanded = expandedSections.has(item.href);
+
+    if (hasChildren) {
+      return (
+        <div key={item.href}>
+          <div
+            className={cn(
+              "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer",
+              isActive ? "text-white" : ""
+            )}
+            style={{
+              backgroundColor: isActive && !isExpanded ? "oklch(0.35 0.12 240)" : "transparent",
+              color: isActive ? "oklch(0.88 0.01 240)" : "oklch(0.65 0.03 240)",
+            }}
+            onMouseEnter={e => {
+              if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.28 0.04 240)";
+            }}
+            onMouseLeave={e => {
+              if (!isActive || isExpanded) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+            }}
+            onClick={() => toggleSection(item.href)}
+          >
+            <item.icon className="h-4 w-4 flex-shrink-0" />
+            <span className="flex-1">{item.label}</span>
+            {isExpanded ? (
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            ) : (
+              <ChevronRight className="h-3 w-3 opacity-60" />
+            )}
+          </div>
+          {isExpanded && (
+            <div className="ml-4 mt-0.5 space-y-0.5">
+              {item.children!.map(child => {
+                const childActive = location === child.href || location.startsWith(child.href + "/");
+                return (
+                  <Link key={child.href} href={child.href}>
+                    <div
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all cursor-pointer",
+                        childActive ? "text-white font-medium" : ""
+                      )}
+                      style={{
+                        backgroundColor: childActive ? "oklch(0.35 0.12 240)" : "transparent",
+                        color: childActive ? "white" : "oklch(0.55 0.03 240)",
+                      }}
+                      onMouseEnter={e => {
+                        if (!childActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.25 0.04 240)";
+                      }}
+                      onMouseLeave={e => {
+                        if (!childActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                      }}
+                      onClick={() => setMobileOpen(false)}
+                    >
+                      <child.icon className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span>{child.label}</span>
+                      {childActive && <ChevronRight className="h-3 w-3 opacity-60 ml-auto" />}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <Link key={item.href} href={item.href}>
+        <div
+          className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer group",
+            isActive ? "text-white" : "hover:text-white"
+          )}
+          style={{
+            backgroundColor: isActive ? "oklch(0.35 0.12 240)" : "transparent",
+            color: isActive ? "white" : "oklch(0.65 0.03 240)",
+          }}
+          onMouseEnter={e => {
+            if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.28 0.04 240)";
+          }}
+          onMouseLeave={e => {
+            if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+          }}
+          onClick={() => setMobileOpen(false)}
+        >
+          <item.icon className="h-4 w-4 flex-shrink-0" />
+          <span className="flex-1">{item.label}</span>
+          {item.href === "/journal" && pendingCount > 0 && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold"
+              style={{ backgroundColor: "oklch(0.75 0.18 75)", color: "oklch(0.15 0.02 240)" }}>
+              {pendingCount}
+            </span>
+          )}
+          {isActive && <ChevronRight className="h-3 w-3 opacity-60" />}
+        </div>
+      </Link>
+    );
+  };
+
+  // Find current page label for header
+  const findLabel = (items: NavItem[]): string => {
+    for (const item of items) {
+      if (item.children) {
+        for (const child of item.children) {
+          if (location === child.href || location.startsWith(child.href + "/")) return child.label;
+        }
+      }
+      if (location === item.href || (item.href !== "/" && location.startsWith(item.href))) return item.label;
+    }
+    return "Dashboard";
+  };
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -53,9 +209,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Logo */}
         <div className="flex items-center justify-between px-5 py-5 border-b" style={{ borderColor: "oklch(0.28 0.04 240)" }}>
-          <div>
-            <div className="text-sm font-bold" style={{ color: "oklch(0.95 0.01 240)" }}>WM Weibel Mueller AG</div>
-            <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>Buchhaltung</div>
+          <div className="flex items-center gap-3">
+            {companyData?.logoUrl && (
+              <img src={companyData.logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
+            )}
+            <div>
+              <div className="text-sm font-bold" style={{ color: "oklch(0.95 0.01 240)" }}>{companyData?.companyName || 'WM Weibel Mueller AG'}</div>
+              <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>Buchhaltung</div>
+            </div>
           </div>
           <button
             onClick={() => setMobileOpen(false)}
@@ -68,42 +229,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {NAV_ITEMS.map((item) => {
-            const isActive = location === item.href || (item.href !== "/" && location.startsWith(item.href));
-            return (
-              <Link key={item.href} href={item.href}>
-                <div
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer group",
-                    isActive
-                      ? "text-white"
-                      : "hover:text-white"
-                  )}
-                  style={{
-                    backgroundColor: isActive ? "oklch(0.35 0.12 240)" : "transparent",
-                    color: isActive ? "white" : "oklch(0.65 0.03 240)",
-                  }}
-                  onMouseEnter={e => {
-                    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.28 0.04 240)";
-                  }}
-                  onMouseLeave={e => {
-                    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-                  }}
-                  onClick={() => setMobileOpen(false)}
-                >
-                  <item.icon className="h-4 w-4 flex-shrink-0" />
-                  <span className="flex-1">{item.label}</span>
-                  {item.href === "/journal" && pendingCount > 0 && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold"
-                      style={{ backgroundColor: "oklch(0.75 0.18 75)", color: "oklch(0.15 0.02 240)" }}>
-                      {pendingCount}
-                    </span>
-                  )}
-                  {isActive && <ChevronRight className="h-3 w-3 opacity-60" />}
-                </div>
-              </Link>
-            );
-          })}
+          {NAV_ITEMS.map(item => renderNavItem(item))}
         </nav>
 
         {/* User section */}
@@ -149,7 +275,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <div className="flex-1">
             <h1 className="text-sm font-semibold text-foreground">
-              {NAV_ITEMS.find(n => n.href === location || (n.href !== "/" && location.startsWith(n.href)))?.label ?? "Dashboard"}
+              {findLabel(NAV_ITEMS)}
             </h1>
           </div>
 

@@ -15,14 +15,17 @@ import {
   getVatPeriods, getCreditCardStatements, getDashboardStats,
   getDb,
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
-  autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
+  autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { qrBillRouter } from "./qrBillRouter";
 import { dsgRouter } from "./dsgRouter";
+import { suppliersRouter } from "./suppliersRouter";
+import { timeTrackingRouter } from "./timeTrackingRouter";
+import { customersRouter } from "./customersRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -94,6 +97,18 @@ const accountsRouter = router({
 });
 
 // ─── Journal Router ───────────────────────────────────────────────────────────
+// Helper: Map account VAT rate to Infoniqa TaxId code
+function getTaxId(acct: any, line: any): string {
+  if (!acct) return '""';
+  // Check if account is VAT relevant and has a default rate
+  const vatRate = line?.vatRate ? parseFloat(line.vatRate as string) : (acct?.defaultVatRate ? parseFloat(acct.defaultVatRate as string) : null);
+  if (!vatRate || vatRate === 0) return '""';
+  if (vatRate === 8.1 || (vatRate >= 7.5 && vatRate <= 8.5)) return 'USt81';
+  if (vatRate === 2.6 || (vatRate >= 2.0 && vatRate <= 3.0)) return 'USt26';
+  if (vatRate === 3.8 || (vatRate >= 3.5 && vatRate <= 4.0)) return 'USt38';
+  return '""';
+}
+
 const journalRouter = router({
   list: protectedProcedure
     .input(z.object({
@@ -332,6 +347,273 @@ const journalRouter = router({
       return { reverted, skipped };
     }),
 
+  // ─── Export Endpoints ─────────────────────────────────────────────────────
+  exportInfoniqa: protectedProcedure
+    .input(z.object({
+      fiscalYear: z.number(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+      statusFilter: z.enum(["approved", "all"]).default("approved"),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Build conditions
+      const conditions = [eq(journalEntries.fiscalYear, input.fiscalYear)];
+      if (input.statusFilter === "approved") {
+        conditions.push(eq(journalEntries.status, "approved"));
+      }
+      if (input.startDate) conditions.push(gte(journalEntries.bookingDate, input.startDate));
+      if (input.endDate) conditions.push(lte(journalEntries.bookingDate, input.endDate));
+
+      // Get all entries
+      const entries = await db.select()
+        .from(journalEntries)
+        .where(and(...conditions))
+        .orderBy(asc(journalEntries.bookingDate), asc(journalEntries.id));
+
+      if (entries.length === 0) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Keine Buchungen für den Export gefunden" });
+      }
+
+      // Get all lines for these entries
+      const entryIds = entries.map(e => e.id);
+      const allLines = await db.select()
+        .from(journalLines)
+        .where(inArray(journalLines.entryId, entryIds));
+
+      // Get all accounts for lookup
+      const allAccounts = await db.select().from(accounts);
+      const accountMap = new Map(allAccounts.map(a => [a.id, a]));
+
+      // Build CSV rows
+      const csvRows: string[] = [];
+      csvRows.push('BlgNr,Date,AccId,Grp,Orig,MType,Type,CAcc,TaxId,TIdx,CIdx,BType,Code,ValNt,ValTx,ValFW,Text,Text2,PkKey,OpId,Flags,DocId');
+
+      // Assign sequential BlgNr starting from 1
+      let blgNr = 1;
+
+      for (const entry of entries) {
+        const lines = allLines.filter(l => l.entryId === entry.id);
+        if (lines.length === 0) continue;
+
+        // Format date as DD.MM.YY
+        const [yyyy, mmPart, dd] = entry.bookingDate.split('-');
+        const dateStr = `${dd}.${mmPart}.${yyyy.slice(2)}`;
+
+        // Escape CSV text field
+        const escCsv = (s: string) => {
+          if (!s) return '""';
+          if (s.includes(',') || s.includes('"') || s.includes(';') || s.includes(' ')) {
+            return '"' + s.replace(/"/g, '""') + '"';
+          }
+          return s;
+        };
+
+        const debitLines = lines.filter(l => l.side === 'debit');
+        const creditLines = lines.filter(l => l.side === 'credit');
+
+        // Determine if this is a collective booking (Sammelbuchung)
+        const isCollective = lines.length > 2;
+
+        if (isCollective) {
+          // MType = 2: Sammelbuchung
+          // Determine the "Sammelkonto" - usually the single credit or debit side
+          // Pattern: one side has 1 line (the collective account), other side has multiple
+          if (creditLines.length === 1 && debitLines.length >= 2) {
+            // Single credit, multiple debits
+            // First line: the credit (Haben) with CAcc="div"
+            const creditLine = creditLines[0];
+            const creditAcct = accountMap.get(creditLine.accountId);
+            const creditAcctNum = creditAcct?.number ?? '0';
+            const totalAmount = parseFloat(creditLine.amount as string);
+            const taxId = getTaxId(creditAcct, creditLine);
+
+            csvRows.push([
+              blgNr, dateStr, creditAcctNum, '""', 0, 2, 1, 'div',
+              taxId, 0, 0, 0, '""',
+              totalAmount.toFixed(2), '0.00', '0.00',
+              escCsv(entry.description), '""', 0, '""', 0, '""'
+            ].join(','));
+
+            // Then each debit line with CAcc=Sammelkonto
+            for (const dLine of debitLines) {
+              const dAcct = accountMap.get(dLine.accountId);
+              const dAcctNum = dAcct?.number ?? '0';
+              const dTaxId = getTaxId(dAcct, dLine);
+              const lineDesc = dLine.description || entry.description;
+
+              csvRows.push([
+                blgNr, dateStr, dAcctNum, '""', 0, 2, 0, creditAcctNum,
+                dTaxId, 0, 0, 0, '""',
+                parseFloat(dLine.amount as string).toFixed(2), '0.00', '0.00',
+                escCsv(lineDesc), '""', 0, '""', 0, '""'
+              ].join(','));
+            }
+          } else if (debitLines.length === 1 && creditLines.length >= 2) {
+            // Single debit, multiple credits
+            const debitLine = debitLines[0];
+            const debitAcct = accountMap.get(debitLine.accountId);
+            const debitAcctNum = debitAcct?.number ?? '0';
+            const totalAmount = parseFloat(debitLine.amount as string);
+            const taxId = getTaxId(debitAcct, debitLine);
+
+            csvRows.push([
+              blgNr, dateStr, debitAcctNum, '""', 0, 2, 0, 'div',
+              taxId, 0, 0, 0, '""',
+              totalAmount.toFixed(2), '0.00', '0.00',
+              escCsv(entry.description), '""', 0, '""', 0, '""'
+            ].join(','));
+
+            for (const cLine of creditLines) {
+              const cAcct = accountMap.get(cLine.accountId);
+              const cAcctNum = cAcct?.number ?? '0';
+              const cTaxId = getTaxId(cAcct, cLine);
+              const lineDesc = cLine.description || entry.description;
+
+              csvRows.push([
+                blgNr, dateStr, cAcctNum, '""', 0, 2, 1, debitAcctNum,
+                cTaxId, 0, 0, 0, '""',
+                parseFloat(cLine.amount as string).toFixed(2), '0.00', '0.00',
+                escCsv(lineDesc), '""', 0, '""', 0, '""'
+              ].join(','));
+            }
+          } else {
+            // Fallback: treat as pairs (shouldn't happen normally)
+            for (const line of lines) {
+              const acct = accountMap.get(line.accountId);
+              const acctNum = acct?.number ?? '0';
+              const type = line.side === 'debit' ? 0 : 1;
+              const taxId = getTaxId(acct, line);
+
+              csvRows.push([
+                blgNr, dateStr, acctNum, '""', 0, 2, type, 'div',
+                taxId, 0, 0, 0, '""',
+                parseFloat(line.amount as string).toFixed(2), '0.00', '0.00',
+                escCsv(line.description || entry.description), '""', 0, '""', 0, '""'
+              ].join(','));
+            }
+          }
+        } else {
+          // MType = 1: Einzelbuchung (2 lines: 1 debit, 1 credit)
+          const debitLine = debitLines[0];
+          const creditLine = creditLines[0];
+          if (!debitLine || !creditLine) continue;
+
+          const debitAcct = accountMap.get(debitLine.accountId);
+          const creditAcct = accountMap.get(creditLine.accountId);
+          const debitAcctNum = debitAcct?.number ?? '0';
+          const creditAcctNum = creditAcct?.number ?? '0';
+          const amount = parseFloat(debitLine.amount as string);
+          const debitTaxId = getTaxId(debitAcct, debitLine);
+          const creditTaxId = getTaxId(creditAcct, creditLine);
+
+          // Debit line (Type=0)
+          csvRows.push([
+            blgNr, dateStr, debitAcctNum, '""', 0, 1, 0, creditAcctNum,
+            debitTaxId, 0, 0, 0, '""',
+            amount.toFixed(2), '0.00', '0.00',
+            escCsv(entry.description), '""', 0, '""', 0, '""'
+          ].join(','));
+
+          // Credit line (Type=1)
+          csvRows.push([
+            blgNr, dateStr, creditAcctNum, '""', 0, 1, 1, debitAcctNum,
+            creditTaxId, 0, 0, 0, '""',
+            amount.toFixed(2), '0.00', '0.00',
+            escCsv(entry.description), '""', 0, '""', 0, '""'
+          ].join(','));
+        }
+
+        blgNr++;
+      }
+
+      const csvContent = csvRows.join('\n') + '\n';
+      return {
+        csv: csvContent,
+        filename: `sfbbuch_${input.fiscalYear}.csv`,
+        entryCount: entries.length,
+      };
+    }),
+
+  exportCsv: protectedProcedure
+    .input(z.object({
+      fiscalYear: z.number(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+      statusFilter: z.enum(["approved", "all"]).default("approved"),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const conditions = [eq(journalEntries.fiscalYear, input.fiscalYear)];
+      if (input.statusFilter === "approved") {
+        conditions.push(eq(journalEntries.status, "approved"));
+      }
+      if (input.startDate) conditions.push(gte(journalEntries.bookingDate, input.startDate));
+      if (input.endDate) conditions.push(lte(journalEntries.bookingDate, input.endDate));
+
+      const entries = await db.select()
+        .from(journalEntries)
+        .where(and(...conditions))
+        .orderBy(asc(journalEntries.bookingDate), asc(journalEntries.id));
+
+      if (entries.length === 0) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Keine Buchungen für den Export gefunden" });
+      }
+
+      const entryIds = entries.map(e => e.id);
+      const allLines = await db.select()
+        .from(journalLines)
+        .where(inArray(journalLines.entryId, entryIds));
+
+      const allAccounts = await db.select().from(accounts);
+      const accountMap = new Map(allAccounts.map(a => [a.id, a]));
+
+      const csvRows: string[] = [];
+      csvRows.push('Belegnummer;Datum;Konto;Kontoname;Gegenkonto;Gegenkontoname;Soll;Haben;Beschreibung;MWST-Satz;MWST-Betrag;Quelle;Status');
+
+      for (const entry of entries) {
+        const lines = allLines.filter(l => l.entryId === entry.id);
+        for (const line of lines) {
+          const acct = accountMap.get(line.accountId);
+          // Find the counter account
+          const counterLine = lines.find(l => l.id !== line.id && l.side !== line.side);
+          const counterAcct = counterLine ? accountMap.get(counterLine.accountId) : null;
+
+          const [yyyy, mmP, dd] = entry.bookingDate.split('-');
+          const dateStr = `${dd}.${mmP}.${yyyy}`;
+
+          csvRows.push([
+            entry.entryNumber || '',
+            dateStr,
+            acct?.number || '',
+            acct?.name || '',
+            counterAcct?.number || '',
+            counterAcct?.name || '',
+            line.side === 'debit' ? parseFloat(line.amount as string).toFixed(2) : '',
+            line.side === 'credit' ? parseFloat(line.amount as string).toFixed(2) : '',
+            (line.description || entry.description).replace(/;/g, ','),
+            line.vatRate ? `${line.vatRate}%` : '',
+            line.vatAmount ? parseFloat(line.vatAmount as string).toFixed(2) : '',
+            entry.source,
+            entry.status,
+          ].join(';'));
+        }
+      }
+
+      const csvContent = csvRows.join('\n') + '\n';
+      return {
+        csv: csvContent,
+        filename: `Journal_${input.fiscalYear}.csv`,
+        entryCount: entries.length,
+      };
+    }),
+
   getAllIds: protectedProcedure
     .input(z.object({
       status: z.enum(["pending", "approved", "rejected"]).optional(),
@@ -517,7 +799,87 @@ const bankImportRouter = router({
         }
       }
 
-      return { imported, duplicates, skipped, batchId };
+      // ─── Auto-match imported transactions against known invoices ──────────
+      // After importing, check if any newly imported transactions match documents
+      // that were included in a pain.001 export (matchStatus = 'pain001') or unmatched invoices
+      let autoMatched = 0;
+      if (db && imported > 0) {
+        try {
+          // Get newly imported pending transactions from this batch
+          const newTxns = await db.select().from(bankTransactions)
+            .where(and(
+              eq(bankTransactions.importBatchId, batchId),
+              eq(bankTransactions.status, 'pending'),
+            ));
+
+          // Get documents that are invoices (have aiMetadata with totalAmount)
+          // Focus on pain001 status (exported but not yet confirmed) and unmatched
+          const invoiceDocs = await db.select().from(documents)
+            .where(and(
+              sql`${documents.aiMetadata} IS NOT NULL`,
+              sql`${documents.matchStatus} IN ('pain001', 'unmatched')`,
+            ));
+
+          for (const txn of newTxns) {
+            // Only match debit transactions (outgoing payments)
+            const txnAmount = parseFloat(txn.amount);
+            if (txnAmount >= 0) continue; // Skip credits/incoming
+
+            let bestMatch: { docId: number; score: number } | null = null;
+
+            for (const doc of invoiceDocs) {
+              let meta: any;
+              try { meta = JSON.parse(doc.aiMetadata || '{}'); } catch { continue; }
+              if (!meta.totalAmount) continue;
+
+              const score = calculateMatchScore(
+                {
+                  totalAmount: meta.totalAmount,
+                  counterparty: meta.counterparty,
+                  documentDate: meta.documentDate,
+                  counterpartyIban: meta.counterpartyIban,
+                  referenceNumber: meta.referenceNumber,
+                },
+                {
+                  amount: txn.amount,
+                  counterparty: txn.counterparty,
+                  transactionDate: txn.transactionDate,
+                  counterpartyIban: txn.counterpartyIban,
+                  reference: txn.reference,
+                }
+              );
+
+              // Higher threshold for auto-matching (60+)
+              if (score >= 60 && (!bestMatch || score > bestMatch.score)) {
+                bestMatch = { docId: doc.id, score };
+              }
+            }
+
+            if (bestMatch) {
+              // Apply match: link document to transaction
+              await db.update(documents).set({
+                bankTransactionId: txn.id,
+                matchStatus: 'matched',
+                matchScore: bestMatch.score,
+              }).where(eq(documents.id, bestMatch.docId));
+
+              await db.update(bankTransactions).set({
+                matchedDocumentId: bestMatch.docId,
+                matchScore: bestMatch.score,
+              }).where(eq(bankTransactions.id, txn.id));
+
+              autoMatched++;
+              // Remove matched doc from candidates
+              const idx = invoiceDocs.findIndex(d => d.id === bestMatch!.docId);
+              if (idx >= 0) invoiceDocs.splice(idx, 1);
+            }
+          }
+        } catch (e) {
+          console.error("Auto-match after import failed:", e);
+        }
+      }
+
+      return { imported, duplicates, skipped, batchId, autoMatched };
     }),
 
   getImportHistory: protectedProcedure
@@ -2674,6 +3036,165 @@ const vatRouter = router({
       return { periodId: (result as any).insertId };
     }),
 
+  detail: publicProcedure
+    .input(z.object({ vatPeriodId: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Get the VAT period
+      const [vp] = await db.select().from(vatPeriods).where(eq(vatPeriods.id, input.vatPeriodId));
+      if (!vp) throw new TRPCError({ code: "NOT_FOUND", message: "MWST-Periode nicht gefunden" });
+
+      const startDate = vp.startDate;
+      const endDate = vp.endDate;
+
+      // Get company settings for VAT method
+      const [settings] = await db.select().from(companySettings).limit(1);
+      const vatMethod = settings?.vatMethod ?? "effective";
+      const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
+
+      // Get all approved journal entries in the date range
+      const entries = await db.select({
+        entryId: journalEntries.id,
+        entryNumber: journalEntries.entryNumber,
+        bookingDate: journalEntries.bookingDate,
+        description: journalEntries.description,
+        source: journalEntries.source,
+      }).from(journalEntries)
+        .where(and(
+          eq(journalEntries.status, "approved"),
+          gte(journalEntries.bookingDate, startDate),
+          lte(journalEntries.bookingDate, endDate),
+        ))
+        .orderBy(asc(journalEntries.bookingDate));
+
+      if (entries.length === 0) {
+        return { period: vp, vatMethod, saldoRate, transactions: [] };
+      }
+
+      const entryIds = entries.map(e => e.entryId);
+
+      // Get all journal lines for these entries
+      const allLines = await db.select({
+        id: journalLines.id,
+        entryId: journalLines.entryId,
+        accountId: journalLines.accountId,
+        side: journalLines.side,
+        amount: journalLines.amount,
+        description: journalLines.description,
+        vatAmount: journalLines.vatAmount,
+        vatRate: journalLines.vatRate,
+      }).from(journalLines)
+        .where(inArray(journalLines.entryId, entryIds));
+
+      // Get all accounts for lookup
+      const allAccounts = await db.select({
+        id: accounts.id,
+        number: accounts.number,
+        name: accounts.name,
+        accountType: accounts.accountType,
+        isVatRelevant: accounts.isVatRelevant,
+        defaultVatRate: accounts.defaultVatRate,
+      }).from(accounts);
+
+      const accountMap = new Map(allAccounts.map(a => [a.id, a]));
+
+      // Build transaction details
+      type VatTransaction = {
+        entryId: number;
+        entryNumber: string | null;
+        bookingDate: string;
+        description: string;
+        source: string;
+        lines: Array<{
+          accountNumber: string;
+          accountName: string;
+          side: string;
+          amount: string;
+          vatRate: string | null;
+          vatAmount: string | null;
+          isVatRelevant: boolean;
+        }>;
+        totalAmount: number;
+        vatAmount: number;
+        effectiveVatRate: number;
+        category: 'revenue' | 'expense' | 'other';
+      };
+
+      const transactions: VatTransaction[] = [];
+
+      for (const entry of entries) {
+        const entryLines = allLines.filter(l => l.entryId === entry.entryId);
+        let entryTotalAmount = 0;
+        let entryVatAmount = 0;
+        let hasVatRelevantLine = false;
+        let category: 'revenue' | 'expense' | 'other' = 'other';
+
+        const lineDetails = entryLines.map(line => {
+          const acct = accountMap.get(line.accountId);
+          const lineVatRate = line.vatRate ? parseFloat(line.vatRate as string) : null;
+          const acctVatRate = acct?.defaultVatRate ? parseFloat(acct.defaultVatRate as string) : null;
+          const effectiveRate = lineVatRate ?? acctVatRate;
+
+          if (acct?.isVatRelevant) {
+            hasVatRelevantLine = true;
+            const amt = parseFloat(line.amount as string);
+            if (acct.accountType === 'revenue') {
+              category = 'revenue';
+              const signedAmt = line.side === 'credit' ? amt : -amt;
+              entryTotalAmount += signedAmt;
+              // Calculate VAT for this line
+              if (vatMethod === 'saldo') {
+                entryVatAmount += signedAmt * (saldoRate / 100);
+              } else {
+                const rate = effectiveRate ?? 8.1;
+                entryVatAmount += signedAmt * (rate / 100);
+              }
+            } else if (acct.accountType === 'expense') {
+              category = 'expense';
+              const signedAmt = line.side === 'debit' ? amt : -amt;
+              entryTotalAmount += signedAmt;
+              if (line.vatAmount) {
+                entryVatAmount += parseFloat(line.vatAmount as string);
+              }
+            }
+          }
+
+          return {
+            accountNumber: acct?.number ?? '?',
+            accountName: acct?.name ?? 'Unbekannt',
+            side: line.side,
+            amount: line.amount as string,
+            vatRate: effectiveRate !== null && effectiveRate !== undefined ? effectiveRate.toString() : null,
+            vatAmount: line.vatAmount as string | null,
+            isVatRelevant: acct?.isVatRelevant ?? false,
+          };
+        });
+
+        if (hasVatRelevantLine) {
+          const effectiveVatRate = entryTotalAmount !== 0
+            ? (entryVatAmount / entryTotalAmount) * 100
+            : 0;
+
+          transactions.push({
+            entryId: entry.entryId,
+            entryNumber: entry.entryNumber,
+            bookingDate: entry.bookingDate,
+            description: entry.description,
+            source: entry.source,
+            lines: lineDetails,
+            totalAmount: entryTotalAmount,
+            vatAmount: entryVatAmount,
+            effectiveVatRate,
+            category,
+          });
+        }
+      }
+
+      return { period: vp, vatMethod, saldoRate, transactions };
+    }),
+
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input, ctx }) => {
@@ -2892,6 +3413,9 @@ export const appRouter = router({
   yearEnd: yearEndRouter,
   qrBill: qrBillRouter,
   dsg: dsgRouter,
+  suppliers: suppliersRouter,
+  timeTracking: timeTrackingRouter,
+  customers: customersRouter,
 });
 
 export type AppRouter = typeof appRouter;

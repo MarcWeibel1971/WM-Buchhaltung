@@ -7,9 +7,10 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import {
-  companySettings, insuranceSettings, employees, bankAccounts, bookingRules, accounts,
-  openingBalances, journalEntries, journalLines, fiscalYears
+  companySettings, insuranceSettings, employees, bankAccounts, bankTransactions, bookingRules, accounts,
+  openingBalances, journalEntries, journalLines, fiscalYears, templates
 } from "../drizzle/schema";
+import { storagePut } from "./storage";
 import { and, eq, asc, desc, sql } from "drizzle-orm";
 
 // ─── Company Settings ─────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ const companySettingsInput = z.object({
   email: z.string().max(200).optional(),
   website: z.string().max(200).optional(),
   hrNumber: z.string().max(50).optional(),
+  logoUrl: z.string().max(500).optional(),
 });
 
 // ─── Insurance Settings ───────────────────────────────────────────────────────
@@ -104,21 +106,22 @@ export const settingsRouter = router({
         id: null,
         companyName: "WM Weibel Mueller AG",
         legalForm: "AG",
-        street: null,
-        zipCode: null,
-        city: null,
+        street: "Grendelstrasse 2",
+        zipCode: "6004",
+        city: "Luzern",
         canton: "LU",
         country: "Schweiz",
-        uid: null,
-        vatNumber: null,
+        uid: "CHE-101.177.334",
+        vatNumber: "CHE-101.177.334 MWST",
         vatMethod: "effective" as const,
         vatSaldoRate: "6.20",
         vatPeriod: "quarterly" as const,
         fiscalYearStartMonth: 1,
-        phone: null,
-        email: null,
-        website: null,
+        phone: "+41 41 417 44 44",
+        email: "marc.weibel@weibel-mueller.ch",
+        website: "weibel-mueller.ch",
         hrNumber: null,
+        logoUrl: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -151,6 +154,7 @@ export const settingsRouter = router({
           email: input.email,
           website: input.website,
           hrNumber: input.hrNumber,
+          logoUrl: input.logoUrl,
         });
       } else {
         await db.update(companySettings)
@@ -172,6 +176,7 @@ export const settingsRouter = router({
             email: input.email,
             website: input.website,
             hrNumber: input.hrNumber,
+            logoUrl: input.logoUrl,
           })
           .where(eq(companySettings.id, existing[0].id));
       }
@@ -376,20 +381,26 @@ export const settingsRouter = router({
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       // Get all accounts with their opening balances for the given fiscal year
+      // Only return active accounts (or accounts that have a non-zero opening balance)
       const allAccounts = await db.select().from(accounts).orderBy(asc(accounts.number));
       const obs = await db.select().from(openingBalances)
         .where(eq(openingBalances.fiscalYear, input.fiscalYear));
-      return allAccounts.map(acc => {
-        const ob = obs.find(o => o.accountId === acc.id);
-        return {
-          accountId: acc.id,
-          accountNumber: acc.number,
-          accountName: acc.name,
-          accountType: acc.accountType,
-          balance: ob ? parseFloat(ob.balance as string) : 0,
-          hasBalance: !!ob,
-        };
-      });
+      return allAccounts
+        .filter(acc => acc.isActive || obs.some(o => o.accountId === acc.id && parseFloat(o.balance as string) !== 0))
+        .map(acc => {
+          const ob = obs.find(o => o.accountId === acc.id);
+          return {
+            accountId: acc.id,
+            accountNumber: acc.number,
+            accountName: acc.name,
+            accountType: acc.accountType,
+            category: acc.category,
+            subCategory: acc.subCategory,
+            isActive: acc.isActive,
+            balance: ob ? parseFloat(ob.balance as string) : 0,
+            hasBalance: !!ob,
+          };
+        });
     }),
 
   upsertOpeningBalances: protectedProcedure
@@ -554,7 +565,21 @@ export const settingsRouter = router({
         isActive: input.isActive ?? true,
         sortOrder: input.sortOrder ?? 0,
       }).$returningId();
-      return { success: true, id: result.id };
+
+      // Auto-create bank account entry if isBankAccount is true
+      if (input.isBankAccount) {
+        const existing = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, result.id)).limit(1);
+        if (existing.length === 0) {
+          await db.insert(bankAccounts).values({
+            accountId: result.id,
+            name: input.name,
+            currency: "CHF",
+            isActive: true,
+          });
+        }
+      }
+
+      return { success: true, id: result.id, bankAccountCreated: !!input.isBankAccount };
     }),
 
   updateAccount: protectedProcedure
@@ -583,6 +608,41 @@ export const settingsRouter = router({
       }
       if (Object.keys(cleanData).length === 0) return { success: true };
       await db.update(accounts).set(cleanData).where(eq(accounts.id, id));
+
+      // Sync bank account when isBankAccount changes
+      if (input.isBankAccount !== undefined) {
+        const existingBA = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, id)).limit(1);
+        if (input.isBankAccount && existingBA.length === 0) {
+          // Create bank account entry
+          const [acct] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+          await db.insert(bankAccounts).values({
+            accountId: id,
+            name: acct?.name ?? `Konto ${id}`,
+            currency: "CHF",
+            isActive: true,
+          });
+          return { success: true, bankAccountCreated: true };
+        } else if (!input.isBankAccount && existingBA.length > 0) {
+          // Check if bank account has transactions before removing
+          const [txCount] = await db.select({ count: sql`COUNT(*)` })
+            .from(bankTransactions).where(eq(bankTransactions.bankAccountId, existingBA[0].id));
+          if (Number(txCount?.count) === 0) {
+            await db.delete(bankAccounts).where(eq(bankAccounts.id, existingBA[0].id));
+            return { success: true, bankAccountRemoved: true };
+          }
+          // If transactions exist, keep bank account but update the flag
+          return { success: true, bankAccountKept: true, reason: "Bankkonto hat Transaktionen und kann nicht entfernt werden" };
+        }
+      }
+
+      // Also sync name changes to bank account
+      if (input.name) {
+        const existingBA = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, id)).limit(1);
+        if (existingBA.length > 0) {
+          await db.update(bankAccounts).set({ name: input.name }).where(eq(bankAccounts.id, existingBA[0].id));
+        }
+      }
+
       return { success: true };
     }),
 
@@ -596,6 +656,11 @@ export const settingsRouter = router({
         .from(journalLines).where(eq(journalLines.accountId, input.id));
       if (Number(usage?.count) > 0) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Konto hat ${usage.count} Buchungszeilen und kann nicht gelöscht werden. Deaktivieren Sie es stattdessen.` });
+      }
+      // Also clean up bankAccounts if this was a bank account
+      const [acct] = await db.select().from(accounts).where(eq(accounts.id, input.id));
+      if (acct?.isBankAccount) {
+        await db.delete(bankAccounts).where(eq(bankAccounts.accountId, input.id));
       }
       await db.delete(accounts).where(eq(accounts.id, input.id));
       return { success: true };
@@ -802,4 +867,113 @@ export const settingsRouter = router({
       ],
     };
   }),
+
+  // ── Company Logo Upload ──────────────────────────────────────────────────────
+
+  uploadCompanyLogo: protectedProcedure
+    .input(z.object({
+      base64: z.string(),
+      filename: z.string(),
+      mimeType: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const { storagePut } = await import('./storage');
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+
+      // Decode base64 to buffer
+      const buffer = Buffer.from(input.base64, 'base64');
+
+      // Upload to S3 with unique key
+      const ext = input.filename.split('.').pop() || 'png';
+      const key = `company-logo/logo-${Date.now()}.${ext}`;
+      const { url } = await storagePut(key, buffer, input.mimeType);
+
+      // Update company settings with logo URL
+      const existing = await db.select({ id: companySettings.id }).from(companySettings).limit(1);
+      if (existing.length === 0) {
+        await db.insert(companySettings).values({
+          companyName: 'WM Weibel Mueller AG',
+          logoUrl: url,
+        });
+      } else {
+        await db.update(companySettings)
+          .set({ logoUrl: url })
+          .where(eq(companySettings.id, existing[0].id));
+      }
+
+      return { url };
+    }),
+
+  deleteCompanyLogo: protectedProcedure
+    .mutation(async () => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+
+      const existing = await db.select({ id: companySettings.id }).from(companySettings).limit(1);
+      if (existing.length > 0) {
+        await db.update(companySettings)
+          .set({ logoUrl: null })
+          .where(eq(companySettings.id, existing[0].id));
+      }
+
+      return { success: true };
+    }),
+
+  // ─── Templates ───────────────────────────────────────────────────────────────
+
+  listTemplates: protectedProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new Error('Database not available');
+    return db.select().from(templates).orderBy(asc(templates.templateType), asc(templates.name));
+  }),
+
+  uploadTemplate: protectedProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      templateType: z.enum(["invoice", "letter", "contract", "other"]),
+      description: z.string().optional(),
+      fileData: z.string(), // base64
+      fileName: z.string(),
+      mimeType: z.string(),
+      fileSize: z.number(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      const buffer = Buffer.from(input.fileData, "base64");
+      const key = `templates/${Date.now()}-${input.fileName}`;
+      const { url } = await storagePut(key, buffer, input.mimeType);
+      const [result] = await db.insert(templates).values({
+        name: input.name,
+        templateType: input.templateType,
+        description: input.description || null,
+        s3Key: key,
+        s3Url: url,
+        mimeType: input.mimeType,
+        fileSize: input.fileSize,
+      });
+      return { id: result.insertId, url };
+    }),
+
+  deleteTemplate: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      await db.delete(templates).where(eq(templates.id, input.id));
+      return { success: true };
+    }),
+
+  setDefaultTemplate: protectedProcedure
+    .input(z.object({ id: z.number(), templateType: z.string() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      // Unset all defaults for this type
+      await db.update(templates).set({ isDefault: false }).where(eq(templates.templateType, input.templateType as any));
+      // Set this one as default
+      await db.update(templates).set({ isDefault: true }).where(eq(templates.id, input.id));
+      return { success: true };
+    }),
 });

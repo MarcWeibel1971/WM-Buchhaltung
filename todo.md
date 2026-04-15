@@ -614,3 +614,188 @@
 - [x] Frontend: "Foto aufnehmen"-Button neben dem bestehenden Upload-Bereich auf der Dokumente-Seite
 - [x] Frontend: HTML5 input capture="environment" für direkte Kamera-Aktivierung auf Mobile
 - [x] Frontend: Aufgenommenes Foto wird automatisch hochgeladen und von der KI analysiert (gleicher Workflow wie PDF-Upload)
+
+## Feature: QR-Code IBAN und Rechnungsvorlage einbauen
+
+- [x] QR-Code dekodieren und IBAN für LUKB mw Konto extrahieren
+- [x] IBAN in QR-Rechnungs-Einstellungen als Standard hinterlegen
+- [x] Rechnungsvorlage (DOCX) analysieren und als PDF-Rechnungstemplate implementieren
+- [x] QR-Rechnung-Seite: Rechnungsvorlage mit QR-Zahlungsteil als kombinierten PDF-Download anbieten
+
+## Bugfix: QR-Rechnung PDF-Generierung (Referenztyp-Mismatch)
+
+- [x] Fix: Regulärer IBAN (CH3700778010355583209) mit QR-Referenz (27-stellig numerisch) verursachte Fehler in swissqrbill-Library
+- [x] Fix: Bei regulärem IBAN wird jetzt korrekte SCOR-Referenz (ISO 11649, RF-Format) generiert statt QR-Referenz
+- [x] Fix: Professionelle Rechnung (generateInvoiceWithQr) und einfacher QR-Einzahlungsschein (generateQrBill) beide korrigiert
+- [x] Beide Endpunkte erfolgreich getestet mit IBAN CH3700778010355583209
+
+## Feature: Navigation Umstrukturierung – Zahlungen (Debitoren/Kreditoren)
+
+- [x] Navigation: Neuer Bereich "Zahlungen" in der Sidebar unter Dashboard
+- [x] Navigation: Untermenü "Debitoren" unter Zahlungen (bisherige QR-Rechnung-Seite)
+- [x] Navigation: Untermenü "Kreditoren" unter Zahlungen (ISO 20022 Rechnungszahlung, bisher unter Bankimport)
+- [x] Kreditoren-Seite: Eigenständige Seite für Kreditorenzahlungen (ISO 20022 pain.001) statt Dialog im Bankimport
+- [x] Kreditoren-Seite: Bankkonto-Auswahl (welches Konto soll belastet werden) als Dropdown
+- [x] QR-Rechnung aus Sidebar entfernen (wird zu Debitoren)
+- [x] ISO 20022 Button aus Bankimport entfernen (wird zu Kreditoren)
+
+## Bugfix: PensExpert fälschlicherweise als bezahlt markiert
+
+- [x] Fix: Rechnungen nur als "bezahlt" markieren wenn tatsächlich eine passende Transaktion im Bankimport vorhanden ist
+- [x] Fix: PensExpert-Rechnung muss als "offen" erscheinen da noch nicht im Bankimport
+
+## Feature: Pain.001 Pflichtfelder Ort und Land
+
+- [x] Pain.001 XML: Ort (Twnm) als Pflichtfeld für Begünstigten einbauen
+- [x] Pain.001 XML: Land (Ctry) als Pflichtfeld für Begünstigten einbauen
+- [x] Frontend: Ort und Land Felder in der Kreditoren-Zahlungsansicht anzeigen und editierbar machen
+- [x] Dokumente/AI-Extraktion: Ort und Land des Lieferanten wenn möglich aus Rechnungen extrahieren
+
+## Feature: Korrekter Zahlungsworkflow (Kreditoren)
+
+- [x] Rechnungen erst als "bezahlt" markieren wenn pain.001 tatsächlich heruntergeladen wird (nicht beim Öffnen der Seite)
+- [x] Manuelles Zurücksetzen auf "offen" ermöglichen (Button "Als unbezahlt markieren")
+- [x] Automatischer Match beim Bankimport: Wenn Banktransaktion zu bekannter Rechnung passt (Betrag, Kreditor, Referenz), automatisch Match erstellen und Rechnung als bezahlt markieren
+
+## Feature: AcroForms-basierte Rechnungsvorlage (wie Lohnausweis)
+
+- [x] PDF-Vorlage analysieren und AcroForms-Template erstellen (exaktes Layout wie WM Rechnung)
+- [x] AcroForms-Felder: Logo, Firmenname, Adresse, Empfänger, Datum, Referenz, Betreff, Positionen, MWST, Total, Zahlungsfrist, Grussformel
+- [x] Backend-Endpoint: AcroForms-Template mit Rechnungsdaten füllen und als PDF generieren
+- [x] Debitoren-Seite: Neue Rechnungserstellung mit AcroForms-basiertem PDF-Download
+- [x] QR-Zahlungsteil in AcroForms-Rechnung integrieren (Seite 2 oder unten)
+
+## Feature: Firmenlogo-Upload unter Einstellungen/Unternehmen
+
+- [x] Einstellungen/Unternehmen: Logo-Upload-Funktion implementieren (S3-Storage)
+- [x] Logo in der Sidebar/Header der Webseite anzeigen
+- [x] Logo in der AcroForms-Rechnungsvorlage verwenden
+- [x] WM Logo als Standard hochladen
+
+## Bugfix: Kreditoren zeigen Rechnungen als "offen" obwohl im Bankimport als "matched"
+
+- [x] Fix: Kreditoren-Status muss Bankimport-Matches berücksichtigen (z.B. OWIBA als bezahlt anzeigen wenn im Bankimport gematcht)
+- [x] Prüfen: listUnpaidInvoices-Logik erweitern um auch Dokumente mit matchStatus='matched' als bezahlt zu erkennen
+
+## Feature: Dokumenten-Beschriftung beim Hochladen
+
+- [x] Beim Upload: Dokument automatisch nach Inhalt beschriften (Lieferant + Beschreibung statt generischer Dateiname)
+- [x] AI-Extraktion: Extrahierten Lieferantnamen und Beschreibung als Dokumenttitel verwenden
+
+## Cleanup: QR-Rechnung aus Einstellungen entfernen
+
+- [x] QR-Rechnung Tab/Bereich aus der Einstellungen-Seite entfernen (Funktion ist jetzt unter Zahlungen/Debitoren)
+
+## Feature: Rechnungsvorlage pixelgenau nach WM Briefblatt-Vermessung
+
+- [ ] Briefblatt_Vermassung.pdf analysieren für exakte Masse und Positionen
+- [ ] ZwoOT-Bold und ZwoOT-Light Fonts einbetten (statt Helvetica)
+- [ ] AcroForms-Template komplett neu erstellen mit korrekten Massen
+- [ ] Logo-Position, Absenderzeile, Empfänger-Fenster exakt positionieren
+- [ ] Positionen-Tabelle, MWST, Total korrekt ausrichten
+- [ ] Fusszeile mit Firmenadresse und Kontaktdaten
+- [ ] Backend-Endpoint aktualisieren für neues Template
+- [ ] PDF-Ausgabe visuell mit Original vergleichen und korrigieren
+
+## Feature: MWST-Abrechnung Transaktionsdetails
+
+- [ ] MWST-Abrechnung Dialog: Aufklappbare Detailansicht mit allen Transaktionen inkl. MWST-Anteil
+- [ ] MWST-Abrechnung: Export/Druckfunktion für detaillierte Transaktionsliste
+- [ ] Backend: Endpoint für MWST-relevante Transaktionen pro Periode mit MWST-Berechnung
+
+## MWST-Abrechnung: Aufklappbare Detailzeilen und Export/Druck
+- [x] MWST-Abrechnung: Aufklappbare Detailzeilen mit einzelnen Transaktionen inkl. MWST-Anteil
+- [x] MWST-Abrechnung: Backend-Endpunkt für detaillierte Transaktionsliste pro Periode
+- [x] MWST-Abrechnung: Export/Druckfunktion für detaillierte MWST-Abrechnung mit Transaktionen
+- [x] Fix: Stadt "Lucerne" → "Luzern" in Datenbank korrigiert
+- [x] Fix: Rechnungs-PDF mit pdf-lib komplett neu geschrieben (WM Logo, ZwoOT Fonts, exaktes Layout)
+
+## Journal Export-Funktion
+- [x] Backend: Export-Endpoint für Journal-Buchungen im Infoniqa CSV-Format
+- [x] Backend: Mapping von Journal-Daten auf Infoniqa-Felder (BlgNr, Date DD.MM.YY, AccId, MType, Type, CAcc, TaxId, ValNt, Text)
+- [x] Backend: Korrekte Behandlung von Einzel- vs. Sammelbuchungen (MType 1 vs 2)
+- [x] Backend: MWST-Steuercode-Mapping (USt81 für 8.1%)
+- [x] Backend: Latin-1 Encoding für CSV-Ausgabe
+- [x] Frontend: Export-Dialog mit Auswahl-Möglichkeiten (Infoniqa als erste Option)
+- [x] Frontend: Datumsbereich-Filter für Export
+- [x] Frontend: Export-Button im Journal-Header
+
+## Kontenplan ↔ Bankkonten Synchronisation
+- [x] Wenn im Kontenplan ein Konto als Bankkonto markiert wird (isBankAccount=true), automatisch Eintrag in Bankkonten erstellen
+- [x] Wenn im Kontenplan isBankAccount auf false gesetzt wird, Bankkonten-Eintrag entfernen (falls keine Transaktionen)
+- [x] Wenn in Bankkonten ein neues Bankkonto erstellt wird, muss es einem Kontenplan-Konto zugeordnet sein
+- [x] Bestehende Bankkonten ohne Kontenplan-Zuordnung identifizieren und synchronisieren
+- [x] Frontend: Hinweis anzeigen wenn Bankkonto erstellt/entfernt wird durch Kontenplan-Änderung
+
+## Eröffnungssalden ↔ Kontenplan Synchronisation
+- [x] Eröffnungssalden: Nur aktive Konten aus dem Kontenplan anzeigen
+- [x] Eröffnungssalden: Neues Konto hinzufügen (erstellt auch im Kontenplan)
+- [x] Eröffnungssalden: Drag & Drop zum Verschieben/Umsortieren von Konten
+- [x] Eröffnungssalden: Bidirektionale Sync mit Kontenplan (Änderungen in beiden Richtungen)
+- [x] Eröffnungssalden: Kontenplan-Änderungen (Aktivierung/Deaktivierung) sofort reflektieren
+
+## Feature: Lieferanten-Stammdaten
+- [x] DB-Schema: suppliers Tabelle (id, name, street, zipCode, city, country, iban, bic, paymentTermDays, contactPerson, email, phone, notes, defaultDebitAccountId, isActive, createdAt, updatedAt)
+- [x] Backend: suppliersRouter (list, create, update, delete, getById)
+- [x] Backend: Integration mit pain.001 Export (IBAN/BIC aus Lieferanten-Stammdaten)
+- [ ] Backend: Auto-Vorschlag Lieferant bei Bankimport basierend auf Gegenpartei (TODO: spätere Erweiterung)
+- [x] Frontend: Lieferanten-Seite unter Einstellungen mit CRUD-Funktionalität
+- [ ] Frontend: Lieferanten-Auswahl bei Kreditoren-Zahlungen (TODO: spätere Integration)
+- [ ] Frontend: Lieferanten-Link in Bankimport-Transaktionen (TODO: spätere Integration)
+
+## Feature: Kunden-Stammdaten / CRM
+- [x] DB-Schema: customers Tabelle (id, name, company, street, zipCode, city, country, email, phone, salutation, notes, isActive, createdAt, updatedAt)
+- [x] DB-Schema: customerServices Tabelle (id, customerId, description, revenueAccountId, hourlyRate, isDefault, sortOrder)
+- [x] Backend: customersRouter (list, create, update, delete, getById, getServices)
+- [x] Backend: Zuordnung mehrerer Ertragskonten pro Kunde (erstes = häufigstes)
+- [x] Frontend: Kunden-Seite unter Einstellungen mit CRUD-Funktionalität
+- [x] Frontend: Kunden-Detailansicht mit Dienstleistungen und Ertragskonten
+- [ ] Frontend: Kunden-Auswahl bei Debitorenrechnungen (TODO: spätere Integration)
+
+## Feature: Zeiterfassung
+- [x] DB-Schema: timeEntries Tabelle (id, customerId, serviceId, date, hours, description, hourlyRate, status, invoiceId, userId, createdAt, updatedAt)
+- [x] DB-Schema: services Tabelle (id, name, description, defaultHourlyRate, revenueAccountId, isActive, sortOrder)
+- [x] Backend: timeTrackingRouter (list, create, update, delete, getByCustomer, getUninvoiced)
+- [x] Backend: servicesRouter (list, create, update, delete)
+- [x] Backend: Verknüpfung Zeiterfassung → Debitorenrechnung (uninvoiced entries → Rechnungspositionen)
+- [x] Frontend: Zeiterfassung-Seite zwischen Jahresabschluss und Einstellungen in Navigation
+- [x] Frontend: Zeiterfassung-Eingabe mit Kunde, Dienstleistung, Stunden, Beschreibung
+- [x] Frontend: Übersicht uninvoiced Stunden pro Kunde
+- [x] Frontend: "Rechnung erstellen" Button → QR-Rechnung mit Zeiteinträgen als Positionen
+
+## Feature: CAMT.054 Import
+- [x] Backend: CAMT.054 XML Parser (Zahlungsbestätigungen)
+- [x] Backend: Abgleich mit exportierten pain.001 Dateien (EndToEndId Matching)
+- [x] Backend: Automatisches Markieren bezahlter Rechnungen als erledigt
+- [x] Frontend: CAMT.054 Upload im Kreditoren-Bereich
+- [x] Frontend: Abgleich-Ergebnis anzeigen (matched/unmatched Zahlungen)
+
+## Feature: Mehrfach-Upload Dokumente
+- [x] Backend: Batch-Upload Endpoint für mehrere Dateien gleichzeitig
+- [x] Frontend: Multi-File-Upload mit Drag & Drop Zone
+- [x] Frontend: Thumbnail-Vorschau für Bilder in der Dokumentenliste
+- [x] Frontend: Upload-Fortschritt pro Datei anzeigen
+
+## Feature: Einstellungen Erweiterungen
+- [x] Backend: Firmenlogo Upload und Speicherung in S3 (bereits vorhanden)
+- [x] Backend: Vorlagen-Verwaltung (upload, list, delete) für Rechnungsvorlagen etc.
+- [x] Frontend: Logo-Upload bei Unternehmensdaten (mit Vorschau, bereits vorhanden)
+- [x] Frontend: Neuer Unterbereich "Vorlagen" in Einstellungen
+- [x] Frontend: Vorlagen hochladen, anzeigen, löschen (Rechnungsvorlagen, Briefvorlagen)
+
+## UI Cleanup
+- [x] QR-Rechnung Tab aus Einstellungen-Sidebar entfernen
+
+## Lieferanten: Auto-Erstellung aus Rechnungen + Listenimport
+- [x] Backend: Auto-Erstellung Lieferant aus Rechnungs-AI-Metadaten (senderName, senderAddress, IBAN)
+- [x] Backend: Bestehende Rechnungen durchgehen und fehlende Lieferanten nachträglich erstellen
+- [x] Backend: Bei zukünftigen Rechnungs-Uploads automatisch Lieferant erstellen/zuordnen
+- [x] Backend: CSV/Excel-Upload Endpoint für Lieferantenliste
+- [x] Frontend: "Lieferanten importieren" Button mit CSV/Excel-Upload Dialog
+- [x] Frontend: Vorschau der importierten Daten vor dem Speichern
+- [x] Frontend: Hinweis bei automatisch erstellten Lieferanten (aus Rechnung)
+
+## Kunden: Listenimport
+- [x] Backend: CSV/Excel-Upload Endpoint für Kundenliste mit Extraktion
+- [x] Frontend: "Kunden importieren" Button mit CSV/Excel-Upload Dialog
+- [x] Frontend: Vorschau der importierten Kundendaten vor dem Speichern

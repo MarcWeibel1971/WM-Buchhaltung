@@ -25,6 +25,16 @@ export const users = mysqlTable("users", {
   // Wird beim Login auf die Default-Membership gesetzt und kann über einen
   // Org-Switcher geändert werden.
   currentOrganizationId: int("currentOrganizationId"),
+  // ─── Own Auth (Migration 0024+) ───────────────────────────────────────────
+  // Password hash (bcrypt). NULL = user only uses OAuth (Manus/Google etc.)
+  passwordHash: varchar("passwordHash", { length: 255 }),
+  // Email verification status
+  emailVerified: boolean("emailVerified").default(false).notNull(),
+  // Token for email verification (sent on registration)
+  emailVerifyToken: varchar("emailVerifyToken", { length: 128 }),
+  // Token + expiry for password reset
+  passwordResetToken: varchar("passwordResetToken", { length: 128 }),
+  passwordResetExpiry: timestamp("passwordResetExpiry"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),

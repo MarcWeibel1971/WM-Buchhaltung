@@ -27,6 +27,7 @@ import { suppliersRouter } from "./suppliersRouter";
 import { timeTrackingRouter } from "./timeTrackingRouter";
 import { customersRouter } from "./customersRouter";
 import { organizationsRouter } from "./organizationsRouter";
+import { authRouter } from "./authRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -3495,6 +3496,13 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    // ─── Own Auth System (E-Mail + Passwort) ─────────────────────────────
+    register: authRouter.register,
+    login: authRouter.login,
+    verifyEmail: authRouter.verifyEmail,
+    forgotPassword: authRouter.forgotPassword,
+    resetPassword: authRouter.resetPassword,
+    resendVerification: authRouter.resendVerification,
   }),
   accounts: accountsRouter,
   journal: journalRouter,

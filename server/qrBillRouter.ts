@@ -823,6 +823,7 @@ export const qrBillRouter = router({
     }),
 
   // ─── AcroForms-based Professional Invoice (like Lohnausweis) ─────────────────
+  // Layout matches WMRechnungBeratung2025_Vorlagemw.pdf exactly
   generateInvoiceAcroform: protectedProcedure
     .input(z.object({
       recipientTitle: z.string().optional(),
@@ -849,6 +850,7 @@ export const qrBillRouter = router({
     }))
     .mutation(async ({ input }) => {
       const { PDFDocument: PDFLib, rgb, StandardFonts } = await import('pdf-lib');
+      const fontkit = await import('@pdf-lib/fontkit');
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
@@ -889,50 +891,84 @@ export const qrBillRouter = router({
       }
 
       // Format dates (parse YYYY-MM-DD without timezone offset)
-      const [yyyy, mm, dd] = input.invoiceDate.split('-').map(Number);
-      const invDate = new Date(yyyy, mm - 1, dd);
+      const [yyyy, mmPart, dd] = input.invoiceDate.split('-').map(Number);
+      const invDate = new Date(yyyy, mmPart - 1, dd);
       const dateStr = invDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
-      const dueDate = new Date(yyyy, mm - 1, dd);
+      const dueDate = new Date(yyyy, mmPart - 1, dd);
       dueDate.setDate(dueDate.getDate() + input.paymentDays);
-      const dueDateStr = dueDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
 
-      // Create PDF from scratch with pdf-lib (pixel-perfect layout matching the WM Rechnung)
+      // ═══════════════════════════════════════════════════════════════════════════
+      // PDF CREATION – Pixel-perfect layout matching WMRechnungBeratung2025
+      // ═══════════════════════════════════════════════════════════════════════════
       const pdfDoc = await PDFLib.create();
+      pdfDoc.registerFontkit(fontkit);
       const page = pdfDoc.addPage([595.28, 841.89]); // A4
-      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
+      // Load ZwoOT fonts from CDN
+      const FONT_BOLD_URL = "https://d2xsxph8kpxj0f.cloudfront.net/114467201/g3uYPYRzWxJLqW5bmLAtac/ZwoOT-Bold_67c9f790.otf";
+      const FONT_LIGHT_URL = "https://d2xsxph8kpxj0f.cloudfront.net/114467201/g3uYPYRzWxJLqW5bmLAtac/ZwoOT-Light_04794056.otf";
+
+      let fontBold: Awaited<ReturnType<typeof pdfDoc.embedFont>>;
+      let fontLight: Awaited<ReturnType<typeof pdfDoc.embedFont>>;
+      try {
+        const [boldRes, lightRes] = await Promise.all([fetch(FONT_BOLD_URL), fetch(FONT_LIGHT_URL)]);
+        const [boldBytes, lightBytes] = await Promise.all([boldRes.arrayBuffer(), lightRes.arrayBuffer()]);
+        fontBold = await pdfDoc.embedFont(new Uint8Array(boldBytes));
+        fontLight = await pdfDoc.embedFont(new Uint8Array(lightBytes));
+      } catch {
+        fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        fontLight = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      }
+
+      // ── Measurements from Briefblatt_Vermassung.pdf ──
+      // 1mm = 2.8346pt, A4 = 595.28 x 841.89 pt
+      const mm = 2.8346;
       const pageH = 841.89;
       const pageW = 595.28;
-      const leftM = 56;
-      const rightM = 56;
-      const contentW = pageW - leftM - rightM;
+      const leftM = 25 * mm;   // 25mm left margin = 70.87pt
+      const rightEdge = pageW - 20 * mm; // right text boundary
+      const contentW = rightEdge - leftM;
 
-      // Helper to draw text (y from top)
-      const drawText = (text: string, x: number, yFromTop: number, opts: { font?: typeof helvetica, size?: number, color?: [number, number, number], maxWidth?: number } = {}) => {
-        const font = opts.font ?? helvetica;
+      type FontType = typeof fontBold;
+      // Dark charcoal matching the WM brand (from logo)
+      const darkColor: [number, number, number] = [0.24, 0.27, 0.30];
+      const lightGray: [number, number, number] = [0.45, 0.47, 0.49];
+
+      // Helper: draw text (yFromTop = mm from top of page)
+      const drawT = (text: string, x: number, yMm: number, opts: { font?: FontType, size?: number, color?: [number, number, number] } = {}) => {
+        const font = opts.font ?? fontLight;
         const size = opts.size ?? 10;
-        const color = opts.color ?? [0, 0, 0];
-        page.drawText(text, {
-          x,
-          y: pageH - yFromTop,
-          size,
-          font,
+        const color = opts.color ?? darkColor;
+        page.drawText(text, { x, y: pageH - yMm * mm, size, font, color: rgb(color[0], color[1], color[2]) });
+      };
+
+      // Helper: draw right-aligned text
+      const drawTR = (text: string, yMm: number, opts: { font?: FontType, size?: number, color?: [number, number, number] } = {}) => {
+        const font = opts.font ?? fontLight;
+        const size = opts.size ?? 10;
+        const w = font.widthOfTextAtSize(text, size);
+        drawT(text, rightEdge - w, yMm, opts);
+      };
+
+      // Helper: draw centered text
+      const drawTC = (text: string, yMm: number, opts: { font?: FontType, size?: number, color?: [number, number, number] } = {}) => {
+        const font = opts.font ?? fontLight;
+        const size = opts.size ?? 10;
+        const w = font.widthOfTextAtSize(text, size);
+        drawT(text, (pageW - w) / 2, yMm, opts);
+      };
+
+      // Helper: draw a horizontal line
+      const drawLine = (x1: number, x2: number, yMm: number, thickness = 0.5, color: [number, number, number] = [0.7, 0.7, 0.7]) => {
+        page.drawLine({
+          start: { x: x1, y: pageH - yMm * mm },
+          end: { x: x2, y: pageH - yMm * mm },
+          thickness,
           color: rgb(color[0], color[1], color[2]),
-          maxWidth: opts.maxWidth,
         });
       };
 
-      // Helper to draw right-aligned text
-      const drawTextRight = (text: string, rightX: number, yFromTop: number, opts: { font?: typeof helvetica, size?: number, color?: [number, number, number] } = {}) => {
-        const font = opts.font ?? helvetica;
-        const size = opts.size ?? 10;
-        const width = font.widthOfTextAtSize(text, size);
-        drawText(text, rightX - width, yFromTop, opts);
-      };
-
-      // ═══ LOGO (if available) ═══
-      let logoEndY = 42; // Default start for company text if no logo
+      // ═══ 1. LOGO – centered at top, within 46.5mm area ═══
       if (comp.logoUrl) {
         try {
           const logoResponse = await fetch(comp.logoUrl);
@@ -942,177 +978,162 @@ export const qrBillRouter = router({
             ? await pdfDoc.embedPng(logoBytes)
             : await pdfDoc.embedJpg(logoBytes);
 
-          // Scale logo to fit within 150x45 area
-          const maxW = 150;
-          const maxH = 45;
-          const scale = Math.min(maxW / logoImage.width, maxH / logoImage.height);
+          // Logo should be ~160pt wide, centered, starting ~12mm from top
+          const maxLogoW = 180;
+          const maxLogoH = 70;
+          const scale = Math.min(maxLogoW / logoImage.width, maxLogoH / logoImage.height);
           const logoW = logoImage.width * scale;
           const logoH = logoImage.height * scale;
 
           page.drawImage(logoImage, {
-            x: leftM,
-            y: pageH - 42 - logoH,
+            x: (pageW - logoW) / 2,
+            y: pageH - 10 * mm - logoH,
             width: logoW,
             height: logoH,
           });
-          logoEndY = 42 + logoH + 8;
         } catch {
-          // Logo loading failed, continue without logo
+          // Logo loading failed, continue without
         }
       }
 
-      // ═══ COMPANY HEADER (below logo) ═══
-      let yPos = logoEndY;
-      drawText(comp.companyName, leftM, yPos, { font: helveticaBold, size: 11 });
-      yPos += 14;
-      const compColor: [number, number, number] = [0.27, 0.27, 0.27];
-      if (comp.street) { drawText(comp.street, leftM, yPos, { size: 8.5, color: compColor }); yPos += 11; }
-      drawText(`${comp.zipCode ?? ''} ${comp.city ?? ''}`, leftM, yPos, { size: 8.5, color: compColor });
-      yPos += 11;
-      if (comp.phone) { drawText(`Tel: ${comp.phone}`, leftM, yPos, { size: 8.5, color: compColor }); yPos += 11; }
-      if (comp.email) { drawText(comp.email, leftM, yPos, { size: 8.5, color: compColor }); yPos += 11; }
-
-      // ═══ RECIPIENT ADDRESS (right side, window envelope position) ═══
-      let addrY = 130;
+      // ═══ 2. RECIPIENT ADDRESS – left side, starting at ~50mm from top ═══
+      // Per Briefblatt: address window at 46.5mm from top, left margin 25mm
+      let addrY = 50; // mm from top
       if (input.recipientTitle) {
-        drawText(input.recipientTitle, 320, addrY, { size: 9 });
-        addrY += 14;
+        drawT(input.recipientTitle, leftM, addrY);
+        addrY += 5; // 14pt ≈ 5mm
       }
-      drawText(input.recipientName, 320, addrY, { font: helveticaBold, size: 10 });
-      addrY += 14;
-      drawText(input.recipientStreet, 320, addrY, { size: 9 });
-      addrY += 14;
-      drawText(`${input.recipientZip} ${input.recipientCity}`, 320, addrY, { size: 9 });
+      drawT(input.recipientName, leftM, addrY);
+      addrY += 5;
+      drawT(input.recipientStreet, leftM, addrY);
+      addrY += 5;
+      drawT(`${input.recipientZip} ${input.recipientCity}`, leftM, addrY);
 
-      // ═══ DATE AND REFERENCE (right-aligned) ═══
-      const grayColor: [number, number, number] = [0.4, 0.4, 0.4];
-      drawTextRight(`${comp.city ?? 'Luzern'}, ${dateStr}`, pageW - rightM, 220, { size: 9, color: grayColor });
-      if (referenceStr) {
-        drawTextRight(`Referenz: ${referenceStr}`, pageW - rightM, 234, { size: 9, color: grayColor });
-      }
+      // ═══ 3. DATE – left-aligned, ~85mm from top ═══
+      const city = comp.city ?? 'Luzern';
+      drawT(`${city}, ${dateStr}`, leftM, 85);
 
-      // ═══ SUBJECT LINE ═══
-      drawText(input.invoiceSubject, leftM, 270, { font: helveticaBold, size: 14 });
+      // ═══ 4. SUBJECT LINE – bold, ~100mm from top ═══
+      drawT(input.invoiceSubject, leftM, 100, { font: fontBold, size: 12 });
 
-      // ═══ SALUTATION & INTRO ═══
-      let textY = 300;
+      // ═══ 5. PERSONAL GREETING – ~110mm from top ═══
+      let bodyY = 110; // mm from top
       if (input.salutation) {
-        drawText(input.salutation, leftM, textY, { size: 10 });
-        textY += 20;
+        drawT(input.salutation, leftM, bodyY);
+        bodyY += 7;
       }
-      // Word-wrap intro text
-      const introLines = wrapText(input.introText, helvetica, 10, contentW);
+
+      // ═══ 6. INTRO TEXT – word-wrapped, 10pt, 14pt leading (~5mm) ═══
+      const introLines = wrapText(input.introText, fontLight, 10, contentW);
       for (const line of introLines) {
-        drawText(line, leftM, textY, { size: 10 });
-        textY += 14;
+        drawT(line, leftM, bodyY);
+        bodyY += 5; // 14pt ≈ 5mm
       }
-      textY += 10;
+      bodyY += 4;
 
-      // ═══ LINE ITEMS TABLE ═══
-      // Header
-      drawText("Pos.", leftM, textY, { font: helveticaBold, size: 8.5, color: grayColor });
-      drawText("Beschreibung", leftM + 35, textY, { font: helveticaBold, size: 8.5, color: grayColor });
-      drawTextRight(input.currency, pageW - rightM, textY, { font: helveticaBold, size: 8.5, color: grayColor });
-      textY += 12;
-      // Header line
-      page.drawLine({
-        start: { x: leftM, y: pageH - textY },
-        end: { x: pageW - rightM, y: pageH - textY },
-        thickness: 0.5,
-        color: rgb(0.8, 0.8, 0.8),
-      });
-      textY += 8;
+      // ═══ 7. LINE ITEMS – matching original template exactly ═══
+      // Format: "Description" left, "CHF" + amount right-aligned
+      // Amount column: right-aligned at rightEdge
+      // Currency column: ~25mm before amount right edge
+      const amtColRight = rightEdge; // right edge for amounts
+      const curColRight = rightEdge - 55; // "CHF" column
 
-      // Items
-      input.lineItems.forEach((item, idx) => {
-        drawText(`${idx + 1}.`, leftM, textY, { size: 9.5 });
-        drawText(item.description, leftM + 35, textY, { size: 9.5 });
-        drawTextRight(formatCHF(item.amount), pageW - rightM, textY, { size: 9.5 });
-        textY += 18;
-      });
+      for (let i = 0; i < input.lineItems.length; i++) {
+        const item = input.lineItems[i];
+        drawT(item.description, leftM, bodyY);
+        drawTR(formatCHF(item.amount), bodyY);
+        // Draw "CHF" before the amount
+        drawT(input.currency, curColRight, bodyY);
+        bodyY += 5;
+      }
 
-      // Subtotal separator
-      textY += 4;
-      page.drawLine({
-        start: { x: pageW - rightM - 200, y: pageH - textY },
-        end: { x: pageW - rightM, y: pageH - textY },
-        thickness: 0.5,
-        color: rgb(0.8, 0.8, 0.8),
-      });
-      textY += 8;
-
-      // Subtotal
-      drawText("Zwischensumme", pageW - rightM - 200, textY, { size: 9 });
-      drawTextRight(`${input.currency} ${formatCHF(subtotal)}`, pageW - rightM, textY, { size: 9 });
-      textY += 16;
-
-      // VAT
+      // ═══ 8. VAT LINE ═══
       if (input.vatRate > 0) {
-        const vatLabel = comp.uid
-          ? `MWST ${input.vatRate}% (MWST-Nr. ${comp.uid})`
-          : `MWST ${input.vatRate}%`;
-        drawText(vatLabel, pageW - rightM - 200, textY, { size: 9 });
-        drawTextRight(`${input.currency} ${formatCHF(vatAmount)}`, pageW - rightM, textY, { size: 9 });
-        textY += 16;
+        const vatLabel = `Mehrwertsteuer ${input.vatRate}% (MWST-Nr. ${comp.uid ?? 'CHE-101.177.334'})`;
+        drawT(vatLabel, leftM, bodyY);
+        drawT(input.currency, curColRight, bodyY);
+        drawTR(formatCHF(vatAmount), bodyY);
+        // Underline below VAT amount
+        bodyY += 1.5;
+        drawLine(curColRight - 5, rightEdge, bodyY, 0.5, darkColor);
+        bodyY += 4;
       }
 
-      // Total separator
-      page.drawLine({
-        start: { x: pageW - rightM - 200, y: pageH - textY },
-        end: { x: pageW - rightM, y: pageH - textY },
-        thickness: 1,
-        color: rgb(0, 0, 0),
-      });
-      textY += 8;
+      // ═══ 9. TOTAL LINE – "Saldo zu unseren Gunsten" bold ═══
+      drawT("Saldo zu unseren Gunsten", leftM, bodyY, { font: fontBold });
+      drawT(input.currency, curColRight, bodyY, { font: fontBold });
+      drawTR(formatCHF(total), bodyY, { font: fontBold });
+      // Double underline below total
+      bodyY += 1.5;
+      drawLine(curColRight - 5, rightEdge, bodyY, 0.8, darkColor);
+      drawLine(curColRight - 5, rightEdge, bodyY + 0.8, 0.8, darkColor);
+      bodyY += 6;
 
-      // Total
-      drawText("Total", pageW - rightM - 200, textY, { font: helveticaBold, size: 11 });
-      drawTextRight(`${input.currency} ${formatCHF(total)}`, pageW - rightM, textY, { font: helveticaBold, size: 11 });
-      textY += 28;
-
-      // ═══ PAYMENT TERMS ═══
-      drawText(`Zahlbar innert ${input.paymentDays} Tagen bis ${dueDateStr}.`, leftM, textY, { size: 9, color: grayColor });
-      textY += 20;
-
-      // ═══ CLOSING TEXT ═══
-      const closingLines = wrapText(input.closingText, helvetica, 10, contentW);
+      // ═══ 10. CLOSING TEXT with IBAN ═══
+      // Format IBAN with spaces for readability
+      const ibanFormatted = cleanIban.replace(/(.{4})/g, '$1 ').trim();
+      // Build closing text that includes IBAN reference like the original template
+      const closingWithIban = input.closingText.includes('IBAN')
+        ? input.closingText
+        : `Ich bitte Dich, diesen Betrag auf unser Konto, IBAN ${ibanFormatted}, zu überweisen. ${input.closingText}`;
+      const closingLines = wrapText(closingWithIban, fontLight, 10, contentW);
       for (const line of closingLines) {
-        drawText(line, leftM, textY, { size: 10 });
-        textY += 14;
+        drawT(line, leftM, bodyY);
+        bodyY += 5;
       }
-      textY += 10;
+      bodyY += 6;
 
-      // ═══ GREETING & SIGNATURE ═══
-      drawText(input.greeting, leftM, textY, { size: 10 });
-      textY += 28;
-      drawText(comp.companyName, leftM, textY, { font: helveticaBold, size: 10 });
-      textY += 16;
-      drawText(input.signerName, leftM, textY, { font: helveticaBold, size: 10 });
+      // ═══ 11. GREETING & SIGNATURE ═══
+      drawT(input.greeting, leftM, bodyY);
+      bodyY += 7;
+      // Company name line (like "WM Weibel Mueller AG")
+      drawT(comp.companyName, leftM, bodyY);
+      bodyY += 12;
+      // Signer name + title
+      drawT(input.signerName, leftM, bodyY);
       if (input.signerTitle) {
-        textY += 14;
-        drawText(input.signerTitle, leftM, textY, { size: 9 });
+        bodyY += 5;
+        drawT(input.signerTitle, leftM, bodyY);
       }
 
-      // ═══ FOOTER ═══
-      const footerParts = [comp.companyName];
-      if (comp.street) footerParts.push(comp.street);
-      if (comp.zipCode && comp.city) footerParts.push(`${comp.zipCode} ${comp.city}`);
-      const footerLine1 = footerParts.join(', ');
+      // ═══ 12. QR CODE IMAGE – centered, near bottom ═══
+      const QR_CODE_URL = "https://d2xsxph8kpxj0f.cloudfront.net/114467201/g3uYPYRzWxJLqW5bmLAtac/QRCodeMW_d48c71fc.png";
+      try {
+        const qrResponse = await fetch(QR_CODE_URL);
+        const qrBytes = new Uint8Array(await qrResponse.arrayBuffer());
+        const qrImage = await pdfDoc.embedPng(qrBytes);
+        const qrSize = 70; // 70pt ≈ 25mm
+        page.drawImage(qrImage, {
+          x: (pageW - qrSize) / 2,
+          y: pageH - 255 * mm,
+          width: qrSize,
+          height: qrSize,
+        });
+      } catch {
+        // QR code loading failed, skip
+      }
+
+      // ═══ 13. FOOTER – centered with divider line ═══
+      const footerY = 275; // mm from top
+      // Divider line
+      drawLine(leftM + 80, rightEdge - 80, footerY - 3, 0.5, lightGray);
+      // Footer line 1: Company name + description + address
+      const footerLine1 = `${comp.companyName}, Finanzberatung, ${comp.street ?? 'Grendelstrasse 2'}, ${comp.zipCode ?? '6004'} ${city}`;
+      drawTC(footerLine1, footerY, { size: 7, color: darkColor });
+      // Footer line 2: Phone + email + website
       const footerParts2: string[] = [];
       if (comp.phone) footerParts2.push(comp.phone);
       if (comp.email) footerParts2.push(comp.email);
       if (comp.website) footerParts2.push(comp.website);
       const footerLine2 = footerParts2.join(', ');
-
-      drawText(footerLine1, leftM, pageH - 22, { size: 7, color: grayColor });
       if (footerLine2) {
-        drawText(footerLine2, leftM, pageH - 12, { size: 7, color: grayColor });
+        drawTC(footerLine2, footerY + 3.5, { size: 7, color: lightGray });
       }
 
       // Save the first page as bytes
       const invoiceBytes = await pdfDoc.save();
 
-      // Now generate QR payment slip with pdfkit + swissqrbill
+      // ═══ PAGE 2: QR PAYMENT SLIP (swissqrbill) ═══
       const qrData: Data = {
         amount: total,
         currency: input.currency,
@@ -1121,7 +1142,7 @@ export const qrBillRouter = router({
           name: comp.companyName,
           address: comp.street ?? "",
           zip: parseInt(comp.zipCode ?? "0"),
-          city: comp.city ?? "",
+          city: city,
           country: "CH",
         },
         debtor: {

@@ -2722,6 +2722,165 @@ const vatRouter = router({
       return { periodId: (result as any).insertId };
     }),
 
+  detail: publicProcedure
+    .input(z.object({ vatPeriodId: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Get the VAT period
+      const [vp] = await db.select().from(vatPeriods).where(eq(vatPeriods.id, input.vatPeriodId));
+      if (!vp) throw new TRPCError({ code: "NOT_FOUND", message: "MWST-Periode nicht gefunden" });
+
+      const startDate = vp.startDate;
+      const endDate = vp.endDate;
+
+      // Get company settings for VAT method
+      const [settings] = await db.select().from(companySettings).limit(1);
+      const vatMethod = settings?.vatMethod ?? "effective";
+      const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
+
+      // Get all approved journal entries in the date range
+      const entries = await db.select({
+        entryId: journalEntries.id,
+        entryNumber: journalEntries.entryNumber,
+        bookingDate: journalEntries.bookingDate,
+        description: journalEntries.description,
+        source: journalEntries.source,
+      }).from(journalEntries)
+        .where(and(
+          eq(journalEntries.status, "approved"),
+          gte(journalEntries.bookingDate, startDate),
+          lte(journalEntries.bookingDate, endDate),
+        ))
+        .orderBy(asc(journalEntries.bookingDate));
+
+      if (entries.length === 0) {
+        return { period: vp, vatMethod, saldoRate, transactions: [] };
+      }
+
+      const entryIds = entries.map(e => e.entryId);
+
+      // Get all journal lines for these entries
+      const allLines = await db.select({
+        id: journalLines.id,
+        entryId: journalLines.entryId,
+        accountId: journalLines.accountId,
+        side: journalLines.side,
+        amount: journalLines.amount,
+        description: journalLines.description,
+        vatAmount: journalLines.vatAmount,
+        vatRate: journalLines.vatRate,
+      }).from(journalLines)
+        .where(inArray(journalLines.entryId, entryIds));
+
+      // Get all accounts for lookup
+      const allAccounts = await db.select({
+        id: accounts.id,
+        number: accounts.number,
+        name: accounts.name,
+        accountType: accounts.accountType,
+        isVatRelevant: accounts.isVatRelevant,
+        defaultVatRate: accounts.defaultVatRate,
+      }).from(accounts);
+
+      const accountMap = new Map(allAccounts.map(a => [a.id, a]));
+
+      // Build transaction details
+      type VatTransaction = {
+        entryId: number;
+        entryNumber: string | null;
+        bookingDate: string;
+        description: string;
+        source: string;
+        lines: Array<{
+          accountNumber: string;
+          accountName: string;
+          side: string;
+          amount: string;
+          vatRate: string | null;
+          vatAmount: string | null;
+          isVatRelevant: boolean;
+        }>;
+        totalAmount: number;
+        vatAmount: number;
+        effectiveVatRate: number;
+        category: 'revenue' | 'expense' | 'other';
+      };
+
+      const transactions: VatTransaction[] = [];
+
+      for (const entry of entries) {
+        const entryLines = allLines.filter(l => l.entryId === entry.entryId);
+        let entryTotalAmount = 0;
+        let entryVatAmount = 0;
+        let hasVatRelevantLine = false;
+        let category: 'revenue' | 'expense' | 'other' = 'other';
+
+        const lineDetails = entryLines.map(line => {
+          const acct = accountMap.get(line.accountId);
+          const lineVatRate = line.vatRate ? parseFloat(line.vatRate as string) : null;
+          const acctVatRate = acct?.defaultVatRate ? parseFloat(acct.defaultVatRate as string) : null;
+          const effectiveRate = lineVatRate ?? acctVatRate;
+
+          if (acct?.isVatRelevant) {
+            hasVatRelevantLine = true;
+            const amt = parseFloat(line.amount as string);
+            if (acct.accountType === 'revenue') {
+              category = 'revenue';
+              const signedAmt = line.side === 'credit' ? amt : -amt;
+              entryTotalAmount += signedAmt;
+              // Calculate VAT for this line
+              if (vatMethod === 'saldo') {
+                entryVatAmount += signedAmt * (saldoRate / 100);
+              } else {
+                const rate = effectiveRate ?? 8.1;
+                entryVatAmount += signedAmt * (rate / 100);
+              }
+            } else if (acct.accountType === 'expense') {
+              category = 'expense';
+              const signedAmt = line.side === 'debit' ? amt : -amt;
+              entryTotalAmount += signedAmt;
+              if (line.vatAmount) {
+                entryVatAmount += parseFloat(line.vatAmount as string);
+              }
+            }
+          }
+
+          return {
+            accountNumber: acct?.number ?? '?',
+            accountName: acct?.name ?? 'Unbekannt',
+            side: line.side,
+            amount: line.amount as string,
+            vatRate: effectiveRate !== null && effectiveRate !== undefined ? effectiveRate.toString() : null,
+            vatAmount: line.vatAmount as string | null,
+            isVatRelevant: acct?.isVatRelevant ?? false,
+          };
+        });
+
+        if (hasVatRelevantLine) {
+          const effectiveVatRate = entryTotalAmount !== 0
+            ? (entryVatAmount / entryTotalAmount) * 100
+            : 0;
+
+          transactions.push({
+            entryId: entry.entryId,
+            entryNumber: entry.entryNumber,
+            bookingDate: entry.bookingDate,
+            description: entry.description,
+            source: entry.source,
+            lines: lineDetails,
+            totalAmount: entryTotalAmount,
+            vatAmount: entryVatAmount,
+            effectiveVatRate,
+            category,
+          });
+        }
+      }
+
+      return { period: vp, vatMethod, saldoRate, transactions };
+    }),
+
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input, ctx }) => {

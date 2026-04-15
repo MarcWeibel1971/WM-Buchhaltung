@@ -685,3 +685,27 @@
 ## Cleanup: QR-Rechnung aus Einstellungen entfernen
 
 - [x] QR-Rechnung Tab/Bereich aus der Einstellungen-Seite entfernen (Funktion ist jetzt unter Zahlungen/Debitoren)
+
+## Feature: Rechnungsvorlage pixelgenau nach WM Briefblatt-Vermessung
+
+- [ ] Briefblatt_Vermassung.pdf analysieren für exakte Masse und Positionen
+- [ ] ZwoOT-Bold und ZwoOT-Light Fonts einbetten (statt Helvetica)
+- [ ] AcroForms-Template komplett neu erstellen mit korrekten Massen
+- [ ] Logo-Position, Absenderzeile, Empfänger-Fenster exakt positionieren
+- [ ] Positionen-Tabelle, MWST, Total korrekt ausrichten
+- [ ] Fusszeile mit Firmenadresse und Kontaktdaten
+- [ ] Backend-Endpoint aktualisieren für neues Template
+- [ ] PDF-Ausgabe visuell mit Original vergleichen und korrigieren
+
+## Feature: MWST-Abrechnung Transaktionsdetails
+
+- [ ] MWST-Abrechnung Dialog: Aufklappbare Detailansicht mit allen Transaktionen inkl. MWST-Anteil
+- [ ] MWST-Abrechnung: Export/Druckfunktion für detaillierte Transaktionsliste
+- [ ] Backend: Endpoint für MWST-relevante Transaktionen pro Periode mit MWST-Berechnung
+
+## MWST-Abrechnung: Aufklappbare Detailzeilen und Export/Druck
+- [x] MWST-Abrechnung: Aufklappbare Detailzeilen mit einzelnen Transaktionen inkl. MWST-Anteil
+- [x] MWST-Abrechnung: Backend-Endpunkt für detaillierte Transaktionsliste pro Periode
+- [x] MWST-Abrechnung: Export/Druckfunktion für detaillierte MWST-Abrechnung mit Transaktionen
+- [x] Fix: Stadt "Lucerne" → "Luzern" in Datenbank korrigiert
+- [x] Fix: Rechnungs-PDF mit pdf-lib komplett neu geschrieben (WM Logo, ZwoOT Fonts, exaktes Layout)

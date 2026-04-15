@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search, Plus, Trash2, Split } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search, Plus, Trash2, Split, Banknote, Download } from "lucide-react";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -37,6 +37,8 @@ export default function BankImport() {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [pendingFilter, setPendingFilter] = useState<number | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">("pending");
+  const [showCreditorExport, setShowCreditorExport] = useState(false);
+  const [creditorPayments, setCreditorPayments] = useState<Array<{id: number; creditorName: string; creditorIban: string; amount: number; reference?: string; selected: boolean}>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const ccPdfInputRef = useRef<HTMLInputElement>(null);
@@ -659,6 +661,27 @@ export default function BankImport() {
                 {detectTransfersMutation.isPending ? "Erkenne..." : "Kontoüberträge erkennen"}
               </Button>
             )}
+            {/* Creditor payment export */}
+            {isPending && (() => {
+              const creditorTxs = (transactions ?? []).filter(tx => tx.status === "pending" && parseFloat(String(tx.amount)) < 0 && tx.counterpartyIban);
+              return creditorTxs.length > 0 ? (
+                <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-purple-300 text-purple-700 hover:bg-purple-50"
+                  onClick={() => {
+                    setCreditorPayments(creditorTxs.map(tx => ({
+                      id: tx.id,
+                      creditorName: tx.counterparty ?? "Unbekannt",
+                      creditorIban: tx.counterpartyIban ?? "",
+                      amount: Math.abs(parseFloat(String(tx.amount))),
+                      reference: tx.reference ?? undefined,
+                      selected: true,
+                    })));
+                    setShowCreditorExport(true);
+                  }}>
+                  <Banknote className="h-3 w-3" />
+                  ISO 20022 Zahlung ({creditorTxs.length})
+                </Button>
+              ) : null;
+            })()}
             {/* Rückgängig-Button */}
             {currentSnapshot && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-red-300 text-red-700 hover:bg-red-50"
@@ -1529,12 +1552,129 @@ export default function BankImport() {
                 </Button>
               </a>
             )}
-            <Button variant="outline" onClick={() => setPreviewDoc(null)}>Schliessen</Button>
+              <Button variant="outline" onClick={() => setPreviewDoc(null)}>Schliessen</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-
+      {/* Creditor Payment Export Dialog */}
+      <CreditorExportDialog
+        open={showCreditorExport}
+        onOpenChange={setShowCreditorExport}
+        payments={creditorPayments}
+        setPayments={setCreditorPayments}
+      />
     </div>
+  );
+}
+
+// ─── Creditor Export Dialog ────────────────────────────────────────────────
+function CreditorExportDialog({ open, onOpenChange, payments, setPayments }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  payments: Array<{id: number; creditorName: string; creditorIban: string; amount: number; reference?: string; selected: boolean}>;
+  setPayments: React.Dispatch<React.SetStateAction<typeof payments>>;
+}) {
+  const [execDate, setExecDate] = useState(new Date().toISOString().slice(0, 10));
+  const generateMut = trpc.qrBill.generatePain001.useMutation({
+    onSuccess: (data) => {
+      // Download the XML file
+      const blob = new Blob([data.xml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`pain.001 Zahlungsdatei erstellt (${data.summary.nbOfTxs} Zahlungen, CHF ${data.summary.ctrlSum})`);
+      onOpenChange(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const selectedPayments = payments.filter(p => p.selected);
+  const totalAmount = selectedPayments.reduce((s, p) => s + p.amount, 0);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>ISO 20022 Zahlungsdatei (pain.001) – Kreditorenzahlungen</DialogTitle>
+          <DialogDescription>
+            Wählen Sie die offenen Kreditorenzahlungen aus und exportieren Sie eine pain.001 XML-Datei für Ihre Bank.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="flex gap-3 items-center">
+            <Label className="text-sm shrink-0">Ausführungsdatum:</Label>
+            <Input type="date" value={execDate} onChange={e => setExecDate(e.target.value)} className="w-44" />
+          </div>
+          <div className="border rounded-lg max-h-72 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="p-2 text-left w-8">
+                    <Checkbox
+                      checked={payments.length > 0 && payments.every(p => p.selected)}
+                      onCheckedChange={(checked) => {
+                        setPayments(prev => prev.map(p => ({ ...p, selected: !!checked })));
+                      }}
+                    />
+                  </th>
+                  <th className="p-2 text-left">Kreditor</th>
+                  <th className="p-2 text-left">IBAN</th>
+                  <th className="p-2 text-right">Betrag</th>
+                  <th className="p-2 text-left">Referenz</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((p, i) => (
+                  <tr key={p.id} className={`border-t ${p.selected ? "" : "opacity-50"}`}>
+                    <td className="p-2">
+                      <Checkbox
+                        checked={p.selected}
+                        onCheckedChange={(checked) => {
+                          setPayments(prev => prev.map((pp, j) => j === i ? { ...pp, selected: !!checked } : pp));
+                        }}
+                      />
+                    </td>
+                    <td className="p-2">{p.creditorName}</td>
+                    <td className="p-2 font-mono text-xs">{p.creditorIban}</td>
+                    <td className="p-2 text-right font-mono">{formatCHF(p.amount)}</td>
+                    <td className="p-2 text-xs text-muted-foreground truncate max-w-32">{p.reference || "–"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-muted-foreground">{selectedPayments.length} von {payments.length} Zahlungen ausgewählt</span>
+            <span className="font-semibold">Total: CHF {formatCHF(totalAmount)}</span>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Abbrechen</Button>
+          <Button
+            disabled={selectedPayments.length === 0 || generateMut.isPending}
+            onClick={() => {
+              generateMut.mutate({
+                paymentType: "creditor",
+                payments: selectedPayments.map(p => ({
+                  creditorName: p.creditorName,
+                  creditorIban: p.creditorIban,
+                  amount: p.amount,
+                  currency: "CHF",
+                  reference: p.reference,
+                  remittanceInfo: p.reference ? `Zahlung Ref. ${p.reference}` : `Zahlung an ${p.creditorName}`,
+                })),
+                executionDate: execDate,
+              });
+            }}
+          >
+            {generateMut.isPending ? "Erstelle..." : <><Download className="h-4 w-4 mr-1" /> pain.001 exportieren</>}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

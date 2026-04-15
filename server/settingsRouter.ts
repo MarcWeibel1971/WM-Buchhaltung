@@ -642,4 +642,160 @@ export const settingsRouter = router({
       }).where(eq(accounts.id, input.id));
       return { success: true };
     }),
+
+  // ─── Bulk Import Accounts ─────────────────────────────────────────────────
+  bulkImportAccounts: protectedProcedure
+    .input(z.object({
+      accounts: z.array(z.object({
+        number: z.string().min(1).max(10),
+        name: z.string().min(1).max(200),
+        accountType: z.enum(["asset", "liability", "expense", "revenue", "equity"]),
+        category: z.string().max(100).optional(),
+        subCategory: z.string().max(100).optional(),
+      })),
+      mode: z.enum(["merge", "replace"]).default("merge"),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      if (input.mode === "replace") {
+        // Check which accounts have journal lines
+        const usedAccounts = await db.select({ accountId: journalLines.accountId })
+          .from(journalLines)
+          .groupBy(journalLines.accountId);
+        const usedIds = new Set(usedAccounts.map(u => u.accountId));
+
+        // Delete unused accounts
+        const allAccs = await db.select().from(accounts);
+        for (const acc of allAccs) {
+          if (!usedIds.has(acc.id)) {
+            await db.delete(accounts).where(eq(accounts.id, acc.id));
+          }
+        }
+      }
+
+      for (const acc of input.accounts) {
+        const normalBalance = (acc.accountType === "liability" || acc.accountType === "revenue" || acc.accountType === "equity") ? "credit" : "debit";
+        const existing = await db.select().from(accounts).where(eq(accounts.number, acc.number)).limit(1);
+
+        if (existing.length > 0) {
+          if (input.mode === "merge") {
+            // Update name and categories if changed
+            await db.update(accounts).set({
+              name: acc.name,
+              category: acc.category ?? null,
+              subCategory: acc.subCategory ?? null,
+            }).where(eq(accounts.id, existing[0].id));
+            updated++;
+          } else {
+            skipped++;
+          }
+        } else {
+          await db.insert(accounts).values({
+            number: acc.number,
+            name: acc.name,
+            accountType: acc.accountType,
+            normalBalance,
+            category: acc.category ?? null,
+            subCategory: acc.subCategory ?? null,
+            isActive: true,
+            sortOrder: parseInt(acc.number) || 0,
+          });
+          created++;
+        }
+      }
+
+      return { success: true, created, updated, skipped };
+    }),
+
+  // ─── KMU-Kontenplan Template ──────────────────────────────────────────────
+  getKmuTemplate: protectedProcedure.query(async () => {
+    // Standard Swiss KMU chart of accounts based on Käfer-Kontenrahmen
+    return {
+      name: "Schweizer KMU-Kontenrahmen (Käfer)",
+      description: "Standardkontenplan für kleine und mittlere Unternehmen in der Schweiz, basierend auf dem Käfer-Kontenrahmen.",
+      accounts: [
+        // 1 - Aktiven
+        // 10 - Umlaufvermögen
+        { number: "1000", name: "Kasse", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Flüssige Mittel" },
+        { number: "1010", name: "Post", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Flüssige Mittel" },
+        { number: "1020", name: "Bank", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Flüssige Mittel" },
+        { number: "1100", name: "Debitoren (Forderungen aus L+L)", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Forderungen" },
+        { number: "1109", name: "Delkredere", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Forderungen" },
+        { number: "1170", name: "Vorsteuer (Vorsteuer auf Materialaufwand)", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Forderungen" },
+        { number: "1171", name: "Vorsteuer (Vorsteuer auf Investitionen)", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Forderungen" },
+        { number: "1176", name: "Verrechnungssteuer", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Forderungen" },
+        { number: "1200", name: "Warenvorrat / Handelswaren", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Vorräte" },
+        { number: "1210", name: "Rohmaterial", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Vorräte" },
+        { number: "1300", name: "Aktive Rechnungsabgrenzung", accountType: "asset" as const, category: "Umlaufvermögen", subCategory: "Transitorische Aktiven" },
+        // 14-15 - Anlagevermögen
+        { number: "1400", name: "Wertschriften", accountType: "asset" as const, category: "Anlagevermögen", subCategory: "Finanzanlagen" },
+        { number: "1440", name: "Darlehen", accountType: "asset" as const, category: "Anlagevermögen", subCategory: "Finanzanlagen" },
+        { number: "1500", name: "Maschinen und Apparate", accountType: "asset" as const, category: "Anlagevermögen", subCategory: "Mobile Sachanlagen" },
+        { number: "1510", name: "Mobiliar und Einrichtungen", accountType: "asset" as const, category: "Anlagevermögen", subCategory: "Mobile Sachanlagen" },
+        { number: "1520", name: "Büromaschinen / Informatik", accountType: "asset" as const, category: "Anlagevermögen", subCategory: "Mobile Sachanlagen" },
+        { number: "1530", name: "Fahrzeuge", accountType: "asset" as const, category: "Anlagevermögen", subCategory: "Mobile Sachanlagen" },
+        { number: "1600", name: "Immobilien", accountType: "asset" as const, category: "Anlagevermögen", subCategory: "Immobile Sachanlagen" },
+        // 2 - Passiven
+        // 20 - Fremdkapital
+        { number: "2000", name: "Kreditoren (Verbindlichkeiten aus L+L)", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Kurzfristiges Fremdkapital" },
+        { number: "2030", name: "Kontokorrent Sozialversicherungen", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Kurzfristiges Fremdkapital" },
+        { number: "2100", name: "Bankverbindlichkeiten kurzfristig", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Kurzfristiges Fremdkapital" },
+        { number: "2200", name: "Geschuldete MWST", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Kurzfristiges Fremdkapital" },
+        { number: "2206", name: "Verrechnungssteuer", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Kurzfristiges Fremdkapital" },
+        { number: "2300", name: "Passive Rechnungsabgrenzung", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Transitorische Passiven" },
+        { number: "2400", name: "Bankverbindlichkeiten langfristig", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Langfristiges Fremdkapital" },
+        { number: "2450", name: "Hypotheken", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Langfristiges Fremdkapital" },
+        { number: "2500", name: "Rückstellungen", accountType: "liability" as const, category: "Fremdkapital", subCategory: "Langfristiges Fremdkapital" },
+        // 28 - Eigenkapital
+        { number: "2800", name: "Aktienkapital / Stammkapital", accountType: "equity" as const, category: "Eigenkapital", subCategory: "Eigenkapital" },
+        { number: "2900", name: "Gesetzliche Reserven", accountType: "equity" as const, category: "Eigenkapital", subCategory: "Reserven" },
+        { number: "2950", name: "Gewinnvortrag / Verlustvortrag", accountType: "equity" as const, category: "Eigenkapital", subCategory: "Reserven" },
+        { number: "2979", name: "Jahresgewinn / Jahresverlust", accountType: "equity" as const, category: "Eigenkapital", subCategory: "Reserven" },
+        // 3 - Ertrag
+        { number: "3000", name: "Produktionserlöse / Dienstleistungserlöse", accountType: "revenue" as const, category: "Dienstleistungsertrag", subCategory: "Betriebsertrag" },
+        { number: "3200", name: "Handelserlöse", accountType: "revenue" as const, category: "Dienstleistungsertrag", subCategory: "Betriebsertrag" },
+        { number: "3400", name: "Übrige Erlöse", accountType: "revenue" as const, category: "Dienstleistungsertrag", subCategory: "Betriebsertrag" },
+        { number: "3800", name: "Erlösminderungen", accountType: "revenue" as const, category: "Dienstleistungsertrag", subCategory: "Erlösminderungen" },
+        { number: "3900", name: "Eigenleistungen / Eigenverbrauch", accountType: "revenue" as const, category: "Dienstleistungsertrag", subCategory: "Eigenleistungen" },
+        // 4 - Aufwand
+        { number: "4000", name: "Materialaufwand / Warenaufwand", accountType: "expense" as const, category: "Drittaufwand", subCategory: "Materialaufwand" },
+        { number: "4200", name: "Handelswarenaufwand", accountType: "expense" as const, category: "Drittaufwand", subCategory: "Materialaufwand" },
+        { number: "4400", name: "Drittleistungen", accountType: "expense" as const, category: "Drittaufwand", subCategory: "Drittleistungen" },
+        // 5 - Personalaufwand
+        { number: "5000", name: "Löhne", accountType: "expense" as const, category: "Personalaufwand", subCategory: "Löhne" },
+        { number: "5700", name: "Sozialversicherungsaufwand", accountType: "expense" as const, category: "Personalaufwand", subCategory: "Sozialleistungen" },
+        { number: "5800", name: "Übriger Personalaufwand", accountType: "expense" as const, category: "Personalaufwand", subCategory: "Übriger Personalaufwand" },
+        { number: "5810", name: "Aus- und Weiterbildung", accountType: "expense" as const, category: "Personalaufwand", subCategory: "Übriger Personalaufwand" },
+        { number: "5820", name: "Spesen", accountType: "expense" as const, category: "Personalaufwand", subCategory: "Übriger Personalaufwand" },
+        // 6 - Übriger Betriebsaufwand
+        { number: "6000", name: "Raumaufwand / Miete", accountType: "expense" as const, category: "Mietaufwand", subCategory: "Raumaufwand" },
+        { number: "6100", name: "Unterhalt und Reparaturen", accountType: "expense" as const, category: "Unterhalt und Reparatur", subCategory: "Unterhalt" },
+        { number: "6200", name: "Fahrzeugaufwand", accountType: "expense" as const, category: "Unterhalt und Reparatur", subCategory: "Fahrzeuge" },
+        { number: "6300", name: "Versicherungen", accountType: "expense" as const, category: "Versicherungen", subCategory: "Sachversicherungen" },
+        { number: "6400", name: "Energie- und Entsorgungsaufwand", accountType: "expense" as const, category: "Betriebs- und Hilfsmaterial", subCategory: "Energie" },
+        { number: "6500", name: "Verwaltungsaufwand", accountType: "expense" as const, category: "Verwaltungsaufwand", subCategory: "Büroaufwand" },
+        { number: "6510", name: "Telefon / Internet", accountType: "expense" as const, category: "Verwaltungsaufwand", subCategory: "Kommunikation" },
+        { number: "6520", name: "Buchführung / Beratung", accountType: "expense" as const, category: "Verwaltungsaufwand", subCategory: "Beratung" },
+        { number: "6570", name: "Informatikaufwand", accountType: "expense" as const, category: "Verwaltungsaufwand", subCategory: "Informatik" },
+        { number: "6600", name: "Werbeaufwand", accountType: "expense" as const, category: "Werbeaufwand", subCategory: "Werbung" },
+        { number: "6700", name: "Übriger Betriebsaufwand", accountType: "expense" as const, category: "Übriger Aufwand", subCategory: "Diverses" },
+        // 68 - Abschreibungen
+        { number: "6800", name: "Abschreibungen auf Sachanlagen", accountType: "expense" as const, category: "Abschreibungen", subCategory: "Sachanlagen" },
+        { number: "6900", name: "Finanzaufwand", accountType: "expense" as const, category: "Zinsaufwand", subCategory: "Finanzaufwand" },
+        { number: "6950", name: "Finanzertrag", accountType: "revenue" as const, category: "Kapitalertrag", subCategory: "Finanzertrag" },
+        // 7/8 - Betriebsfremder Aufwand/Ertrag
+        { number: "7000", name: "Betriebsfremder Aufwand", accountType: "expense" as const, category: "Übriger Aufwand", subCategory: "Betriebsfremd" },
+        { number: "7500", name: "Ausserordentlicher Aufwand", accountType: "expense" as const, category: "Übriger Aufwand", subCategory: "Ausserordentlich" },
+        { number: "8000", name: "Betriebsfremder Ertrag", accountType: "revenue" as const, category: "Übriger Ertrag", subCategory: "Betriebsfremd" },
+        { number: "8500", name: "Ausserordentlicher Ertrag", accountType: "revenue" as const, category: "Übriger Ertrag", subCategory: "Ausserordentlich" },
+        { number: "9000", name: "Eröffnungsbilanz", accountType: "equity" as const, category: "Eigenkapital", subCategory: "Eröffnung" },
+      ],
+    };
+  }),
 });

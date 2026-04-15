@@ -23,7 +23,16 @@ import {
   Pencil, Trash2, Plus, Check, X, AlertTriangle, TrendingDown, Loader2,
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   QrCode, ShieldCheck, FileText, Download, UserX, ClipboardList,
+  ArrowUpDown, FileSpreadsheet, LayoutTemplate,
 } from "lucide-react";
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useMemo, useState as useReactState } from "react";
 import { toast } from "sonner";
@@ -1672,6 +1681,19 @@ function ChartOfAccountsTab() {
     onSuccess: () => refetch(),
     onError: (e) => toast.error(e.message),
   });
+  const reorderMut = trpc.settings.updateAccountSortOrder.useMutation({
+    onSuccess: () => refetch(),
+    onError: (e) => toast.error(e.message),
+  });
+  const bulkImportMut = trpc.settings.bulkImportAccounts.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import: ${data.created} erstellt, ${data.updated} aktualisiert, ${data.skipped} übersprungen`);
+      refetch();
+      setShowImport(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const { data: kmuTemplate } = trpc.settings.getKmuTemplate.useQuery();
 
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
   const [expandedSubs, setExpandedSubs] = useState<Set<string>>(new Set());
@@ -1679,8 +1701,20 @@ function ChartOfAccountsTab() {
   const [editName, setEditName] = useState("");
   const [editNumber, setEditNumber] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [showKmuConfirm, setShowKmuConfirm] = useState(false);
+  const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
+  const [importPreview, setImportPreview] = useState<Array<{number: string; name: string; accountType: string; category?: string; subCategory?: string}>>([]);
+  const [dragEnabled, setDragEnabled] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showInactive, setShowInactive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
 
   // Add form state
   const [addNumber, setAddNumber] = useState("");
@@ -1785,9 +1819,18 @@ function ChartOfAccountsTab() {
             {activeAccounts} aktive Konten von {totalAccounts} total
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={expandAll}>Alle öffnen</Button>
           <Button variant="outline" size="sm" onClick={collapseAll}>Alle schliessen</Button>
+          <Button variant={dragEnabled ? "default" : "outline"} size="sm" onClick={() => setDragEnabled(!dragEnabled)}>
+            <ArrowUpDown className="h-4 w-4 mr-1" /> {dragEnabled ? "Sortierung beenden" : "Sortieren"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setShowKmuConfirm(true)}>
+            <LayoutTemplate className="h-4 w-4 mr-1" /> KMU-Vorlage
+          </Button>
           <Button size="sm" onClick={() => setShowAdd(true)}>
             <Plus className="h-4 w-4 mr-1" /> Neues Konto
           </Button>
@@ -1899,14 +1942,25 @@ function ChartOfAccountsTab() {
                     </button>
 
                     {expandedSubs.has(sub.key) && (
-                      <div className="pl-6">
+                      <SortableAccountList
+                        accounts={sub.accounts}
+                        dragEnabled={dragEnabled}
+                        onDragEnd={(oldIndex, newIndex) => {
+                          const reordered = arrayMove(sub.accounts, oldIndex, newIndex);
+                          const updates = reordered.map((a, i) => ({ id: a.id, sortOrder: i }));
+                          reorderMut.mutate({ updates });
+                        }}
+                      >
                         {sub.accounts.map((acc: AccountRow) => (
-                          <div
-                            key={acc.id}
-                            className={`flex items-center gap-3 px-3 py-2 border-b last:border-b-0 text-sm group hover:bg-muted/20 transition-colors ${
-                              !acc.isActive ? "opacity-50" : ""
-                            }`}
-                          >
+                          <SortableAccountRow key={acc.id} id={acc.id} dragEnabled={dragEnabled}>
+                            <div
+                              className={`flex items-center gap-3 px-3 py-2 border-b last:border-b-0 text-sm group hover:bg-muted/20 transition-colors ${
+                                !acc.isActive ? "opacity-50" : ""
+                              }`}
+                            >
+                            {dragEnabled && (
+                              <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab shrink-0" />
+                            )}
                             {/* Account number */}
                             {editingId === acc.id ? (
                               <Input
@@ -2015,8 +2069,9 @@ function ChartOfAccountsTab() {
                               </div>
                             )}
                           </div>
+                          </SortableAccountRow>
                         ))}
-                      </div>
+                      </SortableAccountList>
                     )}
                   </div>
                 ))}
@@ -2031,7 +2086,202 @@ function ChartOfAccountsTab() {
           {searchTerm ? "Keine Konten gefunden für diese Suche." : "Noch keine Konten vorhanden."}
         </div>
       )}
+
+      {/* Import Dialog */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Kontenplan importieren</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Laden Sie eine Excel- oder CSV-Datei hoch. Die Datei muss mindestens die Spalten
+              "Nummer" (oder "Konto") und "Name" (oder "Bezeichnung") enthalten.
+            </p>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" /> Datei wählen
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const XLSX = await import("xlsx");
+                    const data = await file.arrayBuffer();
+                    const wb = XLSX.read(data);
+                    const ws = wb.Sheets[wb.SheetNames[0]];
+                    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+                    const parsed = rows.map((r: Record<string, any>) => {
+                      const num = String(r["Nummer"] ?? r["Konto"] ?? r["Nr"] ?? r["number"] ?? "").trim();
+                      const name = String(r["Name"] ?? r["Bezeichnung"] ?? r["Kontoname"] ?? r["name"] ?? "").trim();
+                      const cat = String(r["Kategorie"] ?? r["category"] ?? "").trim() || undefined;
+                      const sub = String(r["Unterkategorie"] ?? r["subCategory"] ?? "").trim() || undefined;
+                      // Determine account type from number
+                      const n = parseInt(num);
+                      let accountType: string = "expense";
+                      if (n >= 1000 && n < 2000) accountType = "asset";
+                      else if (n >= 2000 && n < 2800) accountType = "liability";
+                      else if (n >= 2800 && n < 3000) accountType = "equity";
+                      else if (n >= 3000 && n < 4000) accountType = "revenue";
+                      else if (n >= 4000 && n < 9000) accountType = "expense";
+                      else if (n >= 9000) accountType = "equity";
+                      return { number: num, name, accountType, category: cat, subCategory: sub };
+                    }).filter((a: any) => a.number && a.name);
+                    setImportPreview(parsed);
+                    toast.success(`${parsed.length} Konten aus Datei gelesen`);
+                  } catch (err) {
+                    toast.error("Fehler beim Lesen der Datei");
+                  }
+                  e.target.value = "";
+                }}
+              />
+              <Select value={importMode} onValueChange={(v: any) => setImportMode(v)}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="merge">Zusammenführen (Merge)</SelectItem>
+                  <SelectItem value="replace">Ersetzen (Replace)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {importMode === "replace" && (
+              <p className="text-sm text-destructive">
+                Achtung: Im Ersetzen-Modus werden alle Konten ohne Buchungen gelöscht und durch die importierten ersetzt.
+              </p>
+            )}
+            {importPreview.length > 0 && (
+              <div className="border rounded-lg max-h-64 overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nr.</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Typ</TableHead>
+                      <TableHead>Kategorie</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview.slice(0, 50).map((a, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-mono text-xs">{a.number}</TableCell>
+                        <TableCell className="text-sm">{a.name}</TableCell>
+                        <TableCell><Badge variant="outline" className="text-xs">{ACCOUNT_TYPE_LABELS[a.accountType] || a.accountType}</Badge></TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{a.category || "-"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {importPreview.length > 50 && (
+                  <p className="text-xs text-muted-foreground p-2 text-center">... und {importPreview.length - 50} weitere</p>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowImport(false); setImportPreview([]); }}>Abbrechen</Button>
+            <Button
+              onClick={() => bulkImportMut.mutate({ accounts: importPreview as any, mode: importMode })}
+              disabled={importPreview.length === 0 || bulkImportMut.isPending}
+            >
+              {bulkImportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
+              {importPreview.length} Konten importieren
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* KMU Template Confirm Dialog */}
+      <Dialog open={showKmuConfirm} onOpenChange={setShowKmuConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Schweizer KMU-Kontenrahmen laden</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {kmuTemplate?.description}
+            </p>
+            <p className="text-sm">
+              Der Standard-Kontenplan enthält <strong>{kmuTemplate?.accounts.length ?? 0} Konten</strong> nach dem
+              Käfer-Kontenrahmen. Bestehende Konten mit gleicher Nummer werden aktualisiert, neue werden hinzugefügt.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowKmuConfirm(false)}>Abbrechen</Button>
+            <Button
+              onClick={() => {
+                if (kmuTemplate) {
+                  bulkImportMut.mutate({ accounts: kmuTemplate.accounts as any, mode: "merge" });
+                  setShowKmuConfirm(false);
+                }
+              }}
+              disabled={bulkImportMut.isPending}
+            >
+              {bulkImportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <LayoutTemplate className="h-4 w-4 mr-1" />}
+              KMU-Vorlage laden
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+// ─── Sortable Account Components ────────────────────────────────────────────────
+
+function SortableAccountRow({ id, dragEnabled, children }: { id: number; dragEnabled: boolean; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled: !dragEnabled });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: "relative" as const,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...(dragEnabled ? listeners : {})}>
+      {children}
+    </div>
+  );
+}
+
+function SortableAccountList({ accounts, dragEnabled, onDragEnd, children }: {
+  accounts: AccountRow[];
+  dragEnabled: boolean;
+  onDragEnd: (oldIndex: number, newIndex: number) => void;
+  children: React.ReactNode;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = accounts.findIndex(a => a.id === active.id);
+    const newIndex = accounts.findIndex(a => a.id === over.id);
+    if (oldIndex !== -1 && newIndex !== -1) {
+      onDragEnd(oldIndex, newIndex);
+    }
+  };
+
+  if (!dragEnabled) {
+    return <div className="pl-6">{children}</div>;
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={accounts.map(a => a.id)} strategy={verticalListSortingStrategy}>
+        <div className="pl-6">{children}</div>
+      </SortableContext>
+    </DndContext>
   );
 }
 

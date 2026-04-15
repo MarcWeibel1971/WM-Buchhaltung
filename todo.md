@@ -498,9 +498,9 @@
 - [x] Frontend: Inaktive Konten ein-/ausblenden Toggle
 - [x] Frontend: Neues Konto erstellen Dialog
 - [x] Fix: Abschreibungen-Seite zeigt Anlagekonten (1100-1899) im Anlagekonto-Dropdown
-- [ ] Frontend: Drag-and-Drop zum Verschieben von Konten (spätere Phase)
-- [ ] Frontend: Upload-Bereich für eigenen Kontenplan PDF/Excel (spätere Phase)
-- [ ] Frontend: Standard-KMU-Kontenplan als Vorlage für Neukunden (spätere Phase)
+- [x] Frontend: Drag-and-Drop zum Verschieben von Konten (Sortieren-Button mit @dnd-kit)
+- [x] Frontend: Upload-Bereich für eigenen Kontenplan Excel/CSV (Import-Dialog mit xlsx-Parsing)
+- [x] Frontend: Standard-KMU-Kontenplan als Vorlage für Neukunden (63 Konten nach Käfer-Kontenrahmen)
 
 
 ## Bug: LUKB jm Transaktion bei LUKB mw Filter sichtbar
@@ -581,7 +581,7 @@
 - [x] Backend: ISO 20022 pain.001 XML-Generator implementieren (Schweizer Format pain.001.001.09)
 - [x] Backend: tRPC-Endpunkt generatePain001 – erzeugt pain.001 XML für Lohnzahlungen
 - [x] Frontend: Zahlungsdatei-Export-Button in Lohnbuchhaltung (Sammellohnzahlung als pain.001)
-- [ ] Frontend: Zahlungsdatei-Export im Bankimport/Journal für offene Kreditorenrechnungen (noch offen)
+- [x] Frontend: Zahlungsdatei-Export im Bankimport für offene Kreditorenrechnungen (ISO 20022 Zahlung-Button mit Dialog)
 
 ## Feature: DSG-Konformität (Schweizer Datenschutzgesetz)
 

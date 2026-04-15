@@ -8,6 +8,7 @@ import { FiscalYearProvider } from "./contexts/FiscalYearContext";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
 import { Loader2 } from "lucide-react";
+import { trpc } from "@/lib/trpc";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
@@ -24,6 +25,7 @@ import YearEnd from "./pages/YearEnd";
 import QrBillGenerator from "./pages/QrBillGenerator";
 import Kreditoren from "./pages/Kreditoren";
 import TimeTracking from "./pages/TimeTracking";
+import Onboarding from "./pages/Onboarding";
 import Layout from "./components/Layout";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -68,6 +70,65 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Phase 1c OrgGuard: Stellt sicher, dass der eingeloggte User eine aktive
+ * Organisation hat. Falls nicht, wird die Onboarding-Seite angezeigt, auf der
+ * der User eine neue Firma anlegen kann.
+ *
+ * Verhalten:
+ * - User ohne Memberships      → Onboarding
+ * - User mit Memberships, aber keine currentOrganizationId → erste Org aktivieren
+ * - User mit aktiver Org       → Kinder rendern
+ */
+function OrgGuard({ children }: { children: React.ReactNode }) {
+  const utils = trpc.useUtils();
+  const orgsQuery = trpc.organizations.listMine.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const setCurrent = trpc.organizations.setCurrent.useMutation({
+    onSuccess: async () => {
+      await utils.auth.me.invalidate();
+    },
+  });
+
+  if (orgsQuery.isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Organisation wird geladen...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const orgs = orgsQuery.data ?? [];
+
+  // Kein Mitglied in einer Org → Onboarding
+  if (orgs.length === 0) {
+    return <Onboarding />;
+  }
+
+  // Mitglied, aber keine aktuelle Org → erste verfügbare aktivieren
+  const hasCurrent = orgs.some((o) => o.isCurrent);
+  if (!hasCurrent) {
+    if (!setCurrent.isPending && !setCurrent.isSuccess) {
+      setCurrent.mutate({ organizationId: orgs[0].id });
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Organisation wird aktiviert...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 function Router() {
   return (
     <Switch>
@@ -100,11 +161,13 @@ function App() {
         <TooltipProvider>
           <Toaster position="top-right" richColors />
           <AuthGuard>
-            <FiscalYearProvider>
-              <Layout>
-                <Router />
-              </Layout>
-            </FiscalYearProvider>
+            <OrgGuard>
+              <FiscalYearProvider>
+                <Layout>
+                  <Router />
+                </Layout>
+              </FiscalYearProvider>
+            </OrgGuard>
           </AuthGuard>
         </TooltipProvider>
       </ThemeProvider>

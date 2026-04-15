@@ -26,6 +26,7 @@ import { dsgRouter } from "./dsgRouter";
 import { suppliersRouter } from "./suppliersRouter";
 import { timeTrackingRouter } from "./timeTrackingRouter";
 import { customersRouter } from "./customersRouter";
+import { organizationsRouter } from "./organizationsRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -769,6 +770,7 @@ const bankImportRouter = router({
           .update(`${input.bankAccountId}-${transactionDate}-${tx.amount}-${tx.description}`)
           .digest("hex");
         const saved = await saveBankTransaction({
+          organizationId: ctx.organizationId,
           bankAccountId: input.bankAccountId,
           transactionDate,
           valueDate,
@@ -791,6 +793,7 @@ const bankImportRouter = router({
       if (db && input.filename) {
         try {
           await db.insert(importHistory).values({
+            organizationId: ctx.organizationId,
             bankAccountId: input.bankAccountId,
             filename: input.filename,
             fileType: input.fileType ?? "unknown",
@@ -1837,6 +1840,7 @@ const creditCardRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       const [result] = await db.insert(creditCardStatements).values({
+        organizationId: ctx.organizationId,
         statementDate: toDateStr(input.statementDate) as string,
         totalAmount: input.totalAmount,
         owner: "mw",
@@ -2048,6 +2052,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
 
       // Save as credit card statement
       await db.insert(creditCardStatements).values({
+        organizationId: ctx.organizationId,
         statementDate: dateStr,
         totalAmount: totalAmount.toFixed(2),
         owner: "mw",
@@ -2147,6 +2152,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
           .where(eq(creditCardStatements.id, input.statementId));
       } else {
         await db.insert(creditCardStatements).values({
+          organizationId: ctx.organizationId,
           statementDate: dateStr as string,
           totalAmount: itemsTotal.toFixed(2),
           owner: "mw",
@@ -2236,6 +2242,7 @@ const payrollRouter = router({
       const totalEmployerCost = gross + ahvEmpr + bvgEmpr + ktgEmpr;
 
       const [result] = await db.insert(payrollEntries).values({
+        organizationId: ctx.organizationId,
         employeeId: input.employeeId,
         year: input.year,
         month: input.month,
@@ -2591,6 +2598,7 @@ const payrollRouter = router({
           updated++;
         } else {
           await db.insert(payrollEntries).values({
+            organizationId: ctx.organizationId,
             employeeId: emp.id,
             year: g.year,
             month: g.month,
@@ -2970,18 +2978,20 @@ const vatRouter = router({
       const startDate = toDateStr(input.startDate) as string;
       const endDate = toDateStr(input.endDate) as string;
 
-      // Get company settings to determine VAT method
-      const [settings] = await db.select().from(companySettings).limit(1);
+      // Get company settings to determine VAT method (scoped to this org)
+      const [settings] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
       const vatMethod = settings?.vatMethod ?? "effective";
       const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
 
-      // Calculate turnover from approved journal entries in the period
-      // Get all approved journal entries in the date range
+      // Calculate turnover from approved journal entries in the period (scoped)
       const entries = await db.select({
         entryId: journalEntries.id,
         bookingDate: journalEntries.bookingDate,
       }).from(journalEntries)
         .where(and(
+          eq(journalEntries.organizationId, ctx.organizationId),
           eq(journalEntries.status, "approved"),
           gte(journalEntries.bookingDate, startDate),
           lte(journalEntries.bookingDate, endDate),
@@ -2990,6 +3000,7 @@ const vatRouter = router({
       if (entries.length === 0) {
         // No entries – insert with zeros
         const [result] = await db.insert(vatPeriods).values({
+          organizationId: ctx.organizationId,
           year: input.year,
           period: input.period,
           startDate,
@@ -3103,6 +3114,7 @@ const vatRouter = router({
       const netVatPayable = (vatDue81 + vatDue26 + vatDue38) - inputTax;
 
       const [result] = await db.insert(vatPeriods).values({
+        organizationId: ctx.organizationId,
         year: input.year,
         period: input.period,
         startDate,
@@ -3499,6 +3511,7 @@ export const appRouter = router({
   suppliers: suppliersRouter,
   timeTracking: timeTrackingRouter,
   customers: customersRouter,
+  organizations: organizationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

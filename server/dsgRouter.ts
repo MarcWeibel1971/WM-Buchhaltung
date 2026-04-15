@@ -14,7 +14,7 @@ import { eq, desc, and, gte, lte, like, sql } from "drizzle-orm";
 // ─── Audit Log Helper ─────────────────────────────────────────────────────────
 
 export async function logAudit(params: {
-  organizationId?: number | null;
+  organizationId: number;
   userId: string;
   userName?: string;
   action: "create" | "read" | "update" | "delete" | "export" | "login" | "logout";
@@ -27,7 +27,7 @@ export async function logAudit(params: {
     const db = await getDb();
     if (!db) return;
     await db.insert(auditLog).values({
-      organizationId: params.organizationId ?? null,
+      organizationId: params.organizationId,
       userId: params.userId,
       userName: params.userName,
       action: params.action,

@@ -4,6 +4,7 @@
  */
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
+import { eq } from "drizzle-orm";
 import { accounts, employees, bankAccounts, fiscalYears, openingBalances } from "../drizzle/schema";
 import dotenv from "dotenv";
 dotenv.config();
@@ -161,12 +162,18 @@ const OPENING_BALANCES_2026: Record<string, string> = {
   "2290": "53223.58",
 };
 
+// Phase 1c: Seed-Skript zielt auf die Default-Organisation (id=1).
+// Für Multi-Tenant-Setups sollten neue Orgs stattdessen über den
+// Onboarding-Flow (organizationsRouter.create) angelegt werden.
+const SEED_ORG_ID = 1;
+
 async function seed() {
   const connection = await mysql.createConnection(process.env.DATABASE_URL!);
   const db = drizzle(connection);
   console.log("Seeding Kontenplan...");
   for (const acc of ACCOUNTS) {
     await db.insert(accounts).values({
+      organizationId: SEED_ORG_ID,
       number: acc.number,
       name: acc.name,
       accountType: acc.accountType as any,
@@ -183,27 +190,28 @@ async function seed() {
 
   // Fiscal years
   await db.insert(fiscalYears).values(
-    { year: 2023, startDate: "2023-01-01", endDate: "2023-12-31", isClosed: true }
+    { organizationId: SEED_ORG_ID, year: 2023, startDate: "2023-01-01", endDate: "2023-12-31", isClosed: true }
   ).onDuplicateKeyUpdate({ set: { isClosed: true } });
   await db.insert(fiscalYears).values(
-    { year: 2024, startDate: "2024-01-01", endDate: "2024-12-31", isClosed: true }
+    { organizationId: SEED_ORG_ID, year: 2024, startDate: "2024-01-01", endDate: "2024-12-31", isClosed: true }
   ).onDuplicateKeyUpdate({ set: { isClosed: true } });
   await db.insert(fiscalYears).values(
-    { year: 2025, startDate: "2025-01-01", endDate: "2025-12-31", isClosed: true }
+    { organizationId: SEED_ORG_ID, year: 2025, startDate: "2025-01-01", endDate: "2025-12-31", isClosed: true }
   ).onDuplicateKeyUpdate({ set: { isClosed: true } });
   await db.insert(fiscalYears).values(
-    { year: 2026, startDate: "2026-01-01", endDate: "2026-12-31", isClosed: false }
+    { organizationId: SEED_ORG_ID, year: 2026, startDate: "2026-01-01", endDate: "2026-12-31", isClosed: false }
   ).onDuplicateKeyUpdate({ set: { isClosed: false } });
   console.log("✓ Geschäftsjahre geseedet");
 
-  // Opening balances 2026
-  const allAccounts = await db.select().from(accounts);
+  // Opening balances 2026 (scoped to seed org)
+  const allAccounts = await db.select().from(accounts).where(eq(accounts.organizationId, SEED_ORG_ID));
   const accountMap = new Map(allAccounts.map(a => [a.number, a.id]));
-  
+
   for (const [number, balance] of Object.entries(OPENING_BALANCES_2026)) {
     const accountId = accountMap.get(number);
     if (accountId) {
       await db.insert(openingBalances).values({
+        organizationId: SEED_ORG_ID,
         accountId,
         fiscalYear: 2026,
         balance,
@@ -220,6 +228,7 @@ async function seed() {
 
   await db.insert(employees).values([
     {
+      organizationId: SEED_ORG_ID,
       code: "mw",
       firstName: "Marc",
       lastName: "Weibel",
@@ -227,6 +236,7 @@ async function seed() {
       salaryAccountId: mwKkId,
     },
     {
+      organizationId: SEED_ORG_ID,
       code: "jm",
       firstName: "J.",
       lastName: "Mueller",
@@ -243,9 +253,9 @@ async function seed() {
 
   if (lukbWmId) {
     await db.insert(bankAccounts).values([
-      { accountId: lukbWmId, name: "LUKB Kontokorrent (WM)", bank: "LUKB", currency: "CHF", owner: "wm" },
-      { accountId: lukbMwId!, name: "LUKB mw ...3555 8320 9", bank: "LUKB", currency: "CHF", owner: "mw" },
-      { accountId: lukbJmId!, name: "LUKB jm ...3555 8310 0", bank: "LUKB", currency: "CHF", owner: "jm" },
+      { organizationId: SEED_ORG_ID, accountId: lukbWmId, name: "LUKB Kontokorrent (WM)", bank: "LUKB", currency: "CHF", owner: "wm" },
+      { organizationId: SEED_ORG_ID, accountId: lukbMwId!, name: "LUKB mw ...3555 8320 9", bank: "LUKB", currency: "CHF", owner: "mw" },
+      { organizationId: SEED_ORG_ID, accountId: lukbJmId!, name: "LUKB jm ...3555 8310 0", bank: "LUKB", currency: "CHF", owner: "jm" },
     ]).onDuplicateKeyUpdate({ set: { isActive: true } });
     console.log("✓ Bankkonten geseedet");
   }

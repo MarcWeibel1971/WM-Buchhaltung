@@ -10,6 +10,7 @@ import { uploadRouter } from "../uploadRoute";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { logger, requestLogger, errorLogger, installCrashHandlers } from "./logger";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -31,6 +32,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Global crash handlers as early as possible.
+  installCrashHandlers();
+
   const app = express();
   const server = createServer(app);
 
@@ -39,6 +43,10 @@ async function startServer() {
   // Trust the first proxy hop (needed for rate-limit IP detection and secure
   // cookie handling behind a reverse proxy / load balancer in production).
   app.set("trust proxy", 1);
+
+  // Structured request logger + x-request-id (must run before everything else
+  // so that all downstream middlewares can use req.log).
+  app.use(requestLogger);
 
   // Security headers via helmet. CSP is disabled in development because Vite's
   // HMR requires inline scripts and eval during dev.
@@ -106,16 +114,44 @@ async function startServer() {
     serveStatic(app);
   }
 
+  // Central error logger – must be registered AFTER all routes.
+  app.use(errorLogger);
+
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
 
   if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+    logger.warn({ preferredPort, port }, "preferred port busy, using fallback");
   }
 
   server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+    logger.info({ port, env: process.env.NODE_ENV }, "server started");
   });
+
+  // Graceful shutdown: respond to SIGTERM/SIGINT, stop accepting new
+  // connections, drain in-flight requests, then exit. Important for
+  // Docker / K8s which send SIGTERM before SIGKILL.
+  const shutdown = (signal: string) => {
+    logger.info({ signal }, "shutdown requested");
+    server.close((err) => {
+      if (err) {
+        logger.error({ err }, "error during server.close()");
+        process.exit(1);
+      }
+      logger.info("server closed cleanly");
+      process.exit(0);
+    });
+    // Hard-exit after 15s to avoid hanging forever.
+    setTimeout(() => {
+      logger.error("shutdown timeout – forcing exit");
+      process.exit(1);
+    }, 15_000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-startServer().catch(console.error);
+startServer().catch((err) => {
+  logger.fatal({ err }, "server failed to start");
+  process.exit(1);
+});

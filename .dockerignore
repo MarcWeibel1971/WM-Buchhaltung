@@ -1,0 +1,57 @@
+# Git / CI
+.git
+.github
+.gitignore
+.gitattributes
+
+# Node / pnpm
+node_modules
+.pnpm-store
+.npm
+
+# Build artifacts (werden im Builder-Stage neu erzeugt)
+dist
+build
+coverage
+.tsbuildinfo
+*.tsbuildinfo
+
+# Secrets – dürfen nie ins Image
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+.manus-logs
+logs
+
+# Dev-only / Runtime-Artefakte, die Claude Code bzw. Manus schreibt
+.manuspre.computer
+.last-checkpoint
+.webdev
+
+# Test-Output
+.vitest
+
+# Manus version artefakte
+client/public/__manus__/version.json
+
+# Docker / Deployment
+Dockerfile
+docker-compose*.yml
+DEPLOYMENT.md
+BACKUP.md
+
+# Misc
+README.md
+todo.md
+*.md
+!package.json

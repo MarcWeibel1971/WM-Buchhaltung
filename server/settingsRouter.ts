@@ -380,20 +380,26 @@ export const settingsRouter = router({
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       // Get all accounts with their opening balances for the given fiscal year
+      // Only return active accounts (or accounts that have a non-zero opening balance)
       const allAccounts = await db.select().from(accounts).orderBy(asc(accounts.number));
       const obs = await db.select().from(openingBalances)
         .where(eq(openingBalances.fiscalYear, input.fiscalYear));
-      return allAccounts.map(acc => {
-        const ob = obs.find(o => o.accountId === acc.id);
-        return {
-          accountId: acc.id,
-          accountNumber: acc.number,
-          accountName: acc.name,
-          accountType: acc.accountType,
-          balance: ob ? parseFloat(ob.balance as string) : 0,
-          hasBalance: !!ob,
-        };
-      });
+      return allAccounts
+        .filter(acc => acc.isActive || obs.some(o => o.accountId === acc.id && parseFloat(o.balance as string) !== 0))
+        .map(acc => {
+          const ob = obs.find(o => o.accountId === acc.id);
+          return {
+            accountId: acc.id,
+            accountNumber: acc.number,
+            accountName: acc.name,
+            accountType: acc.accountType,
+            category: acc.category,
+            subCategory: acc.subCategory,
+            isActive: acc.isActive,
+            balance: ob ? parseFloat(ob.balance as string) : 0,
+            hasBalance: !!ob,
+          };
+        });
     }),
 
   upsertOpeningBalances: protectedProcedure

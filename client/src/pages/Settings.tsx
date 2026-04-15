@@ -1136,11 +1136,56 @@ function BookingRulesTab() {
 
 // ─── Opening Balances Tab ─────────────────────────────────────────────────────
 
+// Sortable row for drag & drop in opening balances
+function SortableOBRow({ row, value, onChange }: {
+  row: { accountId: number; accountNumber: string; accountName: string; isActive: boolean };
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.accountId });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  return (
+    <tr ref={setNodeRef} style={style} className={`border-t border-border/40 hover:bg-muted/20 ${!row.isActive ? 'opacity-50' : ''}`}>
+      <td className="px-1 py-1.5 w-8">
+        <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1 text-muted-foreground hover:text-foreground">
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      </td>
+      <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground w-20">{row.accountNumber}</td>
+      <td className="px-2 py-1.5 text-sm">
+        {row.accountName}
+        {!row.isActive && <Badge variant="outline" className="ml-2 text-[10px] py-0">inaktiv</Badge>}
+      </td>
+      <td className="px-2 py-1.5 text-right">
+        <Input
+          type="number"
+          step="0.01"
+          className="h-7 text-right font-mono text-sm w-36 ml-auto"
+          value={value}
+          placeholder="0.00"
+          onChange={e => onChange(e.target.value)}
+        />
+      </td>
+    </tr>
+  );
+}
+
 function OpeningBalancesTab() {
   const { fiscalYear } = useFiscalYear();
   const [editYear, setEditYear] = useState(fiscalYear);
   const [localBalances, setLocalBalances] = useState<Record<number, string>>({});
   const [isDirty, setIsDirty] = useState(false);
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [addNumber, setAddNumber] = useState("");
+  const [addName, setAddName] = useState("");
+  const [addType, setAddType] = useState<"asset" | "liability" | "equity">("asset");
+  const [addCategory, setAddCategory] = useState("");
+  const [localOrder, setLocalOrder] = useState<{ assets: number[]; liabilities: number[] }>({ assets: [], liabilities: [] });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
 
   const { data: rows, isLoading, refetch } = trpc.settings.getOpeningBalances.useQuery(
     { fiscalYear: editYear },
@@ -1153,55 +1198,58 @@ function OpeningBalancesTab() {
       setIsDirty(false);
       refetch();
     },
-    onError: (err) => {
-      toast.error(err.message);
+    onError: (err) => { toast.error(err.message); },
+  });
+
+  const createAccountMut = trpc.settings.createAccount.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Konto ${addNumber} erstellt und zum Kontenplan hinzugefügt`);
+      setShowAddAccount(false);
+      setAddNumber(""); setAddName(""); setAddType("asset"); setAddCategory("");
+      refetch();
     },
+    onError: (err) => { toast.error(err.message); },
   });
 
-  // Sync local state when data loads
-  useState(() => {
-    if (rows) {
-      const init: Record<number, string> = {};
-      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
-      setLocalBalances(init);
-    }
-  });
-
-  // Re-init when rows change (year switch)
+  // Re-init when rows change
   const prevYear = useRef(editYear);
   useEffect(() => {
-    if (rows && editYear !== prevYear.current) {
-      prevYear.current = editYear;
-      const init: Record<number, string> = {};
-      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
-      setLocalBalances(init);
-      setIsDirty(false);
-    } else if (rows && !isDirty) {
-      const init: Record<number, string> = {};
-      rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
-      setLocalBalances(init);
+    if (rows) {
+      if (editYear !== prevYear.current || !isDirty) {
+        prevYear.current = editYear;
+        const init: Record<number, string> = {};
+        rows.forEach(r => { if (r.balance !== 0) init[r.accountId] = String(r.balance); });
+        setLocalBalances(init);
+        if (editYear !== prevYear.current) setIsDirty(false);
+      }
+      // Init local order
+      const assetIds = rows.filter(r => r.accountType === "asset").map(r => r.accountId);
+      const liabIds = rows.filter(r => r.accountType === "liability" || r.accountType === "equity").map(r => r.accountId);
+      setLocalOrder({ assets: assetIds, liabilities: liabIds });
     }
   }, [rows, editYear]);
 
   const getValue = (accountId: number) => localBalances[accountId] ?? "";
-
   const handleChange = (accountId: number, val: string) => {
     setLocalBalances(prev => ({ ...prev, [accountId]: val }));
     setIsDirty(true);
   };
 
-  // Compute totals
-  const assets = rows?.filter(r => r.accountType === "asset") ?? [];
-  const liabilities = rows?.filter(r => r.accountType === "liability" || r.accountType === "equity") ?? [];
+  // Ordered rows
+  const assetRows = useMemo(() => {
+    if (!rows) return [];
+    const assetMap = new Map(rows.filter(r => r.accountType === "asset").map(r => [r.accountId, r]));
+    return localOrder.assets.map(id => assetMap.get(id)).filter(Boolean) as NonNullable<typeof rows>;
+  }, [rows, localOrder.assets]);
 
-  const totalAssets = assets.reduce((sum, r) => {
-    const v = parseFloat(localBalances[r.accountId] || "0") || 0;
-    return sum + v;
-  }, 0);
-  const totalLiabilities = liabilities.reduce((sum, r) => {
-    const v = parseFloat(localBalances[r.accountId] || "0") || 0;
-    return sum + v;
-  }, 0);
+  const liabilityRows = useMemo(() => {
+    if (!rows) return [];
+    const liabMap = new Map(rows.filter(r => r.accountType === "liability" || r.accountType === "equity").map(r => [r.accountId, r]));
+    return localOrder.liabilities.map(id => liabMap.get(id)).filter(Boolean) as NonNullable<typeof rows>;
+  }, [rows, localOrder.liabilities]);
+
+  const totalAssets = assetRows.reduce((sum, r) => sum + (parseFloat(localBalances[r.accountId] || "0") || 0), 0);
+  const totalLiabilities = liabilityRows.reduce((sum, r) => sum + (parseFloat(localBalances[r.accountId] || "0") || 0), 0);
   const diff = Math.abs(totalAssets - totalLiabilities);
   const isBalanced = diff < 0.01;
 
@@ -1213,13 +1261,41 @@ function OpeningBalancesTab() {
     saveMut.mutate({ fiscalYear: editYear, balances });
   };
 
+  const handleAddAccount = () => {
+    if (!addNumber || !addName) { toast.error("Kontonummer und Name sind erforderlich"); return; }
+    const normalBalance = addType === "asset" ? "debit" as const : "credit" as const;
+    createAccountMut.mutate({
+      number: addNumber,
+      name: addName,
+      accountType: addType,
+      normalBalance,
+      category: addCategory || undefined,
+      isActive: true,
+      sortOrder: 0,
+    });
+  };
+
+  const handleDragEnd = (group: "assets" | "liabilities") => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setLocalOrder(prev => {
+      const list = [...prev[group]];
+      const oldIndex = list.indexOf(active.id as number);
+      const newIndex = list.indexOf(over.id as number);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      return { ...prev, [group]: arrayMove(list, oldIndex, newIndex) };
+    });
+    setIsDirty(true);
+  };
+
   const formatCHF = (n: number) =>
     new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 
   const renderAccountGroup = (
     title: string,
-    accounts: typeof rows,
-    total: number
+    groupRows: NonNullable<typeof rows>,
+    total: number,
+    group: "assets" | "liabilities"
   ) => (
     <div className="mb-6">
       <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
@@ -1229,33 +1305,31 @@ function OpeningBalancesTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-muted/50 text-xs font-semibold text-muted-foreground">
-              <th className="text-left px-3 py-2 w-20">Konto</th>
-              <th className="text-left px-3 py-2">Bezeichnung</th>
-              <th className="text-right px-3 py-2 w-40">Saldo CHF</th>
+              <th className="w-8"></th>
+              <th className="text-left px-2 py-2 w-20">Konto</th>
+              <th className="text-left px-2 py-2">Bezeichnung</th>
+              <th className="text-right px-2 py-2 w-40">Saldo CHF</th>
             </tr>
           </thead>
-          <tbody>
-            {accounts?.map(r => (
-              <tr key={r.accountId} className="border-t border-border/40 hover:bg-muted/20">
-                <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{r.accountNumber}</td>
-                <td className="px-3 py-1.5 text-sm">{r.accountName}</td>
-                <td className="px-3 py-1.5 text-right">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    className="h-7 text-right font-mono text-sm w-36 ml-auto"
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd(group)}>
+            <SortableContext items={groupRows.map(r => r.accountId)} strategy={verticalListSortingStrategy}>
+              <tbody>
+                {groupRows.map(r => (
+                  <SortableOBRow
+                    key={r.accountId}
+                    row={r}
                     value={getValue(r.accountId)}
-                    placeholder="0.00"
-                    onChange={e => handleChange(r.accountId, e.target.value)}
+                    onChange={(val) => handleChange(r.accountId, val)}
                   />
-                </td>
-              </tr>
-            ))}
-            <tr className="border-t-2 border-border bg-muted/30 font-semibold">
-              <td colSpan={2} className="px-3 py-2 text-sm">Total {title}</td>
-              <td className="px-3 py-2 text-right font-mono text-sm">{formatCHF(total)}</td>
-            </tr>
-          </tbody>
+                ))}
+                <tr className="border-t-2 border-border bg-muted/30 font-semibold">
+                  <td></td>
+                  <td colSpan={2} className="px-2 py-2 text-sm">Total {title}</td>
+                  <td className="px-2 py-2 text-right font-mono text-sm">{formatCHF(total)}</td>
+                </tr>
+              </tbody>
+            </SortableContext>
+          </DndContext>
         </table>
       </div>
     </div>
@@ -1268,20 +1342,31 @@ function OpeningBalancesTab() {
         <div>
           <h1 className="text-2xl font-bold">Eröffnungssalden</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Manuelle Erfassung der Eröffnungssalden für das erste Geschäftsjahr.
+            Manuelle Erfassung der Eröffnungssalden. Nur aktive Konten aus dem Kontenplan werden angezeigt.
             Aktiven müssen gleich Passiven sein.
           </p>
         </div>
-        <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
-          <SelectTrigger className="w-28">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {[2026, 2025, 2024, 2023].map(y => (
-              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setShowAddAccount(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Neues Konto
+          </Button>
+          <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[2026, 2025, 2024, 2023].map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Info box */}
+      <div className="flex items-start gap-2 p-3 rounded-lg mb-4 text-xs bg-blue-50 border border-blue-200 text-blue-800">
+        <GripVertical className="h-4 w-4 shrink-0 mt-0.5" />
+        <span>Konten per Drag & Drop umsortieren. Neue Konten werden automatisch im Kontenplan erstellt. Inaktive Konten im Kontenplan werden hier ausgeblendet.</span>
       </div>
 
       {/* Balance indicator */}
@@ -1309,8 +1394,8 @@ function OpeningBalancesTab() {
         </div>
       ) : (
         <>
-          {renderAccountGroup("Aktiven", assets, totalAssets)}
-          {renderAccountGroup("Passiven (Fremdkapital & Eigenkapital)", liabilities, totalLiabilities)}
+          {renderAccountGroup("Aktiven", assetRows, totalAssets, "assets")}
+          {renderAccountGroup("Passiven (Fremdkapital & Eigenkapital)", liabilityRows, totalLiabilities, "liabilities")}
 
           {/* Save button */}
           <div className="flex items-center justify-between pt-2">
@@ -1327,6 +1412,53 @@ function OpeningBalancesTab() {
           </div>
         </>
       )}
+
+      {/* Add Account Dialog */}
+      <Dialog open={showAddAccount} onOpenChange={setShowAddAccount}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Neues Konto erstellen</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-xs text-muted-foreground">
+              Das Konto wird sowohl hier in den Eröffnungssalden als auch im Kontenplan erstellt.
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Kontonummer</Label>
+                <Input value={addNumber} onChange={e => setAddNumber(e.target.value)} placeholder="z.B. 1099" />
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs">Bezeichnung</Label>
+                <Input value={addName} onChange={e => setAddName(e.target.value)} placeholder="z.B. Bankkonto ZKB" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">Kontotyp</Label>
+                <Select value={addType} onValueChange={v => setAddType(v as any)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="asset">Aktiven</SelectItem>
+                    <SelectItem value="liability">Fremdkapital</SelectItem>
+                    <SelectItem value="equity">Eigenkapital</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Kategorie (optional)</Label>
+                <Input value={addCategory} onChange={e => setAddCategory(e.target.value)} placeholder="z.B. Flüssige Mittel" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddAccount(false)}>Abbrechen</Button>
+            <Button onClick={handleAddAccount} disabled={createAccountMut.isPending}>
+              {createAccountMut.isPending ? "Erstellen..." : "Erstellen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

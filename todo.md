@@ -726,3 +726,10 @@
 - [x] Wenn in Bankkonten ein neues Bankkonto erstellt wird, muss es einem Kontenplan-Konto zugeordnet sein
 - [x] Bestehende Bankkonten ohne Kontenplan-Zuordnung identifizieren und synchronisieren
 - [x] Frontend: Hinweis anzeigen wenn Bankkonto erstellt/entfernt wird durch Kontenplan-Änderung
+
+## Eröffnungssalden ↔ Kontenplan Synchronisation
+- [x] Eröffnungssalden: Nur aktive Konten aus dem Kontenplan anzeigen
+- [x] Eröffnungssalden: Neues Konto hinzufügen (erstellt auch im Kontenplan)
+- [x] Eröffnungssalden: Drag & Drop zum Verschieben/Umsortieren von Konten
+- [x] Eröffnungssalden: Bidirektionale Sync mit Kontenplan (Änderungen in beiden Richtungen)
+- [x] Eröffnungssalden: Kontenplan-Änderungen (Aktivierung/Deaktivierung) sofort reflektieren

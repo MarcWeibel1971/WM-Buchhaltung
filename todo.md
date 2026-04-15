@@ -614,3 +614,17 @@
 - [x] Frontend: "Foto aufnehmen"-Button neben dem bestehenden Upload-Bereich auf der Dokumente-Seite
 - [x] Frontend: HTML5 input capture="environment" für direkte Kamera-Aktivierung auf Mobile
 - [x] Frontend: Aufgenommenes Foto wird automatisch hochgeladen und von der KI analysiert (gleicher Workflow wie PDF-Upload)
+
+## Feature: QR-Code IBAN und Rechnungsvorlage einbauen
+
+- [x] QR-Code dekodieren und IBAN für LUKB mw Konto extrahieren
+- [x] IBAN in QR-Rechnungs-Einstellungen als Standard hinterlegen
+- [x] Rechnungsvorlage (DOCX) analysieren und als PDF-Rechnungstemplate implementieren
+- [x] QR-Rechnung-Seite: Rechnungsvorlage mit QR-Zahlungsteil als kombinierten PDF-Download anbieten
+
+## Bugfix: QR-Rechnung PDF-Generierung (Referenztyp-Mismatch)
+
+- [x] Fix: Regulärer IBAN (CH3700778010355583209) mit QR-Referenz (27-stellig numerisch) verursachte Fehler in swissqrbill-Library
+- [x] Fix: Bei regulärem IBAN wird jetzt korrekte SCOR-Referenz (ISO 11649, RF-Format) generiert statt QR-Referenz
+- [x] Fix: Professionelle Rechnung (generateInvoiceWithQr) und einfacher QR-Einzahlungsschein (generateQrBill) beide korrigiert
+- [x] Beide Endpunkte erfolgreich getestet mit IBAN CH3700778010355583209

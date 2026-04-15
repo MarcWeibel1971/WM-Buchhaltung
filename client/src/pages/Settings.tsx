@@ -2302,13 +2302,21 @@ function QrBillTab() {
   const [additionalInfo, setAdditionalInfo] = useReactState("");
   const [initialized, setInitialized] = useReactState(false);
 
-  // Initialize form from loaded data
-  if (qrData && !initialized) {
-    setIban(qrData.iban ?? "");
-    setRefType(qrData.referenceType as "QRR" | "SCOR" | "NON");
-    setCurrency(qrData.currency as "CHF" | "EUR");
-    setAdditionalInfo(qrData.additionalInfo ?? "");
-    setInitialized(true);
+  // Initialize form from loaded data (or pre-fill defaults for LUKB mw)
+  if (!initialized) {
+    if (qrData) {
+      setIban(qrData.iban ?? "CH37 0077 8010 3555 8320 9");
+      setRefType(qrData.referenceType as "QRR" | "SCOR" | "NON");
+      setCurrency(qrData.currency as "CHF" | "EUR");
+      setAdditionalInfo(qrData.additionalInfo ?? "");
+      setInitialized(true);
+    } else if (!isLoading) {
+      // Pre-fill with LUKB mw IBAN when no settings exist
+      setIban("CH37 0077 8010 3555 8320 9");
+      setRefType("QRR");
+      setCurrency("CHF");
+      setInitialized(true);
+    }
   }
 
   const handleSave = () => {

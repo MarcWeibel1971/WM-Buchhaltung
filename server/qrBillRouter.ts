@@ -121,9 +121,14 @@ export const qrBillRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
       }
 
+      // Detect QR-IBAN vs regular IBAN
+      const simpleCleanIban = qr.iban.replace(/\s/g, "");
+      const simpleIid = parseInt(simpleCleanIban.substring(4, 9));
+      const simpleIsQrIban = simpleIid >= 30000 && simpleIid <= 31999;
+
       // Build reference
       let reference: string | undefined = input.reference;
-      if (!reference && qr.referenceType === "QRR") {
+      if (!reference && simpleIsQrIban && qr.referenceType === "QRR") {
         reference = generateQRReference(input.journalEntryId ?? Date.now() % 100000, new Date().getFullYear());
       }
 
@@ -132,7 +137,7 @@ export const qrBillRouter = router({
         amount: input.amount,
         currency: input.currency,
         creditor: {
-          account: qr.iban.replace(/\s/g, ""),
+          account: simpleCleanIban,
           name: comp.companyName,
           address: comp.street ?? "",
           zip: parseInt(comp.zipCode ?? "0"),
@@ -148,8 +153,15 @@ export const qrBillRouter = router({
         },
       };
 
-      if (reference && qr.referenceType === "QRR") {
+      if (reference && simpleIsQrIban && qr.referenceType === "QRR") {
         data.reference = formatQRRef(reference);
+      } else if (!simpleIsQrIban) {
+        // For regular IBANs, use proper SCOR reference (ISO 11649)
+        const refBody = String(Date.now() % 100000000000).padStart(11, "0");
+        const numStr = refBody + "2715" + "00";
+        let rem = 0;
+        for (const ch of numStr) { rem = (rem * 10 + parseInt(ch)) % 97; }
+        data.reference = `RF${String(98 - rem).padStart(2, "0")}${refBody}`;
       }
       if (input.additionalInfo || qr.additionalInfo) {
         data.message = input.additionalInfo || qr.additionalInfo || undefined;
@@ -524,6 +536,260 @@ export const qrBillRouter = router({
       }).where(eq(documents.id, input.documentId));
 
       return { success: true };
+    }),
+
+  // ─── Professional Invoice with QR Payment Slip ─────────────────────────────
+  generateInvoiceWithQr: protectedProcedure
+    .input(z.object({
+      recipientTitle: z.string().optional(),
+      recipientName: z.string().min(1),
+      recipientStreet: z.string().min(1),
+      recipientZip: z.string().min(1),
+      recipientCity: z.string().min(1),
+      recipientCountry: z.string().default("CH"),
+      invoiceDate: z.string(),
+      invoiceSubject: z.string(),
+      salutation: z.string().optional(),
+      introText: z.string(),
+      lineItems: z.array(z.object({
+        description: z.string(),
+        amount: z.number(),
+      })),
+      vatRate: z.number().min(0).max(100),
+      currency: z.enum(["CHF", "EUR"]).default("CHF"),
+      closingText: z.string(),
+      greeting: z.string(),
+      signerName: z.string(),
+      signerTitle: z.string().optional(),
+      paymentDays: z.number().int().default(30),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Load QR settings
+      const qrRows = await db.select().from(qrSettings).limit(1);
+      if (!qrRows.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "QR-Rechnungs-Einstellungen fehlen. Bitte IBAN unter Einstellungen > QR-Rechnung konfigurieren.",
+        });
+      }
+      const qr = qrRows[0];
+
+      // Load company settings
+      const compRows = await db.select().from(companySettings).limit(1);
+      const comp = compRows[0];
+      if (!comp) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
+      }
+
+      // Calculate totals
+      const subtotal = input.lineItems.reduce((s, i) => s + i.amount, 0);
+      const vatAmount = subtotal * (input.vatRate / 100);
+      const total = subtotal + vatAmount;
+
+      // Generate reference
+      const reference = generateQRReference(Date.now() % 100000, new Date().getFullYear());
+
+      // Format invoice date
+      const invDate = new Date(input.invoiceDate);
+      const dateStr = invDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
+
+      // Calculate payment due date
+      const dueDate = new Date(invDate);
+      dueDate.setDate(dueDate.getDate() + input.paymentDays);
+      const dueDateStr = dueDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
+
+      // Build QR-Bill data
+      const cleanIban = qr.iban.replace(/\s/g, "");
+      // QR-IBANs have IID 30000-31999 (chars 5-9 of IBAN)
+      const iid = parseInt(cleanIban.substring(4, 9));
+      const isQrIban = iid >= 30000 && iid <= 31999;
+      // Determine reference type: QRR only works with QR-IBAN, SCOR with regular IBAN
+      const effectiveRefType = isQrIban ? (qr.referenceType || "QRR") : "SCOR";
+
+      const data: Data = {
+        amount: total,
+        currency: input.currency,
+        creditor: {
+          account: cleanIban,
+          name: comp.companyName,
+          address: comp.street ?? "",
+          zip: parseInt(comp.zipCode ?? "0"),
+          city: comp.city ?? "",
+          country: "CH",
+        },
+        debtor: {
+          name: input.recipientName,
+          address: input.recipientStreet,
+          zip: parseInt(input.recipientZip),
+          city: input.recipientCity,
+          country: input.recipientCountry,
+        },
+      };
+
+      if (effectiveRefType === "QRR" && isQrIban) {
+        data.reference = formatQRRef(reference);
+      } else if (effectiveRefType === "SCOR") {
+        // Generate a proper Creditor Reference (ISO 11649) for regular IBANs
+        // RF + 2 check digits + up to 21 alphanumeric chars, max 25 total
+        const refBody = String(Date.now() % 100000000000).padStart(11, "0");
+        // ISO 11649 check digit calculation: move RF00 to end, replace R=27,F=15, mod 97
+        const numericStr = refBody + "2715" + "00";
+        // Calculate mod 97 for large numbers using string-based approach
+        let remainder = 0;
+        for (const ch of numericStr) {
+          remainder = (remainder * 10 + parseInt(ch)) % 97;
+        }
+        const checkDigits = String(98 - remainder).padStart(2, "0");
+        data.reference = `RF${checkDigits}${refBody}`;
+      }
+      // For NON reference type, don't set data.reference at all
+
+      // Generate PDF
+      const pdfDoc = new PDFDocument({
+        size: "A4",
+        autoFirstPage: true,
+        margins: { top: 40, bottom: 40, left: 55, right: 55 },
+      });
+
+      const chunks: Buffer[] = [];
+      pdfDoc.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+      const pageW = 595.28;
+      const leftM = 55;
+      const rightM = 55;
+      const contentW = pageW - leftM - rightM;
+
+      // ── Company Header (top left) ──
+      pdfDoc.fontSize(11).font("Helvetica-Bold");
+      pdfDoc.text(comp.companyName, leftM, 45);
+      pdfDoc.fontSize(8.5).font("Helvetica").fillColor("#444444");
+      if (comp.street) pdfDoc.text(comp.street);
+      pdfDoc.text(`${comp.zipCode ?? ""} ${comp.city ?? ""}`);
+      if (comp.phone) pdfDoc.text(`Tel: ${comp.phone}`);
+      if (comp.email) pdfDoc.text(comp.email);
+      if (comp.website) pdfDoc.text(comp.website);
+      if (comp.uid) pdfDoc.text(`MWST-Nr. ${comp.uid}`);
+
+      // ── Recipient Address (right side, window envelope position) ──
+      pdfDoc.fillColor("#000000");
+      const addrX = 350;
+      let addrY = 120;
+      if (input.recipientTitle) {
+        pdfDoc.fontSize(9).font("Helvetica").text(input.recipientTitle, addrX, addrY);
+        addrY += 14;
+      }
+      pdfDoc.fontSize(10).font("Helvetica-Bold").text(input.recipientName, addrX, addrY);
+      addrY += 14;
+      pdfDoc.fontSize(9).font("Helvetica").text(input.recipientStreet, addrX, addrY);
+      addrY += 14;
+      pdfDoc.text(`${input.recipientZip} ${input.recipientCity}`, addrX, addrY);
+
+      // ── Date and Reference (right-aligned) ──
+      let yPos = 210;
+      pdfDoc.fontSize(9).font("Helvetica").fillColor("#666666");
+      pdfDoc.text(`Luzern, ${dateStr}`, leftM, yPos, { width: contentW, align: "right" });
+      yPos += 14;
+      // Show reference based on type
+      if (effectiveRefType === "QRR" && isQrIban) {
+        pdfDoc.text(`Referenz: ${formatQRRef(reference)}`, leftM, yPos, { width: contentW, align: "right" });
+      } else if (data.reference) {
+        pdfDoc.text(`Referenz: ${data.reference}`, leftM, yPos, { width: contentW, align: "right" });
+      }
+      yPos += 30;
+
+      // ── Subject Line ──
+      pdfDoc.fillColor("#000000");
+      pdfDoc.fontSize(13).font("Helvetica-Bold");
+      pdfDoc.text(input.invoiceSubject, leftM, yPos);
+      yPos += 30;
+
+      // ── Salutation & Intro ──
+      pdfDoc.fontSize(10).font("Helvetica");
+      if (input.salutation) {
+        pdfDoc.text(input.salutation, leftM, yPos, { width: contentW });
+        yPos += 20;
+      }
+      pdfDoc.text(input.introText, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 20;
+
+      // ── Line Items Table ──
+      // Header
+      pdfDoc.fontSize(8.5).font("Helvetica-Bold").fillColor("#666666");
+      pdfDoc.text("Pos.", leftM, yPos, { width: 30 });
+      pdfDoc.text("Beschreibung", leftM + 35, yPos, { width: contentW - 130 });
+      pdfDoc.text(`${input.currency}`, leftM + contentW - 80, yPos, { width: 80, align: "right" });
+      yPos += 15;
+      pdfDoc.moveTo(leftM, yPos).lineTo(leftM + contentW, yPos).lineWidth(0.5).strokeColor("#cccccc").stroke();
+      yPos += 8;
+
+      // Items
+      pdfDoc.fillColor("#000000").font("Helvetica").fontSize(9.5);
+      input.lineItems.forEach((item, idx) => {
+        pdfDoc.text(`${idx + 1}.`, leftM, yPos, { width: 30 });
+        pdfDoc.text(item.description, leftM + 35, yPos, { width: contentW - 130 });
+        pdfDoc.text(formatCHF(item.amount), leftM + contentW - 80, yPos, { width: 80, align: "right" });
+        yPos = Math.max(pdfDoc.y, yPos + 16) + 4;
+      });
+
+      // Subtotal line
+      yPos += 4;
+      pdfDoc.moveTo(leftM + contentW - 200, yPos).lineTo(leftM + contentW, yPos).lineWidth(0.5).strokeColor("#cccccc").stroke();
+      yPos += 8;
+
+      pdfDoc.fontSize(9).font("Helvetica");
+      pdfDoc.text("Zwischensumme", leftM + contentW - 200, yPos, { width: 120 });
+      pdfDoc.text(`${input.currency} ${formatCHF(subtotal)}`, leftM + contentW - 80, yPos, { width: 80, align: "right" });
+      yPos += 16;
+
+      pdfDoc.text(`MWST ${input.vatRate}%`, leftM + contentW - 200, yPos, { width: 120 });
+      pdfDoc.text(`${input.currency} ${formatCHF(vatAmount)}`, leftM + contentW - 80, yPos, { width: 80, align: "right" });
+      yPos += 16;
+
+      // Total
+      pdfDoc.moveTo(leftM + contentW - 200, yPos).lineTo(leftM + contentW, yPos).lineWidth(1).strokeColor("#000000").stroke();
+      yPos += 8;
+      pdfDoc.fontSize(11).font("Helvetica-Bold");
+      pdfDoc.text("Total", leftM + contentW - 200, yPos, { width: 120 });
+      pdfDoc.text(`${input.currency} ${formatCHF(total)}`, leftM + contentW - 80, yPos, { width: 80, align: "right" });
+      yPos += 28;
+
+      // ── Payment Terms ──
+      pdfDoc.fontSize(9).font("Helvetica").fillColor("#666666");
+      pdfDoc.text(`Zahlbar innert ${input.paymentDays} Tagen bis ${dueDateStr}.`, leftM, yPos, { width: contentW });
+      yPos += 20;
+
+      // ── Closing Text ──
+      pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
+      pdfDoc.text(input.closingText, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 20;
+
+      // ── Greeting & Signature ──
+      pdfDoc.text(input.greeting, leftM, yPos);
+      yPos += 30;
+      pdfDoc.font("Helvetica-Bold").text(input.signerName, leftM, yPos);
+      if (input.signerTitle) {
+        yPos += 14;
+        pdfDoc.font("Helvetica").fontSize(9).text(input.signerTitle, leftM, yPos);
+      }
+
+      // ── QR Payment Slip ──
+      const qrBill = new SwissQRBill(data);
+      qrBill.attachTo(pdfDoc);
+
+      // Finalize
+      const pdfPromise = new Promise<Buffer>((resolve) => {
+        pdfDoc.on("end", () => resolve(Buffer.concat(chunks)));
+      });
+      pdfDoc.end();
+      const pdfBuffer = await pdfPromise;
+
+      return {
+        base64: pdfBuffer.toString("base64"),
+        filename: `Rechnung_${input.recipientName.replace(/\s+/g, "_")}_${invDate.toISOString().slice(0, 10)}.pdf`,
+      };
     }),
 
 });

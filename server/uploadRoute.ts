@@ -143,12 +143,27 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       } catch { /* ignore */ }
     }
 
+     // Auto-generate a descriptive filename based on AI-extracted content
+    let smartFilename = req.file.originalname;
+    if (aiMetadata) {
+      try {
+        const parsed = JSON.parse(aiMetadata);
+        const parts: string[] = [];
+        if (parsed.counterparty) parts.push(parsed.counterparty.replace(/[^a-zA-Z0-9äöüÄÖÜéèàêâ\s\-\.]/g, '').trim());
+        if (parsed.description) parts.push(parsed.description.replace(/[^a-zA-Z0-9äöüÄÖÜéèàêâ\s\-\.]/g, '').trim());
+        if (parsed.documentDate) parts.push(parsed.documentDate);
+        if (parts.length >= 2) {
+          const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'pdf';
+          smartFilename = parts.join(' - ').substring(0, 120) + '.' + ext;
+        }
+      } catch { /* keep original filename */ }
+    }
+
     // Save to database
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "Datenbank nicht verfügbar" });
-
     const [result] = await db.insert(documents).values({
-      filename: req.file.originalname,
+      filename: smartFilename,
       s3Key,
       s3Url: url,
       mimeType: req.file.mimetype,

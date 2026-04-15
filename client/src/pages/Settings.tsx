@@ -22,7 +22,7 @@ import {
   Building2, Users, Shield, Landmark, BookOpen, Scale, ListTree,
   Pencil, Trash2, Plus, Check, X, AlertTriangle, TrendingDown, Loader2,
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
-  QrCode, ShieldCheck, FileText, Download, UserX, ClipboardList,
+  ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate,
 } from "lucide-react";
 import {
@@ -48,7 +48,6 @@ const TABS = [
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
   { id: "opening", label: "Eröffnungssalden", icon: Scale },
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
-  { id: "qrBill", label: "QR-Rechnung", icon: QrCode },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
 ] as const;
 
@@ -112,7 +111,6 @@ export default function Settings() {
         {activeTab === "rules" && <BookingRulesTab />}
         {activeTab === "opening" && <OpeningBalancesTab />}
         {activeTab === "depreciation" && <DepreciationTab />}
-        {activeTab === "qrBill" && <QrBillTab />}
         {activeTab === "dsg" && <DsgTab />}
       </main>
     </div>
@@ -2355,131 +2353,6 @@ function SortableAccountList({ accounts, dragEnabled, onDragEnd, children }: {
   );
 }
 
-
-// ─── QR-Rechnung Tab ─────────────────────────────────────────────────────────
-
-function QrBillTab() {
-  const { data: qrData, isLoading } = trpc.qrBill.getQrSettings.useQuery();
-  const saveMut = trpc.qrBill.saveQrSettings.useMutation({
-    onSuccess: () => { toast.success("QR-Rechnungs-Einstellungen gespeichert"); utils.qrBill.getQrSettings.invalidate(); },
-    onError: (e) => toast.error(e.message),
-  });
-  const utils = trpc.useUtils();
-
-  const [iban, setIban] = useReactState("");
-  const [refType, setRefType] = useReactState<"QRR" | "SCOR" | "NON">("QRR");
-  const [currency, setCurrency] = useReactState<"CHF" | "EUR">("CHF");
-  const [additionalInfo, setAdditionalInfo] = useReactState("");
-  const [initialized, setInitialized] = useReactState(false);
-
-  // Initialize form from loaded data (or pre-fill defaults for LUKB mw)
-  if (!initialized) {
-    if (qrData) {
-      setIban(qrData.iban ?? "CH37 0077 8010 3555 8320 9");
-      setRefType(qrData.referenceType as "QRR" | "SCOR" | "NON");
-      setCurrency(qrData.currency as "CHF" | "EUR");
-      setAdditionalInfo(qrData.additionalInfo ?? "");
-      setInitialized(true);
-    } else if (!isLoading) {
-      // Pre-fill with LUKB mw IBAN when no settings exist
-      setIban("CH37 0077 8010 3555 8320 9");
-      setRefType("QRR");
-      setCurrency("CHF");
-      setInitialized(true);
-    }
-  }
-
-  const handleSave = () => {
-    if (!iban.trim()) { toast.error("IBAN ist erforderlich"); return; }
-    saveMut.mutate({ iban: iban.trim(), referenceType: refType, currency, additionalInfo: additionalInfo || undefined });
-  };
-
-  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>;
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold">QR-Rechnung Einstellungen</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Konfigurieren Sie die IBAN und Referenzart für die Generierung von Swiss QR-Rechnungen (Formular mit QR-Zahlungsteil).
-        </p>
-      </div>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Zahlungsempfänger (Creditor)</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <Label>IBAN *</Label>
-              <Input
-                value={iban}
-                onChange={e => setIban(e.target.value)}
-                placeholder="CH44 3199 9123 0008 8901 2"
-                className="font-mono"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Für QR-Referenz (QRR) wird eine QR-IBAN benötigt. Für SCOR oder ohne Referenz eine normale IBAN.
-              </p>
-            </div>
-            <div>
-              <Label>Referenztyp</Label>
-              <Select value={refType} onValueChange={(v) => setRefType(v as any)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="QRR">QR-Referenz (QRR)</SelectItem>
-                  <SelectItem value="SCOR">Structured Creditor Reference (SCOR)</SelectItem>
-                  <SelectItem value="NON">Ohne Referenz</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Währung</Label>
-              <Select value={currency} onValueChange={(v) => setCurrency(v as any)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="CHF">CHF</SelectItem>
-                  <SelectItem value="EUR">EUR</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-2">
-              <Label>Zusätzliche Informationen (optional)</Label>
-              <Input
-                value={additionalInfo}
-                onChange={e => setAdditionalInfo(e.target.value)}
-                placeholder="z.B. Rechnungsnummer oder Mitteilung"
-                maxLength={140}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end pt-2">
-            <Button onClick={handleSave} disabled={saveMut.isPending}>
-              {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Speichern
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Hinweise</CardTitle></CardHeader>
-        <CardContent className="text-sm text-muted-foreground space-y-2">
-          <p>
-            Die QR-Rechnung ist seit dem 1. Oktober 2022 der offizielle Zahlungsstandard in der Schweiz.
-            Sie ersetzt die alten Einzahlungsscheine (ESR/ES).
-          </p>
-          <p>
-            <strong>QR-IBAN:</strong> Beginnt mit CH oder LI, die Bankenclearing-Nummer (Position 5–9) liegt im Bereich 30000–31999.
-            Fragen Sie Ihre Bank nach Ihrer QR-IBAN.
-          </p>
-          <p>
-            <strong>Referenztypen:</strong> QRR (26+1 Stellen, automatisch generiert), SCOR (ISO 11649), oder ohne Referenz.
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 // ─── DSG (Datenschutz) Tab ───────────────────────────────────────────────────
 

@@ -480,12 +480,12 @@ export const qrBillRouter = router({
         journalEntryId: bankTransactions.journalEntryId,
       }).from(bankTransactions);
 
-      // Build a set of document IDs that are matched to bank transactions that have been
-      // actually processed (verbucht = journalEntryId exists, or status = matched with journal entry)
-      // A transaction in the bankimport that is still "pending" does NOT mean the invoice is paid
+      // Build a set of document IDs that are matched to bank transactions
+      // A document is considered "paid" if it has a matched bank transaction
+      // (regardless of whether the transaction is already verbucht/journalEntryId)
       const paidDocIds = new Set(
         allTxs
-          .filter(tx => tx.matchedDocumentId && tx.matchedDocumentId > 0 && tx.journalEntryId && tx.journalEntryId > 0)
+          .filter(tx => tx.matchedDocumentId && tx.matchedDocumentId > 0)
           .map(tx => tx.matchedDocumentId!)
       );
 
@@ -509,10 +509,11 @@ export const qrBillRouter = router({
         const creditorZip = metadata.creditorZip || metadata.zipCode || metadata.zip || "";
 
         // Check if paid:
-        // - matched to a bank transaction with journalEntryId (verbucht)
+        // - matched to a bank transaction (matchedDocumentId in bank_transactions)
+        // - document matchStatus is 'matched' (auto-matched or manually matched)
         // - manually marked as paid (matchStatus = 'manual')
         // - included in a pain.001 export (matchStatus = 'pain001')
-        const isPaid = paidDocIds.has(doc.id) || doc.matchStatus === "manual" || doc.matchStatus === "pain001";
+        const isPaid = paidDocIds.has(doc.id) || doc.matchStatus === "matched" || doc.matchStatus === "manual" || doc.matchStatus === "pain001";
 
         // Calculate due date: documentDate + 30 days (default payment term)
         let dueDate = "";

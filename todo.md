@@ -671,3 +671,17 @@
 - [x] Logo in der Sidebar/Header der Webseite anzeigen
 - [x] Logo in der AcroForms-Rechnungsvorlage verwenden
 - [x] WM Logo als Standard hochladen
+
+## Bugfix: Kreditoren zeigen Rechnungen als "offen" obwohl im Bankimport als "matched"
+
+- [x] Fix: Kreditoren-Status muss Bankimport-Matches berücksichtigen (z.B. OWIBA als bezahlt anzeigen wenn im Bankimport gematcht)
+- [x] Prüfen: listUnpaidInvoices-Logik erweitern um auch Dokumente mit matchStatus='matched' als bezahlt zu erkennen
+
+## Feature: Dokumenten-Beschriftung beim Hochladen
+
+- [x] Beim Upload: Dokument automatisch nach Inhalt beschriften (Lieferant + Beschreibung statt generischer Dateiname)
+- [x] AI-Extraktion: Extrahierten Lieferantnamen und Beschreibung als Dokumenttitel verwenden
+
+## Cleanup: QR-Rechnung aus Einstellungen entfernen
+
+- [x] QR-Rechnung Tab/Bereich aus der Einstellungen-Seite entfernen (Funktion ist jetzt unter Zahlungen/Debitoren)

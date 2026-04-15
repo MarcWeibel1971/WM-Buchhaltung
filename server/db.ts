@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, accounts, journalEntries, journalLines,
   journalEntrySequences,
+  invoiceSequences,
   bankAccounts, bankTransactions, employees, payrollEntries,
   vatPeriods, openingBalances, fiscalYears, creditCardStatements,
   bookingRules, documents,
@@ -331,6 +332,35 @@ export async function allocateEntryNumber(orgId: number, fiscalYear: number): Pr
   const year = String(fiscalYear).padStart(4, "0");
   const seqPadded = String(seq).padStart(5, "0");
   return `BL-${year}-${seqPadded}`;
+}
+
+/**
+ * Allokiert eine fortlaufende Rechnungsnummer im Format R-YYYY-NNNNN für
+ * (Organisation, Geschäftsjahr). Gleicher atomare LAST_INSERT_ID()-Trick
+ * wie allocateEntryNumber – siehe dort.
+ *
+ * Die Nummer wird erst bei `issue` vergeben (nicht bei `create`), damit
+ * gelöschte/verworfene Drafts keine Lücken in der Rechnungssequenz
+ * hinterlassen.
+ */
+export async function allocateInvoiceNumber(orgId: number, fiscalYear: number): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.execute(sql`
+    INSERT INTO invoice_sequences (organizationId, fiscalYear, nextSequence)
+    VALUES (${orgId}, ${fiscalYear}, LAST_INSERT_ID(1))
+    ON DUPLICATE KEY UPDATE nextSequence = LAST_INSERT_ID(nextSequence + 1)
+  `);
+  const result = await db.execute(sql`SELECT LAST_INSERT_ID() AS seq`);
+  const rows = (Array.isArray(result) ? result[0] : result) as unknown as Array<{ seq: number | bigint }>;
+  const seqRaw = rows[0]?.seq ?? 0;
+  const seq = typeof seqRaw === "bigint" ? Number(seqRaw) : seqRaw;
+  if (!seq || seq < 1) {
+    throw new Error(`Rechnungsnummern-Allokation fehlgeschlagen für Org ${orgId}, Geschäftsjahr ${fiscalYear}`);
+  }
+  const year = String(fiscalYear).padStart(4, "0");
+  const seqPadded = String(seq).padStart(5, "0");
+  return `R-${year}-${seqPadded}`;
 }
 
 export async function approveJournalEntry(entryId: number, userId: number) {

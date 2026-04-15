@@ -155,6 +155,13 @@
       "when": 1776263921042,
       "tag": "0021_not_null_and_composite_uniques",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1776277647037,
+      "tag": "0022_invoicing",
+      "breakpoints": true
     }
   ]
 }

@@ -54,13 +54,13 @@ function toDateStr(val: string | Date | undefined | null): string | undefined {
 
 // ─── Accounts Router ──────────────────────────────────────────────────────────
 const accountsRouter = router({
-  list: publicProcedure.query(() => getAllAccounts()),
+  list: protectedProcedure.query(() => getAllAccounts()),
 
-  getBalance: publicProcedure
+  getBalance: protectedProcedure
     .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
     .query(({ input }) => getAccountBalance(input.accountId, input.fiscalYear)),
 
-  getLedger: publicProcedure
+  getLedger: protectedProcedure
     .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -95,7 +95,7 @@ const accountsRouter = router({
 
 // ─── Journal Router ───────────────────────────────────────────────────────────
 const journalRouter = router({
-  list: publicProcedure
+  list: protectedProcedure
     .input(z.object({
       status: z.enum(["pending", "approved", "rejected"]).optional(),
       source: z.string().optional(),
@@ -106,7 +106,7 @@ const journalRouter = router({
     }))
     .query(({ input }) => getJournalEntries(input)),
 
-  getWithLines: publicProcedure
+  getWithLines: protectedProcedure
     .input(z.object({ entryId: z.number() }))
     .query(({ input }) => getJournalEntryWithLines(input.entryId)),
 
@@ -184,6 +184,20 @@ const journalRouter = router({
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // GeBüV (Art. 957d OR): verbuchte Einträge sind unveränderlich.
+      const [existing] = await db.select({ status: journalEntries.status })
+        .from(journalEntries)
+        .where(eq(journalEntries.id, input.entryId))
+        .limit(1);
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
+      }
+      if (existing.status !== "pending") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Verbuchte Einträge sind unveränderlich (GeBüV). Erstellen Sie eine Stornobuchung.",
+        });
+      }
       const updateData: Record<string, unknown> = {};
       if (input.description) updateData.description = input.description;
       if (input.bookingDate) updateData.bookingDate = toDateStr(input.bookingDate);
@@ -193,13 +207,28 @@ const journalRouter = router({
       if (input.lines) await updateJournalEntryLines(input.entryId, input.lines);
       return { success: true };
     }),
-  // Delete a journal entry (and revert linked bank/CC transactions)
+  // Delete a journal entry (only allowed for pending entries – GeBüV).
+  // Approved entries müssen per Stornobuchung rückgängig gemacht werden.
   delete: protectedProcedure
     .input(z.object({ entryId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // GeBüV (Art. 957d OR): verbuchte Einträge dürfen nicht gelöscht werden.
+      const [existing] = await db.select({ status: journalEntries.status })
+        .from(journalEntries)
+        .where(eq(journalEntries.id, input.entryId))
+        .limit(1);
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
+      }
+      if (existing.status !== "pending") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Verbuchte Einträge können nicht gelöscht werden (GeBüV). Erstellen Sie eine Stornobuchung.",
+        });
+      }
       // Revert any linked bank transactions back to pending
       const linkedTxs = await db.select().from(bankTransactions)
         .where(eq(bankTransactions.journalEntryId, input.entryId));
@@ -215,7 +244,11 @@ const journalRouter = router({
       await deleteJournalEntry(input.entryId);
       return { success: true };
     }),
-  // Revert an approved journal entry back to pending (keep the entry, just change status)
+  // Revert an approved journal entry back to pending.
+  // NOTE (Phase 1 GeBüV): Strictly speaking this violates journal-immutability
+  // (Art. 957d OR). Kept as a convenience until Phase 1 introduces proper
+  // Stornobuchungen. Must be removed or restricted to admin + audit-logged
+  // before marketing to external customers.
   revert: protectedProcedure
     .input(z.object({ entryId: z.number() }))
     .mutation(async ({ input, ctx }) => {
@@ -228,7 +261,8 @@ const journalRouter = router({
       return { success: true };
     }),
 
-  // Bulk approve multiple journal entries
+  // Bulk approve multiple journal entries. Uses approveJournalEntry() so that
+  // each entry gets a gapless fiscal-year sequence number (GeBüV).
   bulkApprove: protectedProcedure
     .input(z.object({ entryIds: z.array(z.number()) }))
     .mutation(async ({ input, ctx }) => {
@@ -240,9 +274,7 @@ const journalRouter = router({
       for (const id of input.entryIds) {
         const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
         if (!entry || entry.status !== "pending") { skipped++; continue; }
-        await db.update(journalEntries)
-          .set({ status: "approved", approvedBy: ctx.user.id, approvedAt: new Date() })
-          .where(eq(journalEntries.id, id));
+        await approveJournalEntry(id, ctx.user.id);
         approved++;
       }
       return { approved, skipped };
@@ -345,7 +377,7 @@ type UndoSnapshot = {
 const undoSnapshots = new Map<number, UndoSnapshot>();
 
 const bankImportRouter = router({
-  getBankAccounts: publicProcedure.query(() => getBankAccounts()),
+  getBankAccounts: protectedProcedure.query(() => getBankAccounts()),
   updateBankAccount: protectedProcedure
     .input(z.object({
       id: z.number(),
@@ -365,11 +397,11 @@ const bankImportRouter = router({
       return { success: true };
     }),
 
-  getPendingTransactions: publicProcedure
+  getPendingTransactions: protectedProcedure
     .input(z.object({ bankAccountId: z.number().optional() }))
     .query(({ input }) => getPendingBankTransactions(input.bankAccountId)),
 
-  getTransactionsByStatus: publicProcedure
+  getTransactionsByStatus: protectedProcedure
     .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional() }))
     .query(async ({ input }) => {
       const txs = await getBankTransactionsByStatus(input.status, input.bankAccountId);
@@ -1163,32 +1195,32 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       const amount = Math.abs(amtA);
       const bookingDate = txA.transactionDate as string;
       const description = input.bookingText ?? txA.description ?? `Kontoübertrag ${amount.toFixed(2)}`;
+      const fy = new Date(bookingDate).getFullYear();
 
-      // Create journal entry
-      const entryNumber = `2026-T${String(Date.now()).slice(-5)}`;
-      const db2 = db!;
-      const [entryResult] = await db2.insert(journalEntries).values({
-        entryNumber,
+      // Create journal entry (Belegnummer wird in approveJournalEntry vergeben).
+      const newEntryId = await createJournalEntry({
         bookingDate,
         description,
-        status: 'approved',
         source: 'bank_import',
-        fiscalYear: new Date(bookingDate).getFullYear(),
-        approvedBy: ctx.user.id,
+        fiscalYear: fy,
+        status: 'approved',
+        lines: [
+          { accountId: debitAccountId, side: 'debit', amount: amount.toFixed(2), description },
+          { accountId: creditAccountId, side: 'credit', amount: amount.toFixed(2), description },
+        ],
       });
-      const newEntryId = (entryResult as any).insertId;
-
-      // Create journal lines (entryId is the field name in journalLines)
-      await db2.insert(journalLines).values([
-        { entryId: newEntryId, accountId: debitAccountId, side: 'debit', amount: amount.toFixed(2) as any, description },
-        { entryId: newEntryId, accountId: creditAccountId, side: 'credit', amount: amount.toFixed(2) as any, description },
-      ]);
+      await approveJournalEntry(newEntryId, ctx.user.id);
 
       // Mark both transactions as matched
+      const db2 = db!;
       await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txA.id));
       await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txB.id));
 
-      return { success: true, entryId: newEntryId, entryNumber };
+      // Retrieve the allocated entry number for the response
+      const [savedEntry] = await db2.select({ entryNumber: journalEntries.entryNumber })
+        .from(journalEntries).where(eq(journalEntries.id, newEntryId)).limit(1);
+
+      return { success: true, entryId: newEntryId, entryNumber: savedEntry?.entryNumber ?? null };
     }),
 
   listRules: protectedProcedure
@@ -1352,7 +1384,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
 
 // ─── Credit Card Router ───────────────────────────────────────────────────────
 const creditCardRouter = router({
-  list: publicProcedure.query(() => getCreditCardStatements()),
+  list: protectedProcedure.query(() => getCreditCardStatements()),
 
   uploadStatement: protectedProcedure
     .input(z.object({
@@ -1724,9 +1756,9 @@ Antwort NUR als JSON-Array, keine Erklärung:
 
 // ─── Payroll Router ───────────────────────────────────────────────────────────
 const payrollRouter = router({
-  getEmployees: publicProcedure.query(() => getEmployees()),
+  getEmployees: protectedProcedure.query(() => getEmployees()),
 
-  list: publicProcedure
+  list: protectedProcedure
     .input(z.object({ year: z.number().optional(), employeeId: z.number().optional() }))
     .query(({ input }) => getPayrollEntries(input.year, input.employeeId)),
 
@@ -1780,7 +1812,7 @@ const payrollRouter = router({
     }),
 
   // Annual payroll summary: sum all months for a given employee and year
-  annualSummary: publicProcedure
+  annualSummary: protectedProcedure
     .input(z.object({ year: z.number(), employeeId: z.number() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -2265,7 +2297,7 @@ const payrollRouter = router({
     }),
 
   // Get bank transactions linked to a payroll entry (by employee code + month/year)
-  getTransactions: publicProcedure
+  getTransactions: protectedProcedure
     .input(z.object({ employeeId: z.number(), year: z.number(), month: z.number() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -2459,22 +2491,22 @@ const payrollRouter = router({
 
 // ─── Reports Router ───────────────────────────────────────────────────────────
 const reportsRouter = router({
-  balanceSheet: publicProcedure
+  balanceSheet: protectedProcedure
     .input(z.object({ fiscalYear: z.number() }))
     .query(({ input }) => getBalanceSheet(input.fiscalYear)),
 
-  incomeStatement: publicProcedure
+  incomeStatement: protectedProcedure
     .input(z.object({ fiscalYear: z.number() }))
     .query(({ input }) => getIncomeStatement(input.fiscalYear)),
 
-  dashboard: publicProcedure
+  dashboard: protectedProcedure
     .input(z.object({ fiscalYear: z.number() }))
     .query(({ input }) => getDashboardStats(input.fiscalYear)),
 });
 
 // ─── VAT Router ───────────────────────────────────────────────────────────────
 const vatRouter = router({
-  list: publicProcedure
+  list: protectedProcedure
     .input(z.object({ year: z.number().optional() }))
     .query(({ input }) => getVatPeriods(input.year)),
 

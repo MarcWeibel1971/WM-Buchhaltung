@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router, protectedProcedure } from "./_core/trpc";
-import { getDb } from "./db";
+import { getDb, allocateEntryNumber } from "./db";
 import {
   fiscalYears,
   yearEndBookings,
@@ -303,7 +303,9 @@ export const yearEndRouter = router({
       if (!booking) throw new Error("Buchung nicht gefunden");
       if (booking.status !== "suggested") throw new Error("Buchung bereits verarbeitet");
 
+      const entryNumber = await allocateEntryNumber(booking.fiscalYear);
       const [entry] = await db.insert(journalEntries).values({
+        entryNumber,
         bookingDate: `${booking.fiscalYear}-12-31`,
         description: booking.description,
         status: "approved", source: "system",
@@ -346,7 +348,9 @@ export const yearEndRouter = router({
 
       let approved = 0;
       for (const booking of pending) {
+        const entryNumber = await allocateEntryNumber(input.year);
         const [entry] = await db.insert(journalEntries).values({
+          entryNumber,
           bookingDate: `${input.year}-12-31`,
           description: booking.description, status: "approved", source: "system",
           sourceRef: `yearend-${input.year}-${booking.bookingType}`,
@@ -390,7 +394,9 @@ export const yearEndRouter = router({
 
       let reversed = 0;
       for (const booking of approvedBookings) {
+        const entryNumber = await allocateEntryNumber(nextYear);
         const [entry] = await db.insert(journalEntries).values({
+          entryNumber,
           bookingDate: `${nextYear}-01-01`,
           description: `Rückbuchung: ${booking.description}`,
           status: "approved", source: "system",

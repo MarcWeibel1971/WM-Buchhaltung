@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -31,14 +33,65 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  const isProduction = process.env.NODE_ENV === "production";
+
+  // Trust the first proxy hop (needed for rate-limit IP detection and secure
+  // cookie handling behind a reverse proxy / load balancer in production).
+  app.set("trust proxy", 1);
+
+  // Security headers via helmet. CSP is disabled in development because Vite's
+  // HMR requires inline scripts and eval during dev.
+  app.use(
+    helmet({
+      contentSecurityPolicy: isProduction ? undefined : false,
+      crossOriginEmbedderPolicy: false,
+    })
+  );
+
+  // Rate limits. The JSON/tRPC API gets a stricter limit than the OAuth
+  // callback (which can receive a short burst during login).
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    limit: 300, // 300 requests / minute / IP
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+  });
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    limit: 30,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+  });
+  const uploadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 30,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+  });
+
+  // Body parser limits. Document uploads go through multer (separate size
+  // limit in uploadRoute.ts), so the JSON body parser can be tight.
+  app.use(express.json({ limit: "2mb" }));
+  app.use(express.urlencoded({ limit: "2mb", extended: true }));
+
+  // Health check endpoint (no auth, no rate limit) – used by container
+  // orchestrators and uptime monitors.
+  app.get("/api/health", (_req, res) => {
+    res.status(200).json({
+      status: "ok",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // OAuth callback under /api/oauth/callback
+  app.use("/api/oauth", authLimiter);
   registerOAuthRoutes(app);
   // File upload endpoint
-  app.use("/api/upload", uploadRouter);
+  app.use("/api/upload", uploadLimiter, uploadRouter);
   // tRPC API
+  app.use("/api/trpc", apiLimiter);
   app.use(
     "/api/trpc",
     createExpressMiddleware({

@@ -468,7 +468,11 @@ export const settingsRouter = router({
           eq(journalEntries.source, 'system')
         ));
 
-      // Only delete entries that are Eröffnungsbilanz (by description)
+      // Only delete entries that are Eröffnungsbilanz (by description).
+      // NOTE (Phase 1 GeBüV): This system operation bypasses journal-immutability
+      // because it rebuilds the opening balance entry. In a multi-tenant SaaS this
+      // should require admin rights and be audit-logged. Acceptable for single-
+      // tenant setup where opening balances are only recomputed during onboarding.
       for (const e of existingEntries) {
         const entry = await db.select({ description: journalEntries.description })
           .from(journalEntries).where(eq(journalEntries.id, e.id)).limit(1);

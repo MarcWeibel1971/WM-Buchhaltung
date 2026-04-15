@@ -2,6 +2,7 @@ import { eq, and, desc, asc, sql, gte, lte, inArray, or, like } from "drizzle-or
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, accounts, journalEntries, journalLines,
+  journalEntrySequences,
   bankAccounts, bankTransactions, employees, payrollEntries,
   vatPeriods, openingBalances, fiscalYears, creditCardStatements,
   bookingRules, documents,
@@ -289,20 +290,94 @@ export async function createJournalEntry(data: {
   return entryId;
 }
 
+/**
+ * Allokiert eine fortlaufende Belegnummer im Format BL-YYYY-NNNNN für das
+ * übergebene Geschäftsjahr. Atomar dank MySQL's LAST_INSERT_ID()-Trick –
+ * funktioniert auch unter Concurrent Inserts ohne explizites FOR UPDATE.
+ *
+ * Die Nummer wird erst beim Approval vergeben (nicht beim Create), damit
+ * gelöschte Drafts keine Lücken in der Sequenz hinterlassen (GeBüV Art. 957d).
+ */
+export async function allocateEntryNumber(fiscalYear: number): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Atomarer Upsert: beim ersten Aufruf pro Jahr LAST_INSERT_ID(1), danach
+  // LAST_INSERT_ID(nextSequence + 1). Der zurückgelieferte Wert ist die
+  // allokierte Sequenz für diesen Aufruf.
+  await db.execute(sql`
+    INSERT INTO journal_entry_sequences (fiscalYear, nextSequence)
+    VALUES (${fiscalYear}, LAST_INSERT_ID(1))
+    ON DUPLICATE KEY UPDATE nextSequence = LAST_INSERT_ID(nextSequence + 1)
+  `);
+  const result = await db.execute(sql`SELECT LAST_INSERT_ID() AS seq`);
+  // mysql2 gibt bei execute() ein [rows, fields]-Tupel zurück
+  const rows = (Array.isArray(result) ? result[0] : result) as unknown as Array<{ seq: number | bigint }>;
+  const seqRaw = rows[0]?.seq ?? 0;
+  const seq = typeof seqRaw === "bigint" ? Number(seqRaw) : seqRaw;
+  if (!seq || seq < 1) {
+    throw new Error(`Belegnummern-Allokation fehlgeschlagen für Geschäftsjahr ${fiscalYear}`);
+  }
+  const year = String(fiscalYear).padStart(4, "0");
+  const seqPadded = String(seq).padStart(5, "0");
+  return `BL-${year}-${seqPadded}`;
+}
+
 export async function approveJournalEntry(entryId: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(journalEntries).set({
+  // Belegnummer allokieren, falls der Eintrag noch keine hat. Wird nur beim
+  // ersten Approval vergeben, damit ein späteres revert → re-approve die
+  // bereits vergebene Nummer nicht doppelt allokiert.
+  const [existing] = await db
+    .select({
+      entryNumber: journalEntries.entryNumber,
+      fiscalYear: journalEntries.fiscalYear,
+      bookingDate: journalEntries.bookingDate,
+    })
+    .from(journalEntries)
+    .where(eq(journalEntries.id, entryId))
+    .limit(1);
+  if (!existing) throw new Error(`Journal-Eintrag #${entryId} nicht gefunden`);
+
+  const updateSet: Record<string, unknown> = {
     status: "approved",
     approvedBy: userId,
     approvedAt: new Date(),
-  }).where(eq(journalEntries.id, entryId));
+  };
+  if (!existing.entryNumber) {
+    const fy = existing.fiscalYear ?? new Date(existing.bookingDate).getFullYear();
+    updateSet.entryNumber = await allocateEntryNumber(fy);
+  }
+  await db.update(journalEntries).set(updateSet).where(eq(journalEntries.id, entryId));
 }
 
 export async function rejectJournalEntry(entryId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(journalEntries).set({ status: "rejected" }).where(eq(journalEntries.id, entryId));
+}
+
+/**
+ * GeBüV-Schutz: stellt sicher, dass ein Journal-Eintrag bearbeitet oder
+ * gelöscht werden darf. Nur Entries mit Status "pending" sind veränderbar.
+ * Approved/rejected Entries sind unveränderlich (Art. 957d OR, GeBüV).
+ * Für approved Entries muss eine Storno-/Gegenbuchung erstellt werden.
+ */
+export async function assertJournalEntryEditable(entryId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [entry] = await db.select({ status: journalEntries.status })
+    .from(journalEntries)
+    .where(eq(journalEntries.id, entryId))
+    .limit(1);
+  if (!entry) {
+    throw new Error(`Journal-Eintrag #${entryId} nicht gefunden`);
+  }
+  if (entry.status !== "pending") {
+    throw new Error(
+      `Journal-Eintrag #${entryId} ist bereits ${entry.status === "approved" ? "verbucht" : "abgelehnt"} und kann nicht mehr geändert werden (GeBüV-Immutabilität). Erstellen Sie eine Stornobuchung.`
+    );
+  }
 }
 
 export async function updateJournalEntryLines(entryId: number, lines: Array<{
@@ -313,6 +388,9 @@ export async function updateJournalEntryLines(entryId: number, lines: Array<{
 }>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+
+  // GeBüV: nur pending Entries dürfen geändert werden
+  await assertJournalEntryEditable(entryId);
 
   // Validate
   const debitTotal = lines.filter(l => l.side === "debit").reduce((s, l) => s + parseFloat(l.amount), 0);
@@ -877,10 +955,12 @@ export async function unmatchDocument(documentId: number): Promise<void> {
   }
 }
 
-// ─── Delete Journal Entry (for reverting bookings) ───────────────────────────
+// ─── Delete Journal Entry (nur für pending Entries – GeBüV-konform) ──────────
 export async function deleteJournalEntry(entryId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  // GeBüV: approved Entries dürfen nicht gelöscht werden – Storno erforderlich.
+  await assertJournalEntryEditable(entryId);
   // Delete lines first (FK), then entry
   await db.delete(journalLines).where(eq(journalLines.entryId, entryId));
   await db.delete(journalEntries).where(eq(journalEntries.id, entryId));

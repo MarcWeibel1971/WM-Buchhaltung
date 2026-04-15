@@ -187,6 +187,18 @@ export const journalLines = mysqlTable("journal_lines", {
 });
 export type JournalLine = typeof journalLines.$inferSelect;
 
+// ─── Journal Entry Sequences (fortlaufende Belegnummern pro Geschäftsjahr) ───
+// GeBüV (Art. 957d OR): Belegnummern müssen fortlaufend und lückenlos sein.
+// Sequenzen werden atomar via MySQL LAST_INSERT_ID()-Trick allokiert – siehe
+// allocateEntryNumber() in server/db.ts. Die Nummer wird erst beim Approval
+// vergeben, damit gelöschte Drafts keine Lücken hinterlassen.
+export const journalEntrySequences = mysqlTable("journal_entry_sequences", {
+  fiscalYear: int("fiscalYear").primaryKey(),
+  nextSequence: int("nextSequence").default(1).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type JournalEntrySequence = typeof journalEntrySequences.$inferSelect;
+
 // ─── Bank Accounts ────────────────────────────────────────────────────────────
 export const bankAccounts = mysqlTable("bank_accounts", {
   id: int("id").autoincrement().primaryKey(),

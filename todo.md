@@ -807,3 +807,11 @@
 - [x] Fix: createAccount setzt automatisch category="Umlaufvermögen" und subCategory="Flüssige Mittel" für Bankkonten
 - [x] Fix: Bestehende Bankkonten ohne Kategorie (1099) nachträglich korrigiert
 - [x] Feature: Neues Bankkonto direkt aus Bankkonten-Ansicht erstellen (mit automatischem Kontenplan-Eintrag)
+
+## Kundendaten-Import aus Kundenliste und Debitoren-Rechnungen
+- [x] Kundenliste.xlsm auslesen und Kundendaten extrahieren (Name, Ort, Kunden-Nr.) – 143 Kunden
+- [x] Debitoren-Rechnungen scannen und zusätzliche Kundeninfos extrahieren – 18 zusätzliche Kunden
+- [x] Daten aus beiden Quellen zusammenführen und deduplizieren – 161 total, 4 Duplikate entfernt
+- [x] Kundeneinträge in der App erstellt – 157 Kunden importiert
+- [x] customerNumber Feld zum Schema hinzugefügt
+- [x] Kunden-Nr. in UI anzeigen und bearbeitbar machen

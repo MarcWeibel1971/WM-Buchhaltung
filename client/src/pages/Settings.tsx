@@ -3465,6 +3465,7 @@ function CustomersTab() {
   const [importPreview, setImportPreview] = useReactState<Array<{name:string;company?:string;street?:string;zipCode?:string;city?:string;country?:string;email?:string;phone?:string;salutation?:string;notes?:string}>>([]);
 
   // Customer form
+  const [cCustNr, setCCustNr] = useReactState("");
   const [cName, setCName] = useReactState("");
   const [cCompany, setCCompany] = useReactState("");
   const [cStreet, setCStreet] = useReactState("");
@@ -3526,7 +3527,7 @@ function CustomersTab() {
   });
 
   function resetCustForm() {
-    setCName(""); setCCompany(""); setCStreet(""); setCZip(""); setCCity("");
+    setCCustNr(""); setCName(""); setCCompany(""); setCStreet(""); setCZip(""); setCCity("");
     setCCountry("Schweiz"); setCEmail(""); setCPhone(""); setCSalutation(""); setCNotes("");
     setEditCustomer(null);
   }
@@ -3539,7 +3540,7 @@ function CustomersTab() {
 
   function openEditCust(c: any) {
     setEditCustomer(c);
-    setCName(c.name || ""); setCCompany(c.company || ""); setCStreet(c.street || "");
+    setCCustNr(c.customerNumber || ""); setCName(c.name || ""); setCCompany(c.company || ""); setCStreet(c.street || "");
     setCZip(c.zipCode || ""); setCCity(c.city || ""); setCCountry(c.country || "Schweiz");
     setCEmail(c.email || ""); setCPhone(c.phone || ""); setCSalutation(c.salutation || "");
     setCNotes(c.notes || "");
@@ -3549,7 +3550,7 @@ function CustomersTab() {
   function handleSaveCust() {
     if (!cName.trim()) { toast.error("Name ist erforderlich"); return; }
     const data = {
-      name: cName.trim(), company: cCompany || undefined, street: cStreet || undefined,
+      name: cName.trim(), customerNumber: cCustNr || undefined, company: cCompany || undefined, street: cStreet || undefined,
       zipCode: cZip || undefined, city: cCity || undefined, country: cCountry || undefined,
       email: cEmail || undefined, phone: cPhone || undefined, salutation: cSalutation || undefined,
       notes: cNotes || undefined,
@@ -3663,7 +3664,10 @@ function CustomersTab() {
                 <div className="flex items-center gap-3">
                   {expandedCustomer === c.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                   <div>
-                    <div className="font-semibold">{c.name}</div>
+                    <div className="font-semibold">
+                      {c.customerNumber && <span className="font-mono text-muted-foreground mr-2">{c.customerNumber}</span>}
+                      {c.name}
+                    </div>
                     <div className="text-sm text-muted-foreground">
                       {[c.company, [c.zipCode, c.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}
                       {c.email && ` · ${c.email}`}
@@ -3760,8 +3764,12 @@ function CustomersTab() {
             <DialogTitle>{editCustomer ? "Kunde bearbeiten" : "Neuer Kunde"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-4 gap-4">
               <div>
+                <Label>Kunden-Nr.</Label>
+                <Input value={cCustNr} onChange={e => setCCustNr(e.target.value)} placeholder="784" className="font-mono" />
+              </div>
+              <div className="col-span-2">
                 <Label>Name *</Label>
                 <Input value={cName} onChange={e => setCName(e.target.value)} placeholder="Peter Meier" />
               </div>

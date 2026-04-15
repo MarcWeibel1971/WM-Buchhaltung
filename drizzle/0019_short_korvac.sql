@@ -1,0 +1,1 @@
+ALTER TABLE `customers` ADD `customerNumber` varchar(20);

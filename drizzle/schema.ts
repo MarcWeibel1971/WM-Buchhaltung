@@ -593,6 +593,8 @@ export type InsertSupplier = typeof suppliers.$inferInsert;
 // ─── Customers (Kunden-Stammdaten / CRM) ────────────────────────────────────
 export const customers = mysqlTable("customers", {
   id: int("id").autoincrement().primaryKey(),
+  // Customer number from legacy system
+  customerNumber: varchar("customerNumber", { length: 20 }),
   // Name or company name
   name: varchar("name", { length: 200 }).notNull(),
   company: varchar("company", { length: 200 }),

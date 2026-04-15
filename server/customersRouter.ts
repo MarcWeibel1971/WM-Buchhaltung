@@ -79,6 +79,7 @@ export const customersRouter = router({
   create: protectedProcedure
     .input(z.object({
       name: z.string().min(1),
+      customerNumber: z.string().optional(),
       company: z.string().optional(),
       street: z.string().optional(),
       zipCode: z.string().optional(),
@@ -94,6 +95,7 @@ export const customersRouter = router({
       if (!db) throw new Error('Database not available');
       const [result] = await db.insert(customers).values({
         name: input.name,
+        customerNumber: input.customerNumber || null,
         company: input.company || null,
         street: input.street || null,
         zipCode: input.zipCode || null,
@@ -111,6 +113,7 @@ export const customersRouter = router({
     .input(z.object({
       id: z.number(),
       name: z.string().min(1).optional(),
+      customerNumber: z.string().optional(),
       company: z.string().optional(),
       street: z.string().optional(),
       zipCode: z.string().optional(),
@@ -222,6 +225,7 @@ export const customersRouter = router({
     .input(z.object({
       customers: z.array(z.object({
         name: z.string().min(1),
+        customerNumber: z.string().optional(),
         company: z.string().optional(),
         street: z.string().optional(),
         zipCode: z.string().optional(),
@@ -272,6 +276,7 @@ export const customersRouter = router({
 
         await db.insert(customers).values({
           name: c.name.trim(),
+          customerNumber: c.customerNumber || null,
           company: c.company || null,
           street: c.street || null,
           zipCode: c.zipCode || null,

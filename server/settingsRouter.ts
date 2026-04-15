@@ -7,7 +7,7 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import {
-  companySettings, insuranceSettings, employees, bankAccounts, bookingRules, accounts,
+  companySettings, insuranceSettings, employees, bankAccounts, bankTransactions, bookingRules, accounts,
   openingBalances, journalEntries, journalLines, fiscalYears
 } from "../drizzle/schema";
 import { and, eq, asc, desc, sql } from "drizzle-orm";
@@ -554,7 +554,21 @@ export const settingsRouter = router({
         isActive: input.isActive ?? true,
         sortOrder: input.sortOrder ?? 0,
       }).$returningId();
-      return { success: true, id: result.id };
+
+      // Auto-create bank account entry if isBankAccount is true
+      if (input.isBankAccount) {
+        const existing = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, result.id)).limit(1);
+        if (existing.length === 0) {
+          await db.insert(bankAccounts).values({
+            accountId: result.id,
+            name: input.name,
+            currency: "CHF",
+            isActive: true,
+          });
+        }
+      }
+
+      return { success: true, id: result.id, bankAccountCreated: !!input.isBankAccount };
     }),
 
   updateAccount: protectedProcedure
@@ -583,6 +597,41 @@ export const settingsRouter = router({
       }
       if (Object.keys(cleanData).length === 0) return { success: true };
       await db.update(accounts).set(cleanData).where(eq(accounts.id, id));
+
+      // Sync bank account when isBankAccount changes
+      if (input.isBankAccount !== undefined) {
+        const existingBA = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, id)).limit(1);
+        if (input.isBankAccount && existingBA.length === 0) {
+          // Create bank account entry
+          const [acct] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+          await db.insert(bankAccounts).values({
+            accountId: id,
+            name: acct?.name ?? `Konto ${id}`,
+            currency: "CHF",
+            isActive: true,
+          });
+          return { success: true, bankAccountCreated: true };
+        } else if (!input.isBankAccount && existingBA.length > 0) {
+          // Check if bank account has transactions before removing
+          const [txCount] = await db.select({ count: sql`COUNT(*)` })
+            .from(bankTransactions).where(eq(bankTransactions.bankAccountId, existingBA[0].id));
+          if (Number(txCount?.count) === 0) {
+            await db.delete(bankAccounts).where(eq(bankAccounts.id, existingBA[0].id));
+            return { success: true, bankAccountRemoved: true };
+          }
+          // If transactions exist, keep bank account but update the flag
+          return { success: true, bankAccountKept: true, reason: "Bankkonto hat Transaktionen und kann nicht entfernt werden" };
+        }
+      }
+
+      // Also sync name changes to bank account
+      if (input.name) {
+        const existingBA = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, id)).limit(1);
+        if (existingBA.length > 0) {
+          await db.update(bankAccounts).set({ name: input.name }).where(eq(bankAccounts.id, existingBA[0].id));
+        }
+      }
+
       return { success: true };
     }),
 
@@ -596,6 +645,11 @@ export const settingsRouter = router({
         .from(journalLines).where(eq(journalLines.accountId, input.id));
       if (Number(usage?.count) > 0) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Konto hat ${usage.count} Buchungszeilen und kann nicht gelöscht werden. Deaktivieren Sie es stattdessen.` });
+      }
+      // Also clean up bankAccounts if this was a bank account
+      const [acct] = await db.select().from(accounts).where(eq(accounts.id, input.id));
+      if (acct?.isBankAccount) {
+        await db.delete(bankAccounts).where(eq(bankAccounts.accountId, input.id));
       }
       await db.delete(accounts).where(eq(accounts.id, input.id));
       return { success: true };

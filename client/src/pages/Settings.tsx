@@ -1729,12 +1729,31 @@ function buildTree(accounts: AccountRow[]): TreeCategory[] {
 
 function ChartOfAccountsTab() {
   const { data: allAccounts, isLoading, refetch } = trpc.settings.getAllAccounts.useQuery();
+  const utils = trpc.useUtils();
   const updateMut = trpc.settings.updateAccount.useMutation({
-    onSuccess: () => { refetch(); },
+    onSuccess: (data) => {
+      refetch();
+      if (data.bankAccountCreated) {
+        toast.success("Bankkonto automatisch in Bankkonten erstellt");
+        utils.settings.getBankAccounts.invalidate();
+      } else if (data.bankAccountRemoved) {
+        toast.info("Bankkonto-Eintrag entfernt");
+        utils.settings.getBankAccounts.invalidate();
+      } else if (data.bankAccountKept) {
+        toast.warning(data.reason || "Bankkonto hat Transaktionen und wurde beibehalten");
+      }
+    },
     onError: (e) => toast.error(e.message),
   });
   const createMut = trpc.settings.createAccount.useMutation({
-    onSuccess: () => { toast.success("Konto erstellt"); refetch(); setShowAdd(false); resetAddForm(); },
+    onSuccess: (data) => {
+      toast.success("Konto erstellt");
+      if (data.bankAccountCreated) {
+        toast.success("Bankkonto automatisch in Bankkonten erstellt");
+        utils.settings.getBankAccounts.invalidate();
+      }
+      refetch(); setShowAdd(false); resetAddForm();
+    },
     onError: (e) => toast.error(e.message),
   });
   const deleteMut = trpc.settings.deleteAccount.useMutation({
@@ -1790,10 +1809,11 @@ function ChartOfAccountsTab() {
   const [addType, setAddType] = useState<string>("expense");
   const [addCategory, setAddCategory] = useState("");
   const [addSubCategory, setAddSubCategory] = useState("");
+  const [addIsBankAccount, setAddIsBankAccount] = useState(false);
 
   const resetAddForm = () => {
     setAddNumber(""); setAddName(""); setAddType("expense");
-    setAddCategory(""); setAddSubCategory("");
+    setAddCategory(""); setAddSubCategory(""); setAddIsBankAccount(false);
   };
 
   const tree = useMemo(() => {
@@ -1869,6 +1889,7 @@ function ChartOfAccountsTab() {
       normalBalance,
       category: addCategory || undefined,
       subCategory: addSubCategory || undefined,
+      isBankAccount: addIsBankAccount,
     });
   };
 
@@ -1959,6 +1980,13 @@ function ChartOfAccountsTab() {
                 <Label>Unterkategorie</Label>
                 <Input value={addSubCategory} onChange={e => setAddSubCategory(e.target.value)} placeholder="z.B. Fachliteratur" />
               </div>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Switch
+                checked={addIsBankAccount}
+                onCheckedChange={setAddIsBankAccount}
+              />
+              <Label className="text-sm">Bankkonto (erstellt automatisch Eintrag unter Bankkonten)</Label>
             </div>
           </div>
           <DialogFooter>
@@ -2056,6 +2084,13 @@ function ChartOfAccountsTab() {
                             <Badge variant="outline" className="text-xs shrink-0">
                               {ACCOUNT_TYPE_LABELS[acc.accountType] || acc.accountType}
                             </Badge>
+
+                            {/* Bank account indicator */}
+                            {acc.isBankAccount && (
+                              <Badge variant="secondary" className="text-xs shrink-0 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                Bank
+                              </Badge>
+                            )}
 
                             {/* VAT toggle */}
                             <div className="flex items-center gap-1 shrink-0">

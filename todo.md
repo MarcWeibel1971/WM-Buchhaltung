@@ -719,3 +719,10 @@
 - [x] Frontend: Export-Dialog mit Auswahl-Möglichkeiten (Infoniqa als erste Option)
 - [x] Frontend: Datumsbereich-Filter für Export
 - [x] Frontend: Export-Button im Journal-Header
+
+## Kontenplan ↔ Bankkonten Synchronisation
+- [x] Wenn im Kontenplan ein Konto als Bankkonto markiert wird (isBankAccount=true), automatisch Eintrag in Bankkonten erstellen
+- [x] Wenn im Kontenplan isBankAccount auf false gesetzt wird, Bankkonten-Eintrag entfernen (falls keine Transaktionen)
+- [x] Wenn in Bankkonten ein neues Bankkonto erstellt wird, muss es einem Kontenplan-Konto zugeordnet sein
+- [x] Bestehende Bankkonten ohne Kontenplan-Zuordnung identifizieren und synchronisieren
+- [x] Frontend: Hinweis anzeigen wenn Bankkonto erstellt/entfernt wird durch Kontenplan-Änderung

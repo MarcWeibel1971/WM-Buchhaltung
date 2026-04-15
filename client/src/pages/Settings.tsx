@@ -430,13 +430,34 @@ function CompanyTab() {
 // ─── Bank Tab ─────────────────────────────────────────────────────────────────
 
 function BankTab() {
+  const utils = trpc.useUtils();
   const { data: bankAccounts, isLoading, refetch } = trpc.settings.getBankAccounts.useQuery();
   const updateMut = trpc.settings.updateBankAccount.useMutation({
-    onSuccess: () => { toast.success("Gespeichert"); refetch(); setEditId(null); },
+    onSuccess: () => { toast.success("Gespeichert"); refetch(); utils.accounts.list.invalidate(); setEditId(null); },
+    onError: (e) => toast.error(e.message),
+  });
+  const createMut = trpc.settings.createBankAccount.useMutation({
+    onSuccess: () => { toast.success("Bankkonto erstellt (auch im Kontenplan)"); refetch(); utils.accounts.list.invalidate(); setShowCreate(false); resetCreateForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMut = trpc.settings.deleteBankAccount.useMutation({
+    onSuccess: (data) => {
+      if (data.accountDeleted) {
+        toast.success("Bankkonto und Kontenplan-Eintrag gel\u00f6scht");
+      } else {
+        toast.success(data.message || "Bankkonto gel\u00f6scht");
+      }
+      refetch();
+      utils.accounts.list.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
   const [editId, setEditId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<{ name: string; iban: string; bank: string; owner: string }>({ name: "", iban: "", bank: "", owner: "" });
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ accountNumber: "", name: "", iban: "", bank: "", owner: "" });
+
+  const resetCreateForm = () => setCreateForm({ accountNumber: "", name: "", iban: "", bank: "", owner: "" });
 
   const startEdit = (ba: NonNullable<typeof bankAccounts>[number]) => {
     setEditForm({ name: ba.name, iban: ba.iban ?? "", bank: ba.bank ?? "", owner: ba.owner ?? "" });
@@ -447,9 +468,14 @@ function BankTab() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Bankkonten</h1>
-        <p className="text-muted-foreground text-sm mt-1">IBAN und Bankverbindungen der Geschäftskonten</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Bankkonten</h1>
+          <p className="text-muted-foreground text-sm mt-1">IBAN und Bankverbindungen der Geschäftskonten</p>
+        </div>
+        <Button onClick={() => { resetCreateForm(); setShowCreate(true); }}>
+          <Plus className="h-4 w-4 mr-2" /> Neues Bankkonto
+        </Button>
       </div>
 
       <div className="space-y-4">
@@ -498,15 +524,80 @@ function BankTab() {
                     <div className="text-sm text-muted-foreground">{ba.bank ?? "—"}</div>
                     <div className="font-mono text-sm">{ba.iban ?? <span className="text-muted-foreground italic">Keine IBAN hinterlegt</span>}</div>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => startEdit(ba)}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => startEdit(ba)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => {
+                      if (confirm(`Bankkonto "${ba.name}" wirklich löschen?`)) deleteMut.mutate({ id: ba.id });
+                    }}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {/* Create Bank Account Dialog */}
+      <Dialog open={showCreate} onOpenChange={(open) => { if (!open) { setShowCreate(false); resetCreateForm(); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Neues Bankkonto</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Das Bankkonto wird automatisch auch im Kontenplan angelegt (Kategorie: Umlaufvermögen / Flüssige Mittel).
+            </p>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Kontonummer *</Label>
+                <Input value={createForm.accountNumber} onChange={e => setCreateForm(f => ({ ...f, accountNumber: e.target.value }))} placeholder="1099" className="mt-1" />
+              </div>
+              <div className="col-span-2">
+                <Label>Bezeichnung *</Label>
+                <Input value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} placeholder="ZKB Geschäftskonto" className="mt-1" />
+              </div>
+            </div>
+            <div>
+              <Label>Bank</Label>
+              <Input value={createForm.bank} onChange={e => setCreateForm(f => ({ ...f, bank: e.target.value }))} placeholder="Zürcher Kantonalbank" className="mt-1" />
+            </div>
+            <div>
+              <Label>IBAN</Label>
+              <Input value={createForm.iban} onChange={e => setCreateForm(f => ({ ...f, iban: e.target.value }))} placeholder="CH00 0000 0000 0000 0000 0" className="mt-1 font-mono" />
+            </div>
+            <div>
+              <Label>Inhaber (Kürzel)</Label>
+              <Input value={createForm.owner} onChange={e => setCreateForm(f => ({ ...f, owner: e.target.value }))} placeholder="mw, jm, wm" className="mt-1" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowCreate(false); resetCreateForm(); }}>Abbrechen</Button>
+            <Button
+              onClick={() => {
+                if (!createForm.accountNumber.trim() || !createForm.name.trim()) {
+                  toast.error("Kontonummer und Bezeichnung sind erforderlich");
+                  return;
+                }
+                createMut.mutate({
+                  accountNumber: createForm.accountNumber.trim(),
+                  name: createForm.name.trim(),
+                  iban: createForm.iban.trim() || undefined,
+                  bank: createForm.bank.trim() || undefined,
+                  owner: createForm.owner.trim() || undefined,
+                });
+              }}
+              disabled={createMut.isPending}
+            >
+              {createMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Erstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

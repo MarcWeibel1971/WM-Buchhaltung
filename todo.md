@@ -799,3 +799,11 @@
 - [x] Backend: CSV/Excel-Upload Endpoint für Kundenliste mit Extraktion
 - [x] Frontend: "Kunden importieren" Button mit CSV/Excel-Upload Dialog
 - [x] Frontend: Vorschau der importierten Kundendaten vor dem Speichern
+
+## Bugfix: Bankkonten ↔ Kontenplan Synchronisation
+- [x] Beim Erstellen eines Bankkontos automatisch ein entsprechendes Konto im Kontenplan anlegen (falls nicht vorhanden)
+- [x] Möglichkeit Bankkonten zu löschen (mit Prüfung ob Buchungen vorhanden)
+- [x] Beim Löschen eines Bankkontos auch das verknüpfte Konto im Kontenplan berücksichtigen
+- [x] Fix: createAccount setzt automatisch category="Umlaufvermögen" und subCategory="Flüssige Mittel" für Bankkonten
+- [x] Fix: Bestehende Bankkonten ohne Kategorie (1099) nachträglich korrigiert
+- [x] Feature: Neues Bankkonto direkt aus Bankkonten-Ansicht erstellen (mit automatischem Kontenplan-Eintrag)

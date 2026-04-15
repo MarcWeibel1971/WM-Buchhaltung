@@ -301,6 +301,61 @@ export const settingsRouter = router({
     });
   }),
 
+  createBankAccount: protectedProcedure
+    .input(z.object({
+      accountNumber: z.string().min(1).max(10),
+      name: z.string().min(1).max(100),
+      iban: z.string().max(34).optional(),
+      bank: z.string().max(100).optional(),
+      owner: z.string().max(10).optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Check if account number already exists in Kontenplan
+      const existing = await db.select().from(accounts).where(eq(accounts.number, input.accountNumber)).limit(1);
+      let accountId: number;
+      if (existing.length > 0) {
+        // Account exists – check if already a bank account
+        if (existing[0].isBankAccount) {
+          const existingBA = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, existing[0].id)).limit(1);
+          if (existingBA.length > 0) {
+            throw new TRPCError({ code: "CONFLICT", message: `Konto ${input.accountNumber} ist bereits als Bankkonto erfasst` });
+          }
+        }
+        // Mark existing account as bank account
+        await db.update(accounts).set({ isBankAccount: true }).where(eq(accounts.id, existing[0].id));
+        accountId = existing[0].id;
+      } else {
+        // Create new account in Kontenplan
+        const accountType = input.accountNumber.startsWith("1") ? "asset" as const : "asset" as const;
+        const [result] = await db.insert(accounts).values({
+          number: input.accountNumber,
+          name: input.name,
+          accountType,
+          normalBalance: "debit",
+          category: "Umlaufverm\u00f6gen",
+          subCategory: "Fl\u00fcssige Mittel",
+          isBankAccount: true,
+          isVatRelevant: false,
+          isActive: true,
+          sortOrder: 0,
+        }).$returningId();
+        accountId = result.id;
+      }
+      // Create bank account entry
+      await db.insert(bankAccounts).values({
+        accountId,
+        name: input.name,
+        iban: input.iban ?? null,
+        bank: input.bank ?? null,
+        owner: input.owner ?? null,
+        currency: "CHF",
+        isActive: true,
+      });
+      return { success: true, accountId };
+    }),
+
   updateBankAccount: protectedProcedure
     .input(z.object({
       id: z.number().int(),
@@ -314,7 +369,45 @@ export const settingsRouter = router({
       if (!db) throw new Error('Database not available');
       const { id, ...data } = input;
       await db.update(bankAccounts).set(data).where(eq(bankAccounts.id, id));
+      // Also sync name to accounts table
+      if (data.name) {
+        const [ba] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, id)).limit(1);
+        if (ba) {
+          await db.update(accounts).set({ name: data.name }).where(eq(accounts.id, ba.accountId));
+        }
+      }
       return { success: true };
+    }),
+
+  deleteBankAccount: protectedProcedure
+    .input(z.object({ id: z.number().int() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Get the bank account
+      const [ba] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, input.id)).limit(1);
+      if (!ba) throw new TRPCError({ code: "NOT_FOUND", message: "Bankkonto nicht gefunden" });
+      // Check for transactions
+      const [txCount] = await db.select({ count: sql`COUNT(*)` })
+        .from(bankTransactions).where(eq(bankTransactions.bankAccountId, input.id));
+      if (Number(txCount?.count) > 0) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Bankkonto hat ${txCount.count} Transaktionen und kann nicht gel\u00f6scht werden` });
+      }
+      // Check for journal lines on the linked account
+      const [jlCount] = await db.select({ count: sql`COUNT(*)` })
+        .from(journalLines).where(eq(journalLines.accountId, ba.accountId));
+      // Delete bank account
+      await db.delete(bankAccounts).where(eq(bankAccounts.id, input.id));
+      if (Number(jlCount?.count) === 0) {
+        // Also delete the account from Kontenplan if no journal lines
+        await db.update(accounts).set({ isBankAccount: false }).where(eq(accounts.id, ba.accountId));
+        await db.delete(accounts).where(eq(accounts.id, ba.accountId));
+        return { success: true, accountDeleted: true };
+      } else {
+        // Just remove bank flag but keep account
+        await db.update(accounts).set({ isBankAccount: false }).where(eq(accounts.id, ba.accountId));
+        return { success: true, accountDeleted: false, message: "Bankkonto gel\u00f6scht, Konto im Kontenplan beibehalten (hat Buchungen)" };
+      }
     }),
 
   // ── Booking Rules ─────────────────────────────────────────────────────────────
@@ -548,13 +641,20 @@ export const settingsRouter = router({
       // Check for duplicate number
       const existing = await db.select().from(accounts).where(eq(accounts.number, input.number)).limit(1);
       if (existing.length > 0) throw new TRPCError({ code: "CONFLICT", message: `Konto ${input.number} existiert bereits` });
+      // Auto-assign category for bank accounts if not provided
+      let category = input.category ?? null;
+      let subCategory = input.subCategory ?? null;
+      if (input.isBankAccount && !category) {
+        category = "Umlaufverm\u00f6gen";
+        subCategory = subCategory ?? "Fl\u00fcssige Mittel";
+      }
       const [result] = await db.insert(accounts).values({
         number: input.number,
         name: input.name,
         accountType: input.accountType,
         normalBalance: input.normalBalance,
-        category: input.category ?? null,
-        subCategory: input.subCategory ?? null,
+        category,
+        subCategory,
         isBankAccount: input.isBankAccount ?? false,
         isVatRelevant: input.isVatRelevant ?? false,
         defaultVatRate: input.defaultVatRate ?? null,
@@ -603,6 +703,14 @@ export const settingsRouter = router({
         if (v !== undefined) cleanData[k] = v;
       }
       if (Object.keys(cleanData).length === 0) return { success: true };
+      // Auto-assign category for bank accounts if toggling on and no category set
+      if (input.isBankAccount === true && !cleanData.category) {
+        const [existing] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+        if (existing && !existing.category) {
+          cleanData.category = "Umlaufverm\u00f6gen";
+          cleanData.subCategory = cleanData.subCategory ?? existing.subCategory ?? "Fl\u00fcssige Mittel";
+        }
+      }
       await db.update(accounts).set(cleanData).where(eq(accounts.id, id));
 
       // Sync bank account when isBankAccount changes

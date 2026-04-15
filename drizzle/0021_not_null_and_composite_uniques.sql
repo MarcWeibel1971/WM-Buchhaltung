@@ -62,7 +62,9 @@ UPDATE `year_end_bookings`       SET `organizationId` = 1 WHERE `organizationId`
 
 -- ─── Globalen entryNumber-Unique-Index droppen (war aus 0019) ──────────────
 -- Wird durch den neuen (organizationId, entryNumber) Composite-Index ersetzt.
-DROP INDEX `journal_entries_entryNumber_unique` ON `journal_entries`;
+-- HINWEIS: Index wurde bereits durch Migration 0020 entfernt, daher hier auskommentiert.
+-- DROP INDEX `journal_entries_entryNumber_unique` ON `journal_entries`;
+SELECT 1;
 --> statement-breakpoint
 
 -- ─── NOT NULL Constraints ──────────────────────────────────────────────────

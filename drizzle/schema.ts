@@ -560,3 +560,186 @@ export const qrSettings = mysqlTable("qr_settings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 export type QrSettings = typeof qrSettings.$inferSelect;
+
+// ─── Suppliers (Lieferanten-Stammdaten) ──────────────────────────────────────
+export const suppliers = mysqlTable("suppliers", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  street: varchar("street", { length: 200 }),
+  zipCode: varchar("zipCode", { length: 10 }),
+  city: varchar("city", { length: 100 }),
+  country: varchar("country", { length: 50 }).default("Schweiz"),
+  iban: varchar("iban", { length: 34 }),
+  bic: varchar("bic", { length: 11 }),
+  // Payment terms in days (e.g., 30)
+  paymentTermDays: int("paymentTermDays").default(30),
+  contactPerson: varchar("contactPerson", { length: 200 }),
+  email: varchar("email", { length: 200 }),
+  phone: varchar("phone", { length: 30 }),
+  notes: text("notes"),
+  // Default debit account for this supplier (e.g., 4xxx Aufwandkonto)
+  defaultDebitAccountId: int("defaultDebitAccountId"),
+  // Pattern for matching in bank import (counterparty name)
+  matchPattern: varchar("matchPattern", { length: 300 }),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Supplier = typeof suppliers.$inferSelect;
+export type InsertSupplier = typeof suppliers.$inferInsert;
+
+// ─── Customers (Kunden-Stammdaten / CRM) ────────────────────────────────────
+export const customers = mysqlTable("customers", {
+  id: int("id").autoincrement().primaryKey(),
+  // Name or company name
+  name: varchar("name", { length: 200 }).notNull(),
+  company: varchar("company", { length: 200 }),
+  street: varchar("street", { length: 200 }),
+  zipCode: varchar("zipCode", { length: 10 }),
+  city: varchar("city", { length: 100 }),
+  country: varchar("country", { length: 50 }).default("Schweiz"),
+  email: varchar("email", { length: 200 }),
+  phone: varchar("phone", { length: 30 }),
+  // Salutation for letters/invoices (e.g., "Sehr geehrter Herr Meier")
+  salutation: varchar("salutation", { length: 200 }),
+  notes: text("notes"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Customer = typeof customers.$inferSelect;
+export type InsertCustomer = typeof customers.$inferInsert;
+
+// ─── Customer Services (Dienstleistungen pro Kunde mit Ertragskonto) ────────
+export const customerServices = mysqlTable("customer_services", {
+  id: int("id").autoincrement().primaryKey(),
+  customerId: int("customerId").notNull(),
+  // Description of the service
+  description: varchar("description", { length: 300 }).notNull(),
+  // Revenue account (Ertragskonto, e.g., 6000, 6100)
+  revenueAccountId: int("revenueAccountId").notNull(),
+  // Hourly rate for this service
+  hourlyRate: decimal("hourlyRate", { precision: 10, scale: 2 }),
+  // Is this the default/primary service? (first = most used)
+  isDefault: boolean("isDefault").default(false),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CustomerService = typeof customerServices.$inferSelect;
+
+// ─── Services (Dienstleistungs-Kategorien für Zeiterfassung) ────────────────
+export const services = mysqlTable("services", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  description: text("description"),
+  // Default hourly rate
+  defaultHourlyRate: decimal("defaultHourlyRate", { precision: 10, scale: 2 }).notNull(),
+  // Revenue account for this service category
+  revenueAccountId: int("revenueAccountId"),
+  isActive: boolean("isActive").default(true).notNull(),
+  sortOrder: int("sortOrder").default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Service = typeof services.$inferSelect;
+export type InsertService = typeof services.$inferInsert;
+
+// ─── Time Entries (Zeiterfassung) ───────────────────────────────────────────
+export const timeEntries = mysqlTable("time_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  // Customer
+  customerId: int("customerId").notNull(),
+  // Service category
+  serviceId: int("serviceId").notNull(),
+  // Date of work
+  date: date("date", { mode: 'string' }).notNull(),
+  // Hours worked (e.g., 2.5)
+  hours: decimal("hours", { precision: 6, scale: 2 }).notNull(),
+  // Description of work done
+  description: text("description"),
+  // Hourly rate (can override service default)
+  hourlyRate: decimal("hourlyRate", { precision: 10, scale: 2 }).notNull(),
+  // Status: open = not yet invoiced, invoiced = on an invoice
+  status: mysqlEnum("status", ["open", "invoiced"]).default("open").notNull(),
+  // Link to invoice (journal entry) when invoiced
+  invoiceEntryId: int("invoiceEntryId"),
+  // User who created this entry
+  userId: int("userId"),
+  // Fiscal year
+  fiscalYear: int("fiscalYear"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type TimeEntry = typeof timeEntries.$inferSelect;
+export type InsertTimeEntry = typeof timeEntries.$inferInsert;
+
+// ─── Pain.001 Exports (für CAMT.054 Abgleich) ──────────────────────────────
+export const pain001Exports = mysqlTable("pain001_exports", {
+  id: int("id").autoincrement().primaryKey(),
+  // Filename of the exported pain.001 file
+  filename: varchar("filename", { length: 255 }).notNull(),
+  // Message ID from the pain.001 XML
+  messageId: varchar("messageId", { length: 100 }).notNull(),
+  // Total amount
+  totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
+  // Number of payments
+  paymentCount: int("paymentCount").notNull(),
+  // Status: exported, partially_confirmed, confirmed
+  status: mysqlEnum("status", ["exported", "partially_confirmed", "confirmed"]).default("exported").notNull(),
+  // S3 URL of the pain.001 file
+  s3Url: text("s3Url"),
+  // Export date
+  exportDate: date("exportDate", { mode: 'string' }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Pain001Export = typeof pain001Exports.$inferSelect;
+
+// ─── Pain.001 Payment Items (Einzelzahlungen in pain.001) ───────────────────
+export const pain001Payments = mysqlTable("pain001_payments", {
+  id: int("id").autoincrement().primaryKey(),
+  exportId: int("exportId").notNull(),
+  // End-to-end ID for matching with CAMT.054
+  endToEndId: varchar("endToEndId", { length: 100 }).notNull(),
+  // Creditor (supplier) name
+  creditorName: varchar("creditorName", { length: 200 }).notNull(),
+  // Creditor IBAN
+  creditorIban: varchar("creditorIban", { length: 34 }),
+  // Amount
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("CHF").notNull(),
+  // Reference
+  reference: varchar("reference", { length: 100 }),
+  // Status: pending, confirmed, rejected
+  status: mysqlEnum("status", ["pending", "confirmed", "rejected"]).default("pending").notNull(),
+  // CAMT.054 confirmation date
+  confirmedAt: timestamp("confirmedAt"),
+  // Linked journal entry
+  journalEntryId: int("journalEntryId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type Pain001Payment = typeof pain001Payments.$inferSelect;
+
+// ─── Templates (Vorlagen für Rechnungen etc.) ───────────────────────────────
+export const templates = mysqlTable("templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 200 }).notNull(),
+  // Template type
+  templateType: mysqlEnum("templateType", ["invoice", "letter", "contract", "other"]).default("invoice").notNull(),
+  // Description
+  description: text("description"),
+  // S3 storage
+  s3Key: varchar("s3Key", { length: 500 }).notNull(),
+  s3Url: text("s3Url").notNull(),
+  // MIME type
+  mimeType: varchar("mimeType", { length: 100 }).notNull(),
+  // File size in bytes
+  fileSize: int("fileSize").notNull(),
+  // Is this the active/default template for its type?
+  isDefault: boolean("isDefault").default(false),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Template = typeof templates.$inferSelect;
+export type InsertTemplate = typeof templates.$inferInsert;

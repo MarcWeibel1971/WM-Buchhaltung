@@ -8,8 +8,9 @@ import { protectedProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import {
   companySettings, insuranceSettings, employees, bankAccounts, bankTransactions, bookingRules, accounts,
-  openingBalances, journalEntries, journalLines, fiscalYears
+  openingBalances, journalEntries, journalLines, fiscalYears, templates
 } from "../drizzle/schema";
+import { storagePut } from "./storage";
 import { and, eq, asc, desc, sql } from "drizzle-orm";
 
 // ─── Company Settings ─────────────────────────────────────────────────────────
@@ -912,6 +913,63 @@ export const settingsRouter = router({
           .where(eq(companySettings.id, existing[0].id));
       }
 
+      return { success: true };
+    }),
+
+  // ─── Templates ───────────────────────────────────────────────────────────────
+
+  listTemplates: protectedProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) throw new Error('Database not available');
+    return db.select().from(templates).orderBy(asc(templates.templateType), asc(templates.name));
+  }),
+
+  uploadTemplate: protectedProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      templateType: z.enum(["invoice", "letter", "contract", "other"]),
+      description: z.string().optional(),
+      fileData: z.string(), // base64
+      fileName: z.string(),
+      mimeType: z.string(),
+      fileSize: z.number(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      const buffer = Buffer.from(input.fileData, "base64");
+      const key = `templates/${Date.now()}-${input.fileName}`;
+      const { url } = await storagePut(key, buffer, input.mimeType);
+      const [result] = await db.insert(templates).values({
+        name: input.name,
+        templateType: input.templateType,
+        description: input.description || null,
+        s3Key: key,
+        s3Url: url,
+        mimeType: input.mimeType,
+        fileSize: input.fileSize,
+      });
+      return { id: result.insertId, url };
+    }),
+
+  deleteTemplate: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      await db.delete(templates).where(eq(templates.id, input.id));
+      return { success: true };
+    }),
+
+  setDefaultTemplate: protectedProcedure
+    .input(z.object({ id: z.number(), templateType: z.string() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+      // Unset all defaults for this type
+      await db.update(templates).set({ isDefault: false }).where(eq(templates.templateType, input.templateType as any));
+      // Set this one as default
+      await db.update(templates).set({ isDefault: true }).where(eq(templates.id, input.id));
       return { success: true };
     }),
 });

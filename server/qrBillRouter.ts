@@ -1188,6 +1188,138 @@ export const qrBillRouter = router({
       };
     }),
 
+  // ─── CAMT.054 Import & Reconciliation ────────────────────────────────────
+
+  importCamt054: protectedProcedure
+    .input(z.object({
+      xmlContent: z.string(),
+      filename: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { parseCAMT054, isCAMT054 } = await import("../shared/camt054Parser");
+      
+      if (!isCAMT054(input.xmlContent)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Die Datei ist keine gültige CAMT.054 Datei" });
+      }
+      
+      const notification = parseCAMT054(input.xmlContent);
+      
+      if (notification.entries.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Keine Zahlungsbestätigungen in der Datei gefunden" });
+      }
+      
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      
+      let matched = 0;
+      let unmatched = 0;
+      const matchResults: Array<{
+        endToEndId: string | undefined;
+        amount: number;
+        creditorName: string | undefined;
+        bookingDate: string;
+        status: "matched" | "unmatched";
+        documentId?: number;
+      }> = [];
+      
+      for (const entry of notification.entries) {
+        if (entry.creditDebitIndicator !== "DBIT") continue;
+        
+        let wasMatched = false;
+        
+        // Get all pending pain.001 documents
+        const pendingDocs = await db.select().from(documents)
+          .where(and(
+            eq(documents.matchStatus, "pain001"),
+            eq(documents.documentType, "invoice_in")
+          ));
+        
+        // Match by amount (within 0.02 tolerance) and optionally creditor name
+        for (const doc of pendingDocs) {
+          // Extract amount and counterparty from aiMetadata JSON
+          let docAmount = 0;
+          let docCounterparty = "";
+          if (doc.aiMetadata) {
+            try {
+              const meta = JSON.parse(doc.aiMetadata);
+              docAmount = Math.abs(Number(meta.amount || meta.totalAmount || 0));
+              docCounterparty = meta.counterparty || meta.senderName || "";
+            } catch {}
+          }
+          const entryAmount = Math.abs(entry.amount);
+          
+          const amountMatches = Math.abs(docAmount - entryAmount) < 0.02;
+          const nameMatches = !entry.creditorName || !docCounterparty || 
+            docCounterparty.toLowerCase().includes(entry.creditorName.toLowerCase()) ||
+            entry.creditorName.toLowerCase().includes(docCounterparty.toLowerCase());
+          
+          if (amountMatches && nameMatches) {
+            await db.update(documents).set({
+              matchStatus: "matched",
+            }).where(eq(documents.id, doc.id));
+            
+            matched++;
+            wasMatched = true;
+            matchResults.push({
+              endToEndId: entry.endToEndId,
+              amount: entry.amount,
+              creditorName: entry.creditorName,
+              bookingDate: entry.bookingDate,
+              status: "matched",
+              documentId: doc.id,
+            });
+            break;
+          }
+        }
+        
+        if (!wasMatched) {
+          unmatched++;
+          matchResults.push({
+            endToEndId: entry.endToEndId,
+            amount: entry.amount,
+            creditorName: entry.creditorName,
+            bookingDate: entry.bookingDate,
+            status: "unmatched",
+          });
+        }
+      }
+      
+      return {
+        messageId: notification.messageId,
+        totalEntries: notification.entries.length,
+        debitEntries: notification.entries.filter(e => e.creditDebitIndicator === "DBIT").length,
+        matched,
+        unmatched,
+        results: matchResults,
+      };
+    }),
+
+  getReconciliationStatus: protectedProcedure
+    .input(z.object({
+      fiscalYear: z.number().optional(),
+    }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      
+      const conditions: any[] = [eq(documents.documentType, "invoice_in")];
+      if (input.fiscalYear) conditions.push(eq(documents.fiscalYear, input.fiscalYear));
+      
+      const docs = await db.select({
+        matchStatus: documents.matchStatus,
+        count: sql<number>`COUNT(*)`,
+        totalAmount: sql<string>`COUNT(*)`,
+      }).from(documents)
+        .where(and(...conditions))
+        .groupBy(documents.matchStatus);
+      
+      return docs.map(d => ({
+        status: d.matchStatus,
+        count: Number(d.count),
+        totalAmount: Number(d.totalAmount),
+      }));
+    }),
+
 });
 
 // Helper: word-wrap text for pdf-lib

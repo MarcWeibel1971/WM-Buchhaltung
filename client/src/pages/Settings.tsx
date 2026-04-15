@@ -23,7 +23,7 @@ import {
   Pencil, Trash2, Plus, Check, X, AlertTriangle, TrendingDown, Loader2,
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
-  ArrowUpDown, FileSpreadsheet, LayoutTemplate,
+  ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
 } from "lucide-react";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -48,6 +48,10 @@ const TABS = [
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
   { id: "opening", label: "Eröffnungssalden", icon: Scale },
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
+  { id: "qrRechnung", label: "QR-Rechnung", icon: FileText },
+  { id: "suppliers", label: "Lieferanten", icon: Truck },
+  { id: "customers", label: "Kunden", icon: UserCheck },
+  { id: "templates", label: "Vorlagen", icon: FileStack },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
 ] as const;
 
@@ -111,6 +115,9 @@ export default function Settings() {
         {activeTab === "rules" && <BookingRulesTab />}
         {activeTab === "opening" && <OpeningBalancesTab />}
         {activeTab === "depreciation" && <DepreciationTab />}
+        {activeTab === "suppliers" && <SuppliersTab />}
+        {activeTab === "customers" && <CustomersTab />}
+        {activeTab === "templates" && <TemplatesTab />}
         {activeTab === "dsg" && <DsgTab />}
       </main>
     </div>
@@ -2903,6 +2910,813 @@ function PrivacySection() {
           </p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+
+// ─── Suppliers (Lieferanten) Tab ─────────────────────────────────────────────
+
+function SuppliersTab() {
+  const [search, setSearch] = useReactState("");
+  const [showInactive, setShowInactive] = useReactState(false);
+  const [showDialog, setShowDialog] = useReactState(false);
+  const [editSupplier, setEditSupplier] = useReactState<any>(null);
+
+  // Form state
+  const [formName, setFormName] = useReactState("");
+  const [formStreet, setFormStreet] = useReactState("");
+  const [formZip, setFormZip] = useReactState("");
+  const [formCity, setFormCity] = useReactState("");
+  const [formCountry, setFormCountry] = useReactState("Schweiz");
+  const [formIban, setFormIban] = useReactState("");
+  const [formBic, setFormBic] = useReactState("");
+  const [formPaymentDays, setFormPaymentDays] = useReactState("30");
+  const [formContact, setFormContact] = useReactState("");
+  const [formEmail, setFormEmail] = useReactState("");
+  const [formPhone, setFormPhone] = useReactState("");
+  const [formNotes, setFormNotes] = useReactState("");
+  const [formAccountId, setFormAccountId] = useReactState<string>("");
+  const [formMatchPattern, setFormMatchPattern] = useReactState("");
+
+  const { data: suppliersList, refetch } = trpc.suppliers.list.useQuery({
+    includeInactive: showInactive,
+    search: search || undefined,
+  });
+  const { data: accountsList } = trpc.accounts.list.useQuery();
+  const expenseAccounts = useMemo(() =>
+    (accountsList ?? []).filter(a => a.accountType === "expense" && a.isActive).sort((a, b) => a.number.localeCompare(b.number)),
+    [accountsList]
+  );
+
+  const createMut = trpc.suppliers.create.useMutation({
+    onSuccess: () => { toast.success("Lieferant erstellt"); refetch(); setShowDialog(false); resetForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateMut = trpc.suppliers.update.useMutation({
+    onSuccess: () => { toast.success("Lieferant aktualisiert"); refetch(); setShowDialog(false); resetForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMut = trpc.suppliers.delete.useMutation({
+    onSuccess: () => { toast.success("Lieferant deaktiviert"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function resetForm() {
+    setFormName(""); setFormStreet(""); setFormZip(""); setFormCity("");
+    setFormCountry("Schweiz"); setFormIban(""); setFormBic("");
+    setFormPaymentDays("30"); setFormContact(""); setFormEmail("");
+    setFormPhone(""); setFormNotes(""); setFormAccountId(""); setFormMatchPattern("");
+    setEditSupplier(null);
+  }
+
+  function openCreate() {
+    resetForm();
+    setShowDialog(true);
+  }
+
+  function openEdit(s: any) {
+    setEditSupplier(s);
+    setFormName(s.name || "");
+    setFormStreet(s.street || "");
+    setFormZip(s.zipCode || "");
+    setFormCity(s.city || "");
+    setFormCountry(s.country || "Schweiz");
+    setFormIban(s.iban || "");
+    setFormBic(s.bic || "");
+    setFormPaymentDays(String(s.paymentTermDays ?? 30));
+    setFormContact(s.contactPerson || "");
+    setFormEmail(s.email || "");
+    setFormPhone(s.phone || "");
+    setFormNotes(s.notes || "");
+    setFormAccountId(s.defaultDebitAccountId ? String(s.defaultDebitAccountId) : "");
+    setFormMatchPattern(s.matchPattern || "");
+    setShowDialog(true);
+  }
+
+  function handleSave() {
+    if (!formName.trim()) { toast.error("Name ist erforderlich"); return; }
+    const data = {
+      name: formName.trim(),
+      street: formStreet || undefined,
+      zipCode: formZip || undefined,
+      city: formCity || undefined,
+      country: formCountry || undefined,
+      iban: formIban || undefined,
+      bic: formBic || undefined,
+      paymentTermDays: parseInt(formPaymentDays) || 30,
+      contactPerson: formContact || undefined,
+      email: formEmail || undefined,
+      phone: formPhone || undefined,
+      notes: formNotes || undefined,
+      defaultDebitAccountId: formAccountId ? parseInt(formAccountId) : undefined,
+      matchPattern: formMatchPattern || undefined,
+    };
+    if (editSupplier) {
+      updateMut.mutate({ id: editSupplier.id, ...data });
+    } else {
+      createMut.mutate(data);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Lieferanten-Stammdaten</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Lieferanten mit IBAN, Zahlungsfristen und Kontaktdaten für ISO 20022 Zahlungen
+          </p>
+        </div>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4 mr-2" /> Neuer Lieferant
+        </Button>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <Input
+          placeholder="Suche nach Name, Ort oder IBAN..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="max-w-sm"
+        />
+        <div className="flex items-center gap-2">
+          <Switch checked={showInactive} onCheckedChange={setShowInactive} />
+          <Label className="text-sm text-muted-foreground">Inaktive anzeigen</Label>
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Adresse</TableHead>
+                <TableHead>IBAN</TableHead>
+                <TableHead>Zahlungsfrist</TableHead>
+                <TableHead>Aufwandkonto</TableHead>
+                <TableHead>Kontakt</TableHead>
+                <TableHead className="w-[100px]">Aktionen</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(!suppliersList || suppliersList.length === 0) ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    Keine Lieferanten erfasst
+                  </TableCell>
+                </TableRow>
+              ) : suppliersList.map(s => (
+                <TableRow key={s.id} className={!s.isActive ? "opacity-50" : ""}>
+                  <TableCell className="font-medium">
+                    {s.name}
+                    {!s.isActive && <Badge variant="secondary" className="ml-2 text-xs">Inaktiv</Badge>}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {[s.street, [s.zipCode, s.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                  </TableCell>
+                  <TableCell className="text-sm font-mono">
+                    {s.iban ? s.iban.replace(/(.{4})/g, "$1 ").trim() : <span className="text-orange-500 text-xs">Keine IBAN</span>}
+                  </TableCell>
+                  <TableCell className="text-sm">{s.paymentTermDays} Tage</TableCell>
+                  <TableCell className="text-sm">
+                    {(s as any).defaultDebitAccount
+                      ? `${(s as any).defaultDebitAccount.number} ${(s as any).defaultDebitAccount.name}`
+                      : <span className="text-muted-foreground">–</span>}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {s.contactPerson || s.email || s.phone || "–"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(s)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      {s.isActive && (
+                        <Button size="icon" variant="ghost" className="text-destructive" onClick={() => {
+                          if (confirm(`Lieferant "${s.name}" wirklich deaktivieren?`)) {
+                            deleteMut.mutate({ id: s.id });
+                          }
+                        }}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* Create/Edit Dialog */}
+      <Dialog open={showDialog} onOpenChange={(open) => { if (!open) { setShowDialog(false); resetForm(); } }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editSupplier ? "Lieferant bearbeiten" : "Neuer Lieferant"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Name *</Label>
+                <Input value={formName} onChange={e => setFormName(e.target.value)} placeholder="z.B. AXA Versicherungen AG" />
+              </div>
+              <div>
+                <Label>Kontaktperson</Label>
+                <Input value={formContact} onChange={e => setFormContact(e.target.value)} placeholder="Max Mustermann" />
+              </div>
+            </div>
+            <div>
+              <Label>Strasse</Label>
+              <Input value={formStreet} onChange={e => setFormStreet(e.target.value)} placeholder="Musterstrasse 1" />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>PLZ</Label>
+                <Input value={formZip} onChange={e => setFormZip(e.target.value)} placeholder="6000" />
+              </div>
+              <div>
+                <Label>Ort</Label>
+                <Input value={formCity} onChange={e => setFormCity(e.target.value)} placeholder="Luzern" />
+              </div>
+              <div>
+                <Label>Land</Label>
+                <Input value={formCountry} onChange={e => setFormCountry(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>IBAN</Label>
+                <Input value={formIban} onChange={e => setFormIban(e.target.value)} placeholder="CH93 0076 2011 6238 5295 7" className="font-mono" />
+              </div>
+              <div>
+                <Label>BIC / SWIFT</Label>
+                <Input value={formBic} onChange={e => setFormBic(e.target.value)} placeholder="UBSWCHZH80A" className="font-mono" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>E-Mail</Label>
+                <Input value={formEmail} onChange={e => setFormEmail(e.target.value)} type="email" placeholder="info@lieferant.ch" />
+              </div>
+              <div>
+                <Label>Telefon</Label>
+                <Input value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="+41 41 000 00 00" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Zahlungsfrist (Tage)</Label>
+                <Input value={formPaymentDays} onChange={e => setFormPaymentDays(e.target.value)} type="number" />
+              </div>
+              <div>
+                <Label>Standard-Aufwandkonto</Label>
+                <Select value={formAccountId} onValueChange={setFormAccountId}>
+                  <SelectTrigger><SelectValue placeholder="Konto wählen" /></SelectTrigger>
+                  <SelectContent>
+                    {expenseAccounts.map(a => (
+                      <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label>Match-Pattern (für Bankimport)</Label>
+              <Input value={formMatchPattern} onChange={e => setFormMatchPattern(e.target.value)} placeholder="z.B. AXA, Mobility, Swisscom" />
+              <p className="text-xs text-muted-foreground mt-1">
+                Komma-getrennte Begriffe, die in Bankimport-Transaktionen automatisch diesem Lieferanten zugeordnet werden.
+              </p>
+            </div>
+            <div>
+              <Label>Notizen</Label>
+              <Textarea value={formNotes} onChange={e => setFormNotes(e.target.value)} rows={3} placeholder="Interne Notizen..." />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDialog(false); resetForm(); }}>Abbrechen</Button>
+            <Button onClick={handleSave} disabled={createMut.isPending || updateMut.isPending}>
+              {(createMut.isPending || updateMut.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {editSupplier ? "Speichern" : "Erstellen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Customers (Kunden) Tab ──────────────────────────────────────────────────
+
+function CustomersTab() {
+  const [search, setSearch] = useReactState("");
+  const [showDialog, setShowDialog] = useReactState(false);
+  const [editCustomer, setEditCustomer] = useReactState<any>(null);
+  const [showServiceDialog, setShowServiceDialog] = useReactState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = useReactState<number | null>(null);
+  const [expandedCustomer, setExpandedCustomer] = useReactState<number | null>(null);
+
+  // Customer form
+  const [cName, setCName] = useReactState("");
+  const [cCompany, setCCompany] = useReactState("");
+  const [cStreet, setCStreet] = useReactState("");
+  const [cZip, setCZip] = useReactState("");
+  const [cCity, setCCity] = useReactState("");
+  const [cCountry, setCCountry] = useReactState("Schweiz");
+  const [cEmail, setCEmail] = useReactState("");
+  const [cPhone, setCPhone] = useReactState("");
+  const [cSalutation, setCSalutation] = useReactState("");
+  const [cNotes, setCNotes] = useReactState("");
+
+  // Service form
+  const [sDesc, setSDesc] = useReactState("");
+  const [sAccountId, setSAccountId] = useReactState("");
+  const [sHourlyRate, setSHourlyRate] = useReactState("");
+  const [sIsDefault, setSIsDefault] = useReactState(false);
+  const [editService, setEditService] = useReactState<any>(null);
+
+  const { data: customersList, refetch } = trpc.customers.list.useQuery({ search: search || undefined });
+  const { data: accountsList } = trpc.accounts.list.useQuery();
+  const revenueAccounts = useMemo(() =>
+    (accountsList ?? []).filter(a => a.accountType === "revenue" && a.isActive).sort((a, b) => a.number.localeCompare(b.number)),
+    [accountsList]
+  );
+
+  const createCust = trpc.customers.create.useMutation({
+    onSuccess: () => { toast.success("Kunde erstellt"); refetch(); setShowDialog(false); resetCustForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateCust = trpc.customers.update.useMutation({
+    onSuccess: () => { toast.success("Kunde aktualisiert"); refetch(); setShowDialog(false); resetCustForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteCust = trpc.customers.delete.useMutation({
+    onSuccess: () => { toast.success("Kunde deaktiviert"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const addService = trpc.customers.addService.useMutation({
+    onSuccess: () => { toast.success("Dienstleistung hinzugefügt"); refetch(); setShowServiceDialog(false); resetServiceForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateService = trpc.customers.updateService.useMutation({
+    onSuccess: () => { toast.success("Dienstleistung aktualisiert"); refetch(); setShowServiceDialog(false); resetServiceForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteService = trpc.customers.deleteService.useMutation({
+    onSuccess: () => { toast.success("Dienstleistung entfernt"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function resetCustForm() {
+    setCName(""); setCCompany(""); setCStreet(""); setCZip(""); setCCity("");
+    setCCountry("Schweiz"); setCEmail(""); setCPhone(""); setCSalutation(""); setCNotes("");
+    setEditCustomer(null);
+  }
+
+  function resetServiceForm() {
+    setSDesc(""); setSAccountId(""); setSHourlyRate(""); setSIsDefault(false); setEditService(null);
+  }
+
+  function openCreateCust() { resetCustForm(); setShowDialog(true); }
+
+  function openEditCust(c: any) {
+    setEditCustomer(c);
+    setCName(c.name || ""); setCCompany(c.company || ""); setCStreet(c.street || "");
+    setCZip(c.zipCode || ""); setCCity(c.city || ""); setCCountry(c.country || "Schweiz");
+    setCEmail(c.email || ""); setCPhone(c.phone || ""); setCSalutation(c.salutation || "");
+    setCNotes(c.notes || "");
+    setShowDialog(true);
+  }
+
+  function handleSaveCust() {
+    if (!cName.trim()) { toast.error("Name ist erforderlich"); return; }
+    const data = {
+      name: cName.trim(), company: cCompany || undefined, street: cStreet || undefined,
+      zipCode: cZip || undefined, city: cCity || undefined, country: cCountry || undefined,
+      email: cEmail || undefined, phone: cPhone || undefined, salutation: cSalutation || undefined,
+      notes: cNotes || undefined,
+    };
+    if (editCustomer) {
+      updateCust.mutate({ id: editCustomer.id, ...data });
+    } else {
+      createCust.mutate(data);
+    }
+  }
+
+  function openAddService(custId: number) {
+    resetServiceForm();
+    setSelectedCustomerId(custId);
+    setShowServiceDialog(true);
+  }
+
+  function openEditService(svc: any, custId: number) {
+    setEditService(svc);
+    setSelectedCustomerId(custId);
+    setSDesc(svc.description || "");
+    setSAccountId(svc.revenueAccountId ? String(svc.revenueAccountId) : "");
+    setSHourlyRate(svc.hourlyRate ? String(svc.hourlyRate) : "");
+    setSIsDefault(svc.isDefault || false);
+    setShowServiceDialog(true);
+  }
+
+  function handleSaveService() {
+    if (!sDesc.trim() || !sAccountId) { toast.error("Beschreibung und Ertragskonto sind erforderlich"); return; }
+    const data = {
+      customerId: selectedCustomerId!,
+      description: sDesc.trim(),
+      revenueAccountId: parseInt(sAccountId),
+      hourlyRate: sHourlyRate ? parseFloat(sHourlyRate) : undefined,
+      isDefault: sIsDefault,
+    };
+    if (editService) {
+      updateService.mutate({ id: editService.id, ...data });
+    } else {
+      addService.mutate(data);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Kunden-Stammdaten</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Kunden mit Dienstleistungen und Ertragskonten-Zuordnung
+          </p>
+        </div>
+        <Button onClick={openCreateCust}>
+          <Plus className="h-4 w-4 mr-2" /> Neuer Kunde
+        </Button>
+      </div>
+
+      <Input
+        placeholder="Suche nach Name, Firma oder Ort..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        className="max-w-sm"
+      />
+
+      <div className="space-y-3">
+        {(!customersList || customersList.length === 0) ? (
+          <Card>
+            <CardContent className="py-8 text-center text-muted-foreground">
+              Keine Kunden erfasst
+            </CardContent>
+          </Card>
+        ) : customersList.map((c: any) => (
+          <Card key={c.id} className={!c.isActive ? "opacity-50" : ""}>
+            <CardHeader className="py-3 px-4 cursor-pointer" onClick={() => setExpandedCustomer(expandedCustomer === c.id ? null : c.id)}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {expandedCustomer === c.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  <div>
+                    <div className="font-semibold">{c.name}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {[c.company, [c.zipCode, c.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}
+                      {c.email && ` · ${c.email}`}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs">
+                    {(c.services ?? []).length} Dienstleistung{(c.services ?? []).length !== 1 ? "en" : ""}
+                  </Badge>
+                  <Button size="icon" variant="ghost" onClick={(e) => { e.stopPropagation(); openEditCust(c); }}>
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {c.isActive && (
+                    <Button size="icon" variant="ghost" className="text-destructive" onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Kunde "${c.name}" wirklich deaktivieren?`)) deleteCust.mutate({ id: c.id });
+                    }}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </CardHeader>
+            {expandedCustomer === c.id && (
+              <CardContent className="pt-0 px-4 pb-4">
+                <div className="border-t pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold">Dienstleistungen & Ertragskonten</h4>
+                    <Button size="sm" variant="outline" onClick={() => openAddService(c.id)}>
+                      <Plus className="h-3 w-3 mr-1" /> Dienstleistung
+                    </Button>
+                  </div>
+                  {(!c.services || c.services.length === 0) ? (
+                    <p className="text-sm text-muted-foreground py-2">Keine Dienstleistungen zugeordnet</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Dienstleistung</TableHead>
+                          <TableHead>Ertragskonto</TableHead>
+                          <TableHead>Stundenansatz</TableHead>
+                          <TableHead>Standard</TableHead>
+                          <TableHead className="w-[80px]"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {c.services.map((svc: any) => (
+                          <TableRow key={svc.id}>
+                            <TableCell className="font-medium">{svc.description}</TableCell>
+                            <TableCell className="text-sm">
+                              {svc.revenueAccount ? `${svc.revenueAccount.number} ${svc.revenueAccount.name}` : "–"}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {svc.hourlyRate ? `CHF ${Number(svc.hourlyRate).toFixed(2)}/h` : "–"}
+                            </TableCell>
+                            <TableCell>
+                              {svc.isDefault && <Badge className="text-xs bg-green-100 text-green-800">Primär</Badge>}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-1">
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEditService(svc, c.id)}>
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => {
+                                  if (confirm("Dienstleistung entfernen?")) deleteService.mutate({ id: svc.id });
+                                }}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  {c.salutation && (
+                    <p className="text-xs text-muted-foreground mt-2">Anrede: {c.salutation}</p>
+                  )}
+                  {c.notes && (
+                    <p className="text-xs text-muted-foreground mt-1">Notizen: {c.notes}</p>
+                  )}
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        ))}
+      </div>
+
+      {/* Customer Dialog */}
+      <Dialog open={showDialog} onOpenChange={(open) => { if (!open) { setShowDialog(false); resetCustForm(); } }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editCustomer ? "Kunde bearbeiten" : "Neuer Kunde"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Name *</Label>
+                <Input value={cName} onChange={e => setCName(e.target.value)} placeholder="Peter Meier" />
+              </div>
+              <div>
+                <Label>Firma</Label>
+                <Input value={cCompany} onChange={e => setCCompany(e.target.value)} placeholder="Meier AG" />
+              </div>
+            </div>
+            <div>
+              <Label>Anrede (für Rechnungen)</Label>
+              <Input value={cSalutation} onChange={e => setCSalutation(e.target.value)} placeholder="Sehr geehrter Herr Meier" />
+            </div>
+            <div>
+              <Label>Strasse</Label>
+              <Input value={cStreet} onChange={e => setCStreet(e.target.value)} placeholder="Musterstrasse 1" />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>PLZ</Label>
+                <Input value={cZip} onChange={e => setCZip(e.target.value)} placeholder="6000" />
+              </div>
+              <div>
+                <Label>Ort</Label>
+                <Input value={cCity} onChange={e => setCCity(e.target.value)} placeholder="Luzern" />
+              </div>
+              <div>
+                <Label>Land</Label>
+                <Input value={cCountry} onChange={e => setCCountry(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>E-Mail</Label>
+                <Input value={cEmail} onChange={e => setCEmail(e.target.value)} type="email" />
+              </div>
+              <div>
+                <Label>Telefon</Label>
+                <Input value={cPhone} onChange={e => setCPhone(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <Label>Notizen</Label>
+              <Textarea value={cNotes} onChange={e => setCNotes(e.target.value)} rows={3} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDialog(false); resetCustForm(); }}>Abbrechen</Button>
+            <Button onClick={handleSaveCust} disabled={createCust.isPending || updateCust.isPending}>
+              {(createCust.isPending || updateCust.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {editCustomer ? "Speichern" : "Erstellen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Service Dialog */}
+      <Dialog open={showServiceDialog} onOpenChange={(open) => { if (!open) { setShowServiceDialog(false); resetServiceForm(); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editService ? "Dienstleistung bearbeiten" : "Neue Dienstleistung"}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label>Beschreibung *</Label>
+              <Input value={sDesc} onChange={e => setSDesc(e.target.value)} placeholder="z.B. Finanzberatung, Steuererklärung" />
+            </div>
+            <div>
+              <Label>Ertragskonto *</Label>
+              <Select value={sAccountId} onValueChange={setSAccountId}>
+                <SelectTrigger><SelectValue placeholder="Ertragskonto wählen" /></SelectTrigger>
+                <SelectContent>
+                  {revenueAccounts.map(a => (
+                    <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Stundenansatz (CHF)</Label>
+              <Input value={sHourlyRate} onChange={e => setSHourlyRate(e.target.value)} type="number" step="0.50" placeholder="250.00" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={sIsDefault} onCheckedChange={setSIsDefault} />
+              <Label>Primäre Dienstleistung (häufigste)</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowServiceDialog(false); resetServiceForm(); }}>Abbrechen</Button>
+            <Button onClick={handleSaveService} disabled={addService.isPending || updateService.isPending}>
+              {editService ? "Speichern" : "Hinzufügen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Templates (Vorlagen) Tab ────────────────────────────────────────────────
+
+function TemplatesTab() {
+  const [showUpload, setShowUpload] = useReactState(false);
+  const [uploadName, setUploadName] = useReactState("");
+  const [uploadType, setUploadType] = useReactState("invoice");
+  const [uploadDesc, setUploadDesc] = useReactState("");
+  const [uploadFile, setUploadFile] = useReactState<File | null>(null);
+
+  const { data: templatesList, refetch } = trpc.settings.listTemplates.useQuery();
+  const uploadMut = trpc.settings.uploadTemplate.useMutation({
+    onSuccess: () => { toast.success("Vorlage hochgeladen"); refetch(); setShowUpload(false); resetUploadForm(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMut = trpc.settings.deleteTemplate.useMutation({
+    onSuccess: () => { toast.success("Vorlage gelöscht"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const setDefaultMut = trpc.settings.setDefaultTemplate.useMutation({
+    onSuccess: () => { toast.success("Standardvorlage gesetzt"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function resetUploadForm() {
+    setUploadName(""); setUploadType("invoice"); setUploadDesc(""); setUploadFile(null);
+  }
+
+  async function handleUpload() {
+    if (!uploadFile || !uploadName.trim()) { toast.error("Name und Datei sind erforderlich"); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      uploadMut.mutate({
+        name: uploadName.trim(),
+        templateType: uploadType as any,
+        description: uploadDesc || undefined,
+        fileData: base64,
+        fileName: uploadFile.name,
+        mimeType: uploadFile.type,
+        fileSize: uploadFile.size,
+      });
+    };
+    reader.readAsDataURL(uploadFile);
+  }
+
+  const typeLabels: Record<string, string> = {
+    invoice: "Rechnung", letter: "Brief", contract: "Vertrag", other: "Sonstiges",
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Vorlagen</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Rechnungsvorlagen, Briefvorlagen und andere Dokumentvorlagen verwalten
+          </p>
+        </div>
+        <Button onClick={() => setShowUpload(true)}>
+          <Upload className="h-4 w-4 mr-2" /> Vorlage hochladen
+        </Button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {(!templatesList || templatesList.length === 0) ? (
+          <Card className="col-span-full">
+            <CardContent className="py-8 text-center text-muted-foreground">
+              Keine Vorlagen hochgeladen
+            </CardContent>
+          </Card>
+        ) : templatesList.map((t: any) => (
+          <Card key={t.id}>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">{t.name}</CardTitle>
+                <Badge variant="outline" className="text-xs">{typeLabels[t.templateType] || t.templateType}</Badge>
+              </div>
+              {t.description && <CardDescription className="text-xs">{t.description}</CardDescription>}
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-muted-foreground">
+                  {(t.fileSize / 1024).toFixed(0)} KB · {t.mimeType?.split("/")[1]?.toUpperCase()}
+                  {t.isDefault && <Badge className="ml-2 text-xs bg-green-100 text-green-800">Standard</Badge>}
+                </div>
+                <div className="flex gap-1">
+                  {!t.isDefault && (
+                    <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => setDefaultMut.mutate({ id: t.id, templateType: t.templateType })}>
+                      Als Standard
+                    </Button>
+                  )}
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => window.open(t.s3Url, "_blank")}>
+                    <Eye className="h-3 w-3" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => {
+                    if (confirm(`Vorlage "${t.name}" wirklich löschen?`)) deleteMut.mutate({ id: t.id });
+                  }}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Upload Dialog */}
+      <Dialog open={showUpload} onOpenChange={(open) => { if (!open) { setShowUpload(false); resetUploadForm(); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Vorlage hochladen</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label>Name *</Label>
+              <Input value={uploadName} onChange={e => setUploadName(e.target.value)} placeholder="z.B. Rechnung Standard" />
+            </div>
+            <div>
+              <Label>Typ</Label>
+              <Select value={uploadType} onValueChange={setUploadType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="invoice">Rechnung</SelectItem>
+                  <SelectItem value="letter">Brief</SelectItem>
+                  <SelectItem value="contract">Vertrag</SelectItem>
+                  <SelectItem value="other">Sonstiges</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Beschreibung</Label>
+              <Input value={uploadDesc} onChange={e => setUploadDesc(e.target.value)} placeholder="Optionale Beschreibung" />
+            </div>
+            <div>
+              <Label>Datei *</Label>
+              <Input type="file" accept=".pdf,.docx,.doc,.xlsx,.xls,.png,.jpg" onChange={e => setUploadFile(e.target.files?.[0] || null)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowUpload(false); resetUploadForm(); }}>Abbrechen</Button>
+            <Button onClick={handleUpload} disabled={uploadMut.isPending}>
+              {uploadMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Hochladen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

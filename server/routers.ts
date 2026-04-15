@@ -23,6 +23,9 @@ import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { qrBillRouter } from "./qrBillRouter";
 import { dsgRouter } from "./dsgRouter";
+import { suppliersRouter } from "./suppliersRouter";
+import { timeTrackingRouter } from "./timeTrackingRouter";
+import { customersRouter } from "./customersRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -3378,6 +3381,9 @@ export const appRouter = router({
   yearEnd: yearEndRouter,
   qrBill: qrBillRouter,
   dsg: dsgRouter,
+  suppliers: suppliersRouter,
+  timeTracking: timeTrackingRouter,
+  customers: customersRouter,
 });
 
 export type AppRouter = typeof appRouter;

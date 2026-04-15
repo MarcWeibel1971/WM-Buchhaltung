@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Download, Check, X, FileCheck, FileX, Banknote, Building2, Pencil } from "lucide-react";
+import { Download, Check, X, FileCheck, FileX, Banknote, Building2, Pencil, Upload, FileUp, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 
@@ -47,6 +47,8 @@ export default function Kreditoren() {
   const [showPaid, setShowPaid] = useState(false);
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>("");
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [showCamtImport, setShowCamtImport] = useState(false);
+  const [camtResults, setCamtResults] = useState<any>(null);
 
   // Editable invoice data (city, country, address, zip per invoice)
   const [editData, setEditData] = useState<Record<number, { city: string; country: string; address: string; zip: string }>>({});
@@ -54,6 +56,32 @@ export default function Kreditoren() {
   const markPaidMut = trpc.qrBill.markInvoicePaid.useMutation({
     onSuccess: () => refetchInvoices(),
   });
+
+  const camtImportMut = trpc.qrBill.importCamt054.useMutation({
+    onSuccess: (data) => {
+      setCamtResults(data);
+      refetchInvoices();
+      if (data.matched > 0) {
+        toast.success(`${data.matched} Zahlung(en) automatisch abgeglichen`);
+      }
+      if (data.unmatched > 0) {
+        toast.warning(`${data.unmatched} Zahlung(en) konnten nicht zugeordnet werden`);
+      }
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleCamtFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      camtImportMut.mutate({ xmlContent: content, filename: file.name });
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
 
   const generateMut = trpc.qrBill.generatePain001.useMutation({
     onSuccess: (data) => {
@@ -419,6 +447,107 @@ export default function Kreditoren() {
           </Button>
         </div>
       </div>
+
+      {/* CAMT.054 Import Section */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <FileUp className="h-5 w-5 text-primary" />
+                CAMT.054 Zahlungsbestätigung importieren
+              </CardTitle>
+              <CardDescription className="mt-1">
+                Bank-Zahlungsbestätigungen importieren und automatisch mit exportierten pain.001-Dateien abgleichen
+              </CardDescription>
+            </div>
+            <Button
+              variant={showCamtImport ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setShowCamtImport(!showCamtImport)}
+            >
+              {showCamtImport ? "Schliessen" : "CAMT.054 importieren"}
+            </Button>
+          </div>
+        </CardHeader>
+        {showCamtImport && (
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="file"
+                  accept=".xml,.054"
+                  className="hidden"
+                  onChange={handleCamtFileUpload}
+                  disabled={camtImportMut.isPending}
+                />
+                <Button variant="outline" size="sm" disabled={camtImportMut.isPending} asChild>
+                  <span>
+                    <Upload className="h-4 w-4 mr-2" />
+                    {camtImportMut.isPending ? "Verarbeite..." : "CAMT.054 Datei wählen"}
+                  </span>
+                </Button>
+              </label>
+              <span className="text-xs text-muted-foreground">
+                Unterstützte Formate: CAMT.054 XML (Zahlungsbestätigungen)
+              </span>
+            </div>
+
+            {camtResults && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-4">
+                  <Badge variant="outline" className="text-green-700 border-green-300">
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    {camtResults.matched} abgeglichen
+                  </Badge>
+                  {camtResults.unmatched > 0 && (
+                    <Badge variant="outline" className="text-amber-700 border-amber-300">
+                      <AlertCircle className="h-3 w-3 mr-1" />
+                      {camtResults.unmatched} nicht zugeordnet
+                    </Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    {camtResults.totalEntries} Einträge total, {camtResults.debitEntries} Belastungen
+                  </span>
+                </div>
+
+                {camtResults.results && camtResults.results.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="p-2 text-left text-xs">Status</th>
+                          <th className="p-2 text-left text-xs">Gläubiger</th>
+                          <th className="p-2 text-right text-xs">Betrag</th>
+                          <th className="p-2 text-left text-xs">Buchungsdatum</th>
+                          <th className="p-2 text-left text-xs">EndToEndId</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {camtResults.results.map((r: any, i: number) => (
+                          <tr key={i} className={`border-t ${r.status === "matched" ? "bg-green-50/50 dark:bg-green-950/20" : "bg-amber-50/50 dark:bg-amber-950/20"}`}>
+                            <td className="p-2">
+                              {r.status === "matched" ? (
+                                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                              ) : (
+                                <XCircle className="h-4 w-4 text-amber-500" />
+                              )}
+                            </td>
+                            <td className="p-2 text-xs">{r.creditorName || "–"}</td>
+                            <td className="p-2 text-right font-mono text-xs">CHF {formatCHF(r.amount)}</td>
+                            <td className="p-2 text-xs">{r.bookingDate ? new Date(r.bookingDate).toLocaleDateString("de-CH") : "–"}</td>
+                            <td className="p-2 text-xs text-muted-foreground font-mono truncate max-w-32" title={r.endToEndId}>{r.endToEndId || "–"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        )}
+      </Card>
     </div>
   );
 }

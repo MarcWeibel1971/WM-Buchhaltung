@@ -733,3 +733,52 @@
 - [x] Eröffnungssalden: Drag & Drop zum Verschieben/Umsortieren von Konten
 - [x] Eröffnungssalden: Bidirektionale Sync mit Kontenplan (Änderungen in beiden Richtungen)
 - [x] Eröffnungssalden: Kontenplan-Änderungen (Aktivierung/Deaktivierung) sofort reflektieren
+
+## Feature: Lieferanten-Stammdaten
+- [x] DB-Schema: suppliers Tabelle (id, name, street, zipCode, city, country, iban, bic, paymentTermDays, contactPerson, email, phone, notes, defaultDebitAccountId, isActive, createdAt, updatedAt)
+- [x] Backend: suppliersRouter (list, create, update, delete, getById)
+- [x] Backend: Integration mit pain.001 Export (IBAN/BIC aus Lieferanten-Stammdaten)
+- [ ] Backend: Auto-Vorschlag Lieferant bei Bankimport basierend auf Gegenpartei (TODO: spätere Erweiterung)
+- [x] Frontend: Lieferanten-Seite unter Einstellungen mit CRUD-Funktionalität
+- [ ] Frontend: Lieferanten-Auswahl bei Kreditoren-Zahlungen (TODO: spätere Integration)
+- [ ] Frontend: Lieferanten-Link in Bankimport-Transaktionen (TODO: spätere Integration)
+
+## Feature: Kunden-Stammdaten / CRM
+- [x] DB-Schema: customers Tabelle (id, name, company, street, zipCode, city, country, email, phone, salutation, notes, isActive, createdAt, updatedAt)
+- [x] DB-Schema: customerServices Tabelle (id, customerId, description, revenueAccountId, hourlyRate, isDefault, sortOrder)
+- [x] Backend: customersRouter (list, create, update, delete, getById, getServices)
+- [x] Backend: Zuordnung mehrerer Ertragskonten pro Kunde (erstes = häufigstes)
+- [x] Frontend: Kunden-Seite unter Einstellungen mit CRUD-Funktionalität
+- [x] Frontend: Kunden-Detailansicht mit Dienstleistungen und Ertragskonten
+- [ ] Frontend: Kunden-Auswahl bei Debitorenrechnungen (TODO: spätere Integration)
+
+## Feature: Zeiterfassung
+- [x] DB-Schema: timeEntries Tabelle (id, customerId, serviceId, date, hours, description, hourlyRate, status, invoiceId, userId, createdAt, updatedAt)
+- [x] DB-Schema: services Tabelle (id, name, description, defaultHourlyRate, revenueAccountId, isActive, sortOrder)
+- [x] Backend: timeTrackingRouter (list, create, update, delete, getByCustomer, getUninvoiced)
+- [x] Backend: servicesRouter (list, create, update, delete)
+- [x] Backend: Verknüpfung Zeiterfassung → Debitorenrechnung (uninvoiced entries → Rechnungspositionen)
+- [x] Frontend: Zeiterfassung-Seite zwischen Jahresabschluss und Einstellungen in Navigation
+- [x] Frontend: Zeiterfassung-Eingabe mit Kunde, Dienstleistung, Stunden, Beschreibung
+- [x] Frontend: Übersicht uninvoiced Stunden pro Kunde
+- [x] Frontend: "Rechnung erstellen" Button → QR-Rechnung mit Zeiteinträgen als Positionen
+
+## Feature: CAMT.054 Import
+- [x] Backend: CAMT.054 XML Parser (Zahlungsbestätigungen)
+- [x] Backend: Abgleich mit exportierten pain.001 Dateien (EndToEndId Matching)
+- [x] Backend: Automatisches Markieren bezahlter Rechnungen als erledigt
+- [x] Frontend: CAMT.054 Upload im Kreditoren-Bereich
+- [x] Frontend: Abgleich-Ergebnis anzeigen (matched/unmatched Zahlungen)
+
+## Feature: Mehrfach-Upload Dokumente
+- [x] Backend: Batch-Upload Endpoint für mehrere Dateien gleichzeitig
+- [x] Frontend: Multi-File-Upload mit Drag & Drop Zone
+- [x] Frontend: Thumbnail-Vorschau für Bilder in der Dokumentenliste
+- [x] Frontend: Upload-Fortschritt pro Datei anzeigen
+
+## Feature: Einstellungen Erweiterungen
+- [x] Backend: Firmenlogo Upload und Speicherung in S3 (bereits vorhanden)
+- [x] Backend: Vorlagen-Verwaltung (upload, list, delete) für Rechnungsvorlagen etc.
+- [x] Frontend: Logo-Upload bei Unternehmensdaten (mit Vorschau, bereits vorhanden)
+- [x] Frontend: Neuer Unterbereich "Vorlagen" in Einstellungen
+- [x] Frontend: Vorlagen hochladen, anzeigen, löschen (Rechnungsvorlagen, Briefvorlagen)

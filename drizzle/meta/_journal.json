@@ -120,6 +120,13 @@
       "when": 1776245505229,
       "tag": "0016_new_argent",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1776255256162,
+      "tag": "0017_early_pride",
+      "breakpoints": true
     }
   ]
 }

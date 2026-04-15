@@ -3,7 +3,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, BookOpen, Building2, CreditCard,
   Users, BarChart3, Receipt, LogOut, ChevronRight, ChevronDown,
-  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet
+  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet, Clock
 } from "lucide-react";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -35,6 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/reports", icon: BarChart3, label: "Berichte" },
   { href: "/documents", icon: Paperclip, label: "Dokumente" },
   { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
+  { href: "/time-tracking", icon: Clock, label: "Zeiterfassung" },
   { href: "/settings", icon: Settings, label: "Einstellungen" },
 ];
 

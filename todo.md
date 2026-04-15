@@ -608,3 +608,9 @@
 
 - [x] Frontend: Expandierbare Zeilen in der KK-Abrechnungstabelle – Klick auf eine Abrechnung zeigt die Einzelpositionen (Datum, Beschreibung, Betrag, Konto)
 - [x] Frontend: Vorschau der Einzelpositionen mit Kontierung (gelerntes Konto aus Booking Rules)
+
+## Feature: Mobile Kamera-Aufnahme für Dokumente
+
+- [x] Frontend: "Foto aufnehmen"-Button neben dem bestehenden Upload-Bereich auf der Dokumente-Seite
+- [x] Frontend: HTML5 input capture="environment" für direkte Kamera-Aktivierung auf Mobile
+- [x] Frontend: Aufgenommenes Foto wird automatisch hochgeladen und von der KI analysiert (gleicher Workflow wie PDF-Upload)

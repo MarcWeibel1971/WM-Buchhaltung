@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Upload, FileText, Image, X, Loader2, Paperclip, Eye } from "lucide-react";
+import { Upload, FileText, Image, X, Loader2, Paperclip, Eye, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
@@ -41,6 +41,7 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback(async (file: File) => {
     if (file.size > 20 * 1024 * 1024) {
@@ -89,11 +90,19 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
 
   if (compact) {
     return (
-      <span>
+      <span className="inline-flex gap-1">
         <input
           ref={fileInputRef}
           type="file"
           accept=".pdf,.jpg,.jpeg,.png,.webp"
+          className="hidden"
+          onChange={handleInputChange}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
           className="hidden"
           onChange={handleInputChange}
         />
@@ -107,38 +116,78 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
           {uploading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Paperclip className="w-3 h-3 mr-1" />}
           Beleg anhängen
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => cameraInputRef.current?.click()}
+          disabled={uploading}
+        >
+          <Camera className="w-3 h-3 mr-1" />
+          Foto
+        </Button>
       </span>
     );
   }
 
   return (
-    <div
-      className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer
-        ${dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={handleDrop}
-      onClick={() => fileInputRef.current?.click()}
-    >
+    <div className="space-y-3">
+      {/* Drop zone for file upload */}
+      <div
+        className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer
+          ${dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png,.webp"
+          className="hidden"
+          onChange={handleInputChange}
+        />
+        {uploading ? (
+          <div className="flex flex-col items-center gap-2">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Wird hochgeladen und analysiert…</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2">
+            <Upload className="w-8 h-8 text-muted-foreground" />
+            <p className="text-sm font-medium">Beleg hier ablegen oder klicken</p>
+            <p className="text-xs text-muted-foreground">PDF, JPEG, PNG, WEBP – max. 20 MB</p>
+          </div>
+        )}
+      </div>
+
+      {/* Camera capture button – visible on all devices, activates camera on mobile */}
       <input
-        ref={fileInputRef}
+        ref={cameraInputRef}
         type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.webp"
+        accept="image/*"
+        capture="environment"
         className="hidden"
         onChange={handleInputChange}
       />
-      {uploading ? (
-        <div className="flex flex-col items-center gap-2">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Wird hochgeladen und analysiert…</p>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-2">
-          <Upload className="w-8 h-8 text-muted-foreground" />
-          <p className="text-sm font-medium">Beleg hier ablegen oder klicken</p>
-          <p className="text-xs text-muted-foreground">PDF, JPEG, PNG, WEBP – max. 20 MB</p>
-        </div>
-      )}
+      <Button
+        variant="outline"
+        size="sm"
+        className="w-full sm:w-auto gap-2"
+        onClick={(e) => {
+          e.stopPropagation();
+          cameraInputRef.current?.click();
+        }}
+        disabled={uploading}
+      >
+        {uploading ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <Camera className="w-4 h-4" />
+        )}
+        Foto aufnehmen
+      </Button>
     </div>
   );
 }

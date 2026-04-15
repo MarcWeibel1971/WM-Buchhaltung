@@ -1,0 +1,97 @@
+# ─── WM-Buchhaltung Docker-Compose Stack ────────────────────────────────────
+#
+# Startet:
+#   - mysql    : MySQL 8.0 mit persistentem Volume
+#   - migrate  : One-Shot Container, der Drizzle-Migrationen ausführt
+#   - app      : Die WM-Buchhaltung Express/tRPC-Anwendung (runtime stage)
+#
+# Vorbereitung:
+#   1. cp .env.example .env
+#   2. Werte in .env setzen (JWT_SECRET, OAuth, S3, LLM, ...)
+#   3. docker compose up -d
+#   4. Logs: docker compose logs -f app
+#
+# Backup der DB:
+#   docker compose exec mysql sh -c 'mysqldump -u root -p"$MYSQL_ROOT_PASSWORD" $MYSQL_DATABASE' > backups/dump-$(date +%F).sql
+#
+# Siehe BACKUP.md für vollständige Backup-Policy (GeBüV 10 Jahre).
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: wm-buchhaltung-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD muss in .env gesetzt sein}
+      MYSQL_DATABASE:      ${MYSQL_DATABASE:-wm_buchhaltung}
+      MYSQL_USER:          ${MYSQL_USER:-wmuser}
+      MYSQL_PASSWORD:      ${MYSQL_PASSWORD:?MYSQL_PASSWORD muss in .env gesetzt sein}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backups:/backups
+    # Port ist nur lokal gebunden – externe Zugriffe gehen über die App.
+    ports:
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  migrate:
+    build:
+      context: .
+      target: builder
+    container_name: wm-buchhaltung-migrate
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "mysql://${MYSQL_USER:-wmuser}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-wm_buchhaltung}"
+    command: ["pnpm", "db:push"]
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runtime
+    image: wm-buchhaltung:latest
+    container_name: wm-buchhaltung-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: "mysql://${MYSQL_USER:-wmuser}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-wm_buchhaltung}"
+      JWT_SECRET:             ${JWT_SECRET:?JWT_SECRET muss in .env gesetzt sein}
+      VITE_APP_ID:            ${VITE_APP_ID:-}
+      OAUTH_SERVER_URL:       ${OAUTH_SERVER_URL:-}
+      OWNER_OPEN_ID:          ${OWNER_OPEN_ID:-}
+      BUILT_IN_FORGE_API_URL: ${BUILT_IN_FORGE_API_URL:-}
+      BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-}
+      AWS_REGION:             ${AWS_REGION:-eu-central-1}
+      AWS_ACCESS_KEY_ID:      ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY:  ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET:          ${AWS_S3_BUCKET:-}
+      AWS_ENDPOINT_URL:       ${AWS_ENDPOINT_URL:-}
+      LOG_LEVEL:              ${LOG_LEVEL:-info}
+      SENTRY_DSN:             ${SENTRY_DSN:-}
+    # Standardmässig nur lokal; vor einen Reverse Proxy (Caddy / Nginx /
+    # Traefik) setzen, der TLS terminiert. Siehe DEPLOYMENT.md.
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  mysql_data:
+    driver: local

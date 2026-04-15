@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "./_core/trpc";
+import { router, orgProcedure } from "./_core/trpc";
 import { getDb, allocateEntryNumber } from "./db";
 import {
   fiscalYears,
@@ -17,15 +17,15 @@ import { eq, and, sql, gte, lte, like, or, desc, asc, ne, isNull } from "drizzle
 export const yearEndRouter = router({
   // ─── Fiscal Year Management ──────────────────────────────────────────────────
 
-  listFiscalYears: protectedProcedure.query(async () => {
+  listFiscalYears: orgProcedure.query(async () => {
     const db = await getDb();
       if (!db) throw new Error("Database not available");
     return db.select().from(fiscalYears).orderBy(desc(fiscalYears.year));
   }),
 
-  createFiscalYear: protectedProcedure
+  createFiscalYear: orgProcedure
     .input(z.object({ year: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const existing = await db.select().from(fiscalYears).where(eq(fiscalYears.year, input.year)).limit(1);
@@ -37,9 +37,9 @@ export const yearEndRouter = router({
       return { success: true };
     }),
 
-  startClosing: protectedProcedure
+  startClosing: orgProcedure
     .input(z.object({ year: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       await db.update(fiscalYears).set({ status: "closing" }).where(eq(fiscalYears.year, input.year));
@@ -48,9 +48,9 @@ export const yearEndRouter = router({
 
   // ─── Year-End Booking Suggestions ────────────────────────────────────────────
 
-  generateSuggestions: protectedProcedure
+  generateSuggestions: orgProcedure
     .input(z.object({ year: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const closingYear = input.year;
@@ -265,7 +265,7 @@ export const yearEndRouter = router({
     }),
 
   // List year-end bookings
-  listBookings: protectedProcedure
+  listBookings: orgProcedure
     .input(z.object({ year: z.number() }))
     .query(async ({ input }) => {
       const db = await getDb();
@@ -294,16 +294,16 @@ export const yearEndRouter = router({
     }),
 
   // Approve a single booking
-  approveBooking: protectedProcedure
+  approveBooking: orgProcedure
     .input(z.object({ bookingId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const [booking] = await db.select().from(yearEndBookings).where(eq(yearEndBookings.id, input.bookingId)).limit(1);
       if (!booking) throw new Error("Buchung nicht gefunden");
       if (booking.status !== "suggested") throw new Error("Buchung bereits verarbeitet");
 
-      const entryNumber = await allocateEntryNumber(booking.fiscalYear);
+      const entryNumber = await allocateEntryNumber(ctx.organizationId, booking.fiscalYear);
       const [entry] = await db.insert(journalEntries).values({
         entryNumber,
         bookingDate: `${booking.fiscalYear}-12-31`,
@@ -327,9 +327,9 @@ export const yearEndRouter = router({
     }),
 
   // Reject a booking
-  rejectBooking: protectedProcedure
+  rejectBooking: orgProcedure
     .input(z.object({ bookingId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       await db.update(yearEndBookings).set({ status: "rejected" }).where(eq(yearEndBookings.id, input.bookingId));
@@ -337,9 +337,9 @@ export const yearEndRouter = router({
     }),
 
   // Approve all suggested bookings
-  approveAll: protectedProcedure
+  approveAll: orgProcedure
     .input(z.object({ year: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const pending = await db.select().from(yearEndBookings).where(
@@ -348,7 +348,7 @@ export const yearEndRouter = router({
 
       let approved = 0;
       for (const booking of pending) {
-        const entryNumber = await allocateEntryNumber(input.year);
+        const entryNumber = await allocateEntryNumber(ctx.organizationId, input.year);
         const [entry] = await db.insert(journalEntries).values({
           entryNumber,
           bookingDate: `${input.year}-12-31`,
@@ -372,9 +372,9 @@ export const yearEndRouter = router({
 
   // ─── Automatic Reversals ─────────────────────────────────────────────────────
 
-  generateReversals: protectedProcedure
+  generateReversals: orgProcedure
     .input(z.object({ year: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const closingYear = input.year;
@@ -394,7 +394,7 @@ export const yearEndRouter = router({
 
       let reversed = 0;
       for (const booking of approvedBookings) {
-        const entryNumber = await allocateEntryNumber(nextYear);
+        const entryNumber = await allocateEntryNumber(ctx.organizationId, nextYear);
         const [entry] = await db.insert(journalEntries).values({
           entryNumber,
           bookingDate: `${nextYear}-01-01`,
@@ -430,9 +430,9 @@ export const yearEndRouter = router({
 
   // ─── Saldovortrag ────────────────────────────────────────────────────────────
 
-  carryForwardBalances: protectedProcedure
+  carryForwardBalances: orgProcedure
     .input(z.object({ year: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const closingYear = input.year;
@@ -534,9 +534,9 @@ export const yearEndRouter = router({
 
   // ─── Close Fiscal Year ───────────────────────────────────────────────────────
 
-  closeFiscalYear: protectedProcedure
+  closeFiscalYear: orgProcedure
     .input(z.object({ year: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const pending = await db.select().from(yearEndBookings).where(
@@ -555,7 +555,7 @@ export const yearEndRouter = router({
 
   // ─── Depreciation Settings ───────────────────────────────────────────────────
 
-  listDepreciationSettings: protectedProcedure.query(async () => {
+  listDepreciationSettings: orgProcedure.query(async () => {
     const db = await getDb();
       if (!db) throw new Error("Database not available");
     const settings = await db.select({
@@ -585,7 +585,7 @@ export const yearEndRouter = router({
     return result;
   }),
 
-  createDepreciationSetting: protectedProcedure
+  createDepreciationSetting: orgProcedure
     .input(z.object({
       accountId: z.number(), depreciationRate: z.string(),
       method: z.enum(["linear", "degressive"]),
@@ -593,7 +593,7 @@ export const yearEndRouter = router({
       depreciationExpenseAccountId: z.number().optional(),
       notes: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       await db.insert(depreciationSettings).values({
@@ -605,7 +605,7 @@ export const yearEndRouter = router({
       return { success: true };
     }),
 
-  updateDepreciationSetting: protectedProcedure
+  updateDepreciationSetting: orgProcedure
     .input(z.object({
       id: z.number(), depreciationRate: z.string().optional(),
       method: z.enum(["linear", "degressive"]).optional(),
@@ -614,7 +614,7 @@ export const yearEndRouter = router({
       notes: z.string().optional().nullable(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const { id, ...updates } = input;
@@ -626,9 +626,9 @@ export const yearEndRouter = router({
       return { success: true };
     }),
 
-  deleteDepreciationSetting: protectedProcedure
+  deleteDepreciationSetting: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       await db.delete(depreciationSettings).where(eq(depreciationSettings.id, input.id));
@@ -637,7 +637,7 @@ export const yearEndRouter = router({
 
   // ─── Summary ─────────────────────────────────────────────────────────────────
 
-  getSummary: protectedProcedure
+  getSummary: orgProcedure
     .input(z.object({ year: z.number() }))
     .query(async ({ input }) => {
       const db = await getDb();

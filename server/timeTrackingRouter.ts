@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "./_core/trpc";
+import { orgProcedure, router } from "./_core/trpc";
 import { timeEntries, services, customers, customerServices, accounts } from "../drizzle/schema";
 import { eq, and, asc, desc, sql, gte, lte } from "drizzle-orm";
 import { getDb } from "./db";
@@ -7,17 +7,25 @@ import { getDb } from "./db";
 export const timeTrackingRouter = router({
   // ─── Services (Dienstleistungskatalog) ──────────────────────────────────────
 
-  listServices: protectedProcedure.query(async () => {
+  listServices: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("Database not available");
-    const svcs = await db.select().from(services).where(eq(services.isActive, true)).orderBy(asc(services.sortOrder));
+    const svcs = await db.select().from(services)
+      .where(and(
+        eq(services.organizationId, ctx.organizationId),
+        eq(services.isActive, true),
+      ))
+      .orderBy(asc(services.sortOrder));
     const accountIds = svcs.filter(s => s.revenueAccountId).map(s => s.revenueAccountId!);
     let accountMap: Record<number, { number: string; name: string }> = {};
     if (accountIds.length > 0) {
       const accs = await db
         .select({ id: accounts.id, number: accounts.number, name: accounts.name })
         .from(accounts)
-        .where(sql`${accounts.id} IN (${sql.join(accountIds.map(id => sql`${id}`), sql`, `)})`);
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          sql`${accounts.id} IN (${sql.join(accountIds.map(id => sql`${id}`), sql`, `)})`,
+        ));
       accountMap = Object.fromEntries(accs.map(a => [a.id, { number: a.number, name: a.name }]));
     }
     return svcs.map(s => ({
@@ -26,18 +34,22 @@ export const timeTrackingRouter = router({
     }));
   }),
 
-  createService: protectedProcedure
+  createService: orgProcedure
     .input(z.object({
       name: z.string().min(1),
       description: z.string().optional(),
       defaultHourlyRate: z.number().optional(),
       revenueAccountId: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const existing = await db.select({ maxSort: sql<number>`COALESCE(MAX(${services.sortOrder}), 0)` }).from(services);
+      const existing = await db
+        .select({ maxSort: sql<number>`COALESCE(MAX(${services.sortOrder}), 0)` })
+        .from(services)
+        .where(eq(services.organizationId, ctx.organizationId));
       const [result] = await db.insert(services).values({
+        organizationId: ctx.organizationId,
         name: input.name,
         description: input.description || null,
         defaultHourlyRate: input.defaultHourlyRate ? String(input.defaultHourlyRate) : "0",
@@ -47,7 +59,7 @@ export const timeTrackingRouter = router({
       return { id: result.insertId };
     }),
 
-  updateService: protectedProcedure
+  updateService: orgProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().min(1).optional(),
@@ -56,7 +68,7 @@ export const timeTrackingRouter = router({
       revenueAccountId: z.number().optional(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const { id, ...data } = input;
@@ -66,13 +78,17 @@ export const timeTrackingRouter = router({
       if (data.defaultHourlyRate !== undefined) updateData.defaultHourlyRate = String(data.defaultHourlyRate);
       if (data.revenueAccountId !== undefined) updateData.revenueAccountId = data.revenueAccountId;
       if (data.isActive !== undefined) updateData.isActive = data.isActive;
-      await db.update(services).set(updateData).where(eq(services.id, id));
+      await db.update(services).set(updateData)
+        .where(and(
+          eq(services.organizationId, ctx.organizationId),
+          eq(services.id, id),
+        ));
       return { success: true };
     }),
 
   // ─── Time Entries ───────────────────────────────────────────────────────────
 
-  listEntries: protectedProcedure
+  listEntries: orgProcedure
     .input(z.object({
       fiscalYear: z.number().optional(),
       customerId: z.number().optional(),
@@ -81,10 +97,10 @@ export const timeTrackingRouter = router({
       dateFrom: z.string().optional(),
       dateTo: z.string().optional(),
     }).optional())
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const conditions: any[] = [];
+      const conditions: any[] = [eq(timeEntries.organizationId, ctx.organizationId)];
       if (input?.fiscalYear) conditions.push(eq(timeEntries.fiscalYear, input.fiscalYear));
       if (input?.customerId) conditions.push(eq(timeEntries.customerId, input.customerId));
       if (input?.serviceId) conditions.push(eq(timeEntries.serviceId, input.serviceId));
@@ -95,10 +111,10 @@ export const timeTrackingRouter = router({
       const entries = await db
         .select()
         .from(timeEntries)
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .where(and(...conditions))
         .orderBy(desc(timeEntries.date), desc(timeEntries.id));
 
-      // Enrich with customer and service names
+      // Enrich with customer and service names (scoped to org)
       const customerIds = Array.from(new Set(entries.filter(e => e.customerId).map(e => e.customerId)));
       const serviceIds = Array.from(new Set(entries.filter(e => e.serviceId).map(e => e.serviceId)));
 
@@ -107,7 +123,10 @@ export const timeTrackingRouter = router({
         const custs = await db
           .select({ id: customers.id, name: customers.name })
           .from(customers)
-          .where(sql`${customers.id} IN (${sql.join(customerIds.map(id => sql`${id}`), sql`, `)})`);
+          .where(and(
+            eq(customers.organizationId, ctx.organizationId),
+            sql`${customers.id} IN (${sql.join(customerIds.map(id => sql`${id}`), sql`, `)})`,
+          ));
         customerMap = Object.fromEntries(custs.map(c => [c.id, c.name]));
       }
 
@@ -116,7 +135,10 @@ export const timeTrackingRouter = router({
         const svcs = await db
           .select({ id: services.id, name: services.name })
           .from(services)
-          .where(sql`${services.id} IN (${sql.join(serviceIds.map(id => sql`${id}`), sql`, `)})`);
+          .where(and(
+            eq(services.organizationId, ctx.organizationId),
+            sql`${services.id} IN (${sql.join(serviceIds.map(id => sql`${id}`), sql`, `)})`,
+          ));
         serviceMap = Object.fromEntries(svcs.map(s => [s.id, s.name]));
       }
 
@@ -127,7 +149,7 @@ export const timeTrackingRouter = router({
       }));
     }),
 
-  createEntry: protectedProcedure
+  createEntry: orgProcedure
     .input(z.object({
       customerId: z.number(),
       serviceId: z.number().optional(),
@@ -141,6 +163,7 @@ export const timeTrackingRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const [result] = await db.insert(timeEntries).values({
+        organizationId: ctx.organizationId,
         customerId: input.customerId,
         serviceId: input.serviceId || 0,
         date: input.date,
@@ -154,7 +177,7 @@ export const timeTrackingRouter = router({
       return { id: result.insertId };
     }),
 
-  updateEntry: protectedProcedure
+  updateEntry: orgProcedure
     .input(z.object({
       id: z.number(),
       customerId: z.number().optional(),
@@ -165,7 +188,7 @@ export const timeTrackingRouter = router({
       hourlyRate: z.number().optional(),
       status: z.enum(["open", "invoiced"]).optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const { id, ...data } = input;
@@ -177,34 +200,47 @@ export const timeTrackingRouter = router({
       if (data.description !== undefined) updateData.description = data.description;
       if (data.hourlyRate !== undefined) updateData.hourlyRate = String(data.hourlyRate);
       if (data.status !== undefined) updateData.status = data.status;
-      await db.update(timeEntries).set(updateData).where(eq(timeEntries.id, id));
+      await db.update(timeEntries).set(updateData)
+        .where(and(
+          eq(timeEntries.organizationId, ctx.organizationId),
+          eq(timeEntries.id, id),
+        ));
       return { success: true };
     }),
 
-  deleteEntry: protectedProcedure
+  deleteEntry: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const [entry] = await db.select().from(timeEntries).where(eq(timeEntries.id, input.id));
+      const [entry] = await db.select().from(timeEntries)
+        .where(and(
+          eq(timeEntries.organizationId, ctx.organizationId),
+          eq(timeEntries.id, input.id),
+        ));
       if (entry && entry.status === "invoiced") {
         throw new Error("Bereits verrechnete Einträge können nicht gelöscht werden");
       }
-      await db.delete(timeEntries).where(eq(timeEntries.id, input.id));
+      await db.delete(timeEntries)
+        .where(and(
+          eq(timeEntries.organizationId, ctx.organizationId),
+          eq(timeEntries.id, input.id),
+        ));
       return { success: true };
     }),
 
   // Get summary for invoice creation
-  getInvoiceSummary: protectedProcedure
+  getInvoiceSummary: orgProcedure
     .input(z.object({
       customerId: z.number(),
       entryIds: z.array(z.number()).optional(),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
 
       const conditions: any[] = [
+        eq(timeEntries.organizationId, ctx.organizationId),
         eq(timeEntries.customerId, input.customerId),
         sql`${timeEntries.status} = 'open'`,
       ];
@@ -227,14 +263,17 @@ export const timeTrackingRouter = router({
         byService[key].entries.push(e);
       }
 
-      // Get service names
+      // Get service names (scoped to org)
       const serviceIds = entries.filter(e => e.serviceId).map(e => e.serviceId!);
       if (serviceIds.length > 0) {
         const uniqueIds = Array.from(new Set(serviceIds));
         const svcs = await db
           .select({ id: services.id, name: services.name })
           .from(services)
-          .where(sql`${services.id} IN (${sql.join(uniqueIds.map(id => sql`${id}`), sql`, `)})`);
+          .where(and(
+            eq(services.organizationId, ctx.organizationId),
+            sql`${services.id} IN (${sql.join(uniqueIds.map(id => sql`${id}`), sql`, `)})`,
+          ));
         const svcMap = Object.fromEntries(svcs.map(s => [s.id, s.name]));
         for (const key of Object.keys(byService)) {
           if (key !== "other") {
@@ -245,8 +284,12 @@ export const timeTrackingRouter = router({
         }
       }
 
-      // Get customer info
-      const [customer] = await db.select().from(customers).where(eq(customers.id, input.customerId));
+      // Get customer info (scoped to org)
+      const [customer] = await db.select().from(customers)
+        .where(and(
+          eq(customers.organizationId, ctx.organizationId),
+          eq(customers.id, input.customerId),
+        ));
 
       return {
         customer,
@@ -258,16 +301,24 @@ export const timeTrackingRouter = router({
     }),
 
   // Get customers with their services for dropdowns
-  getCustomersWithServices: protectedProcedure.query(async () => {
+  getCustomersWithServices: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("Database not available");
-    const custs = await db.select().from(customers).where(eq(customers.isActive, true)).orderBy(asc(customers.name));
+    const custs = await db.select().from(customers)
+      .where(and(
+        eq(customers.organizationId, ctx.organizationId),
+        eq(customers.isActive, true),
+      ))
+      .orderBy(asc(customers.name));
     const result = [];
     for (const c of custs) {
       const svcs = await db
         .select()
         .from(customerServices)
-        .where(eq(customerServices.customerId, c.id))
+        .where(and(
+          eq(customerServices.organizationId, ctx.organizationId),
+          eq(customerServices.customerId, c.id),
+        ))
         .orderBy(asc(customerServices.sortOrder));
       result.push({ ...c, services: svcs });
     }

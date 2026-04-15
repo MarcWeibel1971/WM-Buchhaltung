@@ -60,28 +60,34 @@ export async function getUserByOpenId(openId: string) {
 }
 
 // ─── Accounts (Kontenplan) ────────────────────────────────────────────────────
-export async function getAllAccounts() {
+export async function getAllAccounts(orgId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(accounts).where(eq(accounts.isActive, true)).orderBy(asc(accounts.sortOrder));
+  return db.select().from(accounts)
+    .where(and(eq(accounts.organizationId, orgId), eq(accounts.isActive, true)))
+    .orderBy(asc(accounts.sortOrder));
 }
 
-export async function getAccountByNumber(number: string) {
+export async function getAccountByNumber(orgId: number, number: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(accounts).where(eq(accounts.number, number)).limit(1);
+  const result = await db.select().from(accounts)
+    .where(and(eq(accounts.organizationId, orgId), eq(accounts.number, number)))
+    .limit(1);
   return result[0];
 }
 
-export async function getAccountById(id: number) {
+export async function getAccountById(orgId: number, id: number) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+  const result = await db.select().from(accounts)
+    .where(and(eq(accounts.organizationId, orgId), eq(accounts.id, id)))
+    .limit(1);
   return result[0];
 }
 
 // ─── Account Balances ─────────────────────────────────────────────────────────
-export async function getAccountBalance(accountId: number, fiscalYear?: number): Promise<number> {
+export async function getAccountBalance(orgId: number, accountId: number, fiscalYear?: number): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
 
@@ -89,13 +95,17 @@ export async function getAccountBalance(accountId: number, fiscalYear?: number):
   let openingBalance = 0;
   if (fiscalYear) {
     const ob = await db.select().from(openingBalances)
-      .where(and(eq(openingBalances.accountId, accountId), eq(openingBalances.fiscalYear, fiscalYear)))
+      .where(and(
+        eq(openingBalances.organizationId, orgId),
+        eq(openingBalances.accountId, accountId),
+        eq(openingBalances.fiscalYear, fiscalYear),
+      ))
       .limit(1);
     if (ob[0]) openingBalance = parseFloat(ob[0].balance as string);
   }
 
   // Get account info for normal balance
-  const account = await getAccountById(accountId);
+  const account = await getAccountById(orgId, accountId);
   if (!account) return openingBalance;
 
   // Sum approved journal lines
@@ -105,6 +115,7 @@ export async function getAccountBalance(accountId: number, fiscalYear?: number):
   }).from(journalLines)
     .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
     .where(and(
+      eq(journalEntries.organizationId, orgId),
       eq(journalLines.accountId, accountId),
       eq(journalEntries.status, "approved"),
       fiscalYear ? eq(journalEntries.fiscalYear, fiscalYear) : sql`1=1`
@@ -126,7 +137,7 @@ export async function getAccountBalance(accountId: number, fiscalYear?: number):
 }
 
 // ─── Journal ──────────────────────────────────────────────────────────────────
-export async function getJournalEntries(filters: {
+export async function getJournalEntries(orgId: number, filters: {
   status?: "pending" | "approved" | "rejected";
   source?: string;
   fiscalYear?: number;
@@ -137,13 +148,13 @@ export async function getJournalEntries(filters: {
   const db = await getDb();
   if (!db) return { entries: [], total: 0 };
 
-  const conditions = [];
+  const conditions = [eq(journalEntries.organizationId, orgId)];
   if (filters.status) conditions.push(eq(journalEntries.status, filters.status));
   if (filters.source) conditions.push(eq(journalEntries.source, filters.source as any));
   if (filters.fiscalYear) conditions.push(eq(journalEntries.fiscalYear, filters.fiscalYear));
   if (filters.search) conditions.push(like(journalEntries.description, `%${filters.search}%`));
 
-  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+  const whereClause = and(...conditions);
 
   const [entriesResult, countResult] = await Promise.all([
     db.select().from(journalEntries)
@@ -207,11 +218,13 @@ export async function getJournalEntries(filters: {
   return { entries: enrichedEntries, total: countResult[0]?.count ?? 0 };
 }
 
-export async function getJournalEntryWithLines(entryId: number) {
+export async function getJournalEntryWithLines(orgId: number, entryId: number) {
   const db = await getDb();
   if (!db) return null;
 
-  const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, entryId)).limit(1);
+  const [entry] = await db.select().from(journalEntries)
+    .where(and(eq(journalEntries.organizationId, orgId), eq(journalEntries.id, entryId)))
+    .limit(1);
   if (!entry) return null;
 
   const lines = await db.select({
@@ -225,6 +238,7 @@ export async function getJournalEntryWithLines(entryId: number) {
 }
 
 export async function createJournalEntry(data: {
+  organizationId: number;
   bookingDate: string;
   valueDate?: string;
   description: string;
@@ -253,15 +267,12 @@ export async function createJournalEntry(data: {
     throw new Error(`Double-Entry-Fehler: Soll (${debitTotal.toFixed(2)}) ≠ Haben (${creditTotal.toFixed(2)})`);
   }
 
-  // Generate entry number
   const year = data.fiscalYear ?? new Date().getFullYear();
-  const countResult = await db.select({ count: sql<number>`COUNT(*)` }).from(journalEntries)
-    .where(eq(journalEntries.fiscalYear, year));
-  const count = (countResult[0]?.count ?? 0) + 1;
-  const entryNumber = `${year}-${String(count).padStart(5, "0")}`;
 
+  // Belegnummer wird erst bei approve vergeben (GeBüV: lückenlos, siehe
+  // approveJournalEntry). Drafts bleiben ohne entryNumber.
   const [result] = await db.insert(journalEntries).values({
-    entryNumber,
+    organizationId: data.organizationId,
     bookingDate: data.bookingDate,
     valueDate: data.valueDate,
     description: data.description,
@@ -291,22 +302,22 @@ export async function createJournalEntry(data: {
 }
 
 /**
- * Allokiert eine fortlaufende Belegnummer im Format BL-YYYY-NNNNN für das
- * übergebene Geschäftsjahr. Atomar dank MySQL's LAST_INSERT_ID()-Trick –
+ * Allokiert eine fortlaufende Belegnummer im Format BL-YYYY-NNNNN für
+ * (Organisation, Geschäftsjahr). Atomar dank MySQL's LAST_INSERT_ID()-Trick –
  * funktioniert auch unter Concurrent Inserts ohne explizites FOR UPDATE.
  *
  * Die Nummer wird erst beim Approval vergeben (nicht beim Create), damit
  * gelöschte Drafts keine Lücken in der Sequenz hinterlassen (GeBüV Art. 957d).
  */
-export async function allocateEntryNumber(fiscalYear: number): Promise<string> {
+export async function allocateEntryNumber(orgId: number, fiscalYear: number): Promise<string> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  // Atomarer Upsert: beim ersten Aufruf pro Jahr LAST_INSERT_ID(1), danach
-  // LAST_INSERT_ID(nextSequence + 1). Der zurückgelieferte Wert ist die
-  // allokierte Sequenz für diesen Aufruf.
+  // Atomarer Upsert: beim ersten Aufruf pro (Org, Jahr) LAST_INSERT_ID(1),
+  // danach LAST_INSERT_ID(nextSequence + 1). Der zurückgelieferte Wert ist
+  // die allokierte Sequenz für diesen Aufruf.
   await db.execute(sql`
-    INSERT INTO journal_entry_sequences (fiscalYear, nextSequence)
-    VALUES (${fiscalYear}, LAST_INSERT_ID(1))
+    INSERT INTO journal_entry_sequences (organizationId, fiscalYear, nextSequence)
+    VALUES (${orgId}, ${fiscalYear}, LAST_INSERT_ID(1))
     ON DUPLICATE KEY UPDATE nextSequence = LAST_INSERT_ID(nextSequence + 1)
   `);
   const result = await db.execute(sql`SELECT LAST_INSERT_ID() AS seq`);
@@ -315,7 +326,7 @@ export async function allocateEntryNumber(fiscalYear: number): Promise<string> {
   const seqRaw = rows[0]?.seq ?? 0;
   const seq = typeof seqRaw === "bigint" ? Number(seqRaw) : seqRaw;
   if (!seq || seq < 1) {
-    throw new Error(`Belegnummern-Allokation fehlgeschlagen für Geschäftsjahr ${fiscalYear}`);
+    throw new Error(`Belegnummern-Allokation fehlgeschlagen für Org ${orgId}, Geschäftsjahr ${fiscalYear}`);
   }
   const year = String(fiscalYear).padStart(4, "0");
   const seqPadded = String(seq).padStart(5, "0");
@@ -333,11 +344,15 @@ export async function approveJournalEntry(entryId: number, userId: number) {
       entryNumber: journalEntries.entryNumber,
       fiscalYear: journalEntries.fiscalYear,
       bookingDate: journalEntries.bookingDate,
+      organizationId: journalEntries.organizationId,
     })
     .from(journalEntries)
     .where(eq(journalEntries.id, entryId))
     .limit(1);
   if (!existing) throw new Error(`Journal-Eintrag #${entryId} nicht gefunden`);
+  if (existing.organizationId == null) {
+    throw new Error(`Journal-Eintrag #${entryId} hat keine organizationId`);
+  }
 
   const updateSet: Record<string, unknown> = {
     status: "approved",
@@ -346,7 +361,7 @@ export async function approveJournalEntry(entryId: number, userId: number) {
   };
   if (!existing.entryNumber) {
     const fy = existing.fiscalYear ?? new Date(existing.bookingDate).getFullYear();
-    updateSet.entryNumber = await allocateEntryNumber(fy);
+    updateSet.entryNumber = await allocateEntryNumber(existing.organizationId, fy);
   }
   await db.update(journalEntries).set(updateSet).where(eq(journalEntries.id, entryId));
 }
@@ -407,7 +422,7 @@ export async function updateJournalEntryLines(entryId: number, lines: Array<{
 }
 
 // ─── Bank Transactions ────────────────────────────────────────────────────────
-export async function getBankAccounts() {
+export async function getBankAccounts(orgId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select({
@@ -415,29 +430,35 @@ export async function getBankAccounts() {
     account: accounts,
   }).from(bankAccounts)
     .innerJoin(accounts, eq(bankAccounts.accountId, accounts.id))
-    .where(eq(bankAccounts.isActive, true));
+    .where(and(
+      eq(bankAccounts.organizationId, orgId),
+      eq(bankAccounts.isActive, true),
+    ));
 }
 
-export async function getPendingBankTransactions(bankAccountId?: number) {
+export async function getPendingBankTransactions(orgId: number, bankAccountId?: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [eq(bankTransactions.status, "pending")];
+  const conditions = [
+    eq(bankTransactions.organizationId, orgId),
+    eq(bankTransactions.status, "pending"),
+  ];
   if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
   return db.select().from(bankTransactions)
     .where(and(...conditions))
     .orderBy(desc(bankTransactions.transactionDate));
 }
 
-export async function getBankTransactionsByStatus(status: "pending" | "matched" | "all", bankAccountId?: number) {
+export async function getBankTransactionsByStatus(orgId: number, status: "pending" | "matched" | "all", bankAccountId?: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions: any[] = [];
+  const conditions: any[] = [eq(bankTransactions.organizationId, orgId)];
   if (status === "pending") conditions.push(eq(bankTransactions.status, "pending"));
   else if (status === "matched") conditions.push(eq(bankTransactions.status, "matched"));
   // "all" = no status filter
   if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
   return db.select().from(bankTransactions)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(bankTransactions.transactionDate));
 }
 
@@ -484,23 +505,26 @@ export async function updateBankTransaction(txId: number, data: {
   await db.update(bankTransactions).set(updateSet).where(eq(bankTransactions.id, txId));
 }
 
-export async function getBankTransactionsByIds(ids: number[]) {
+export async function getBankTransactionsByIds(orgId: number, ids: number[]) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(bankTransactions).where(inArray(bankTransactions.id, ids));
+  return db.select().from(bankTransactions)
+    .where(and(eq(bankTransactions.organizationId, orgId), inArray(bankTransactions.id, ids)));
 }
 
 // ─── Employees ────────────────────────────────────────────────────────────────
-export async function getEmployees() {
+export async function getEmployees(orgId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(employees).where(eq(employees.isActive, true)).orderBy(asc(employees.code));
+  return db.select().from(employees)
+    .where(and(eq(employees.organizationId, orgId), eq(employees.isActive, true)))
+    .orderBy(asc(employees.code));
 }
 
-export async function getPayrollEntries(year?: number, employeeId?: number) {
+export async function getPayrollEntries(orgId: number, year?: number, employeeId?: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = [];
+  const conditions = [eq(payrollEntries.organizationId, orgId)];
   if (year) conditions.push(eq(payrollEntries.year, year));
   if (employeeId) conditions.push(eq(payrollEntries.employeeId, employeeId));
   return db.select({
@@ -513,17 +537,21 @@ export async function getPayrollEntries(year?: number, employeeId?: number) {
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
-export async function getBalanceSheet(fiscalYear: number) {
+export async function getBalanceSheet(orgId: number, fiscalYear: number) {
   const db = await getDb();
   if (!db) return { assets: [], liabilities: [], equity: [] };
 
   const allAccounts = await db.select().from(accounts)
-    .where(and(eq(accounts.isActive, true), inArray(accounts.accountType, ["asset", "liability", "equity"])))
+    .where(and(
+      eq(accounts.organizationId, orgId),
+      eq(accounts.isActive, true),
+      inArray(accounts.accountType, ["asset", "liability", "equity"]),
+    ))
     .orderBy(asc(accounts.sortOrder));
 
   const balances = await Promise.all(allAccounts.map(async (acc) => ({
     account: acc,
-    balance: await getAccountBalance(acc.id, fiscalYear),
+    balance: await getAccountBalance(orgId, acc.id, fiscalYear),
   })));
 
   return {
@@ -533,17 +561,21 @@ export async function getBalanceSheet(fiscalYear: number) {
   };
 }
 
-export async function getIncomeStatement(fiscalYear: number) {
+export async function getIncomeStatement(orgId: number, fiscalYear: number) {
   const db = await getDb();
   if (!db) return { expenses: [], revenues: [] };
 
   const allAccounts = await db.select().from(accounts)
-    .where(and(eq(accounts.isActive, true), inArray(accounts.accountType, ["expense", "revenue"])))
+    .where(and(
+      eq(accounts.organizationId, orgId),
+      eq(accounts.isActive, true),
+      inArray(accounts.accountType, ["expense", "revenue"]),
+    ))
     .orderBy(asc(accounts.sortOrder));
 
   const balances = await Promise.all(allAccounts.map(async (acc) => ({
     account: acc,
-    balance: await getAccountBalance(acc.id, fiscalYear),
+    balance: await getAccountBalance(orgId, acc.id, fiscalYear),
   })));
 
   return {
@@ -553,35 +585,50 @@ export async function getIncomeStatement(fiscalYear: number) {
 }
 
 // ─── VAT ──────────────────────────────────────────────────────────────────────
-export async function getVatPeriods(year?: number) {
+export async function getVatPeriods(orgId: number, year?: number) {
   const db = await getDb();
   if (!db) return [];
-  const conditions = year ? [eq(vatPeriods.year, year)] : [];
+  const conditions = [eq(vatPeriods.organizationId, orgId)];
+  if (year) conditions.push(eq(vatPeriods.year, year));
   return db.select().from(vatPeriods)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(vatPeriods.year), asc(vatPeriods.period));
 }
 
 // ─── Credit Card ──────────────────────────────────────────────────────────────
-export async function getCreditCardStatements() {
+export async function getCreditCardStatements(orgId: number) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(creditCardStatements).orderBy(desc(creditCardStatements.statementDate));
+  return db.select().from(creditCardStatements)
+    .where(eq(creditCardStatements.organizationId, orgId))
+    .orderBy(desc(creditCardStatements.statementDate));
 }
 
 // ─── Dashboard Stats ──────────────────────────────────────────────────────────
-export async function getDashboardStats(fiscalYear: number) {
+export async function getDashboardStats(orgId: number, fiscalYear: number) {
   const db = await getDb();
   if (!db) return null;
 
   const [pendingCount, approvedCount] = await Promise.all([
-    db.select({ count: sql<number>`COUNT(*)` }).from(journalEntries).where(eq(journalEntries.status, "pending")),
     db.select({ count: sql<number>`COUNT(*)` }).from(journalEntries)
-      .where(and(eq(journalEntries.status, "approved"), eq(journalEntries.fiscalYear, fiscalYear))),
+      .where(and(
+        eq(journalEntries.organizationId, orgId),
+        eq(journalEntries.status, "pending"),
+      )),
+    db.select({ count: sql<number>`COUNT(*)` }).from(journalEntries)
+      .where(and(
+        eq(journalEntries.organizationId, orgId),
+        eq(journalEntries.status, "approved"),
+        eq(journalEntries.fiscalYear, fiscalYear),
+      )),
   ]);
 
   const [pendingTxCount] = await db.select({ count: sql<number>`COUNT(*)` })
-    .from(bankTransactions).where(eq(bankTransactions.status, "pending"));
+    .from(bankTransactions)
+    .where(and(
+      eq(bankTransactions.organizationId, orgId),
+      eq(bankTransactions.status, "pending"),
+    ));
 
   return {
     pendingEntries: pendingCount[0]?.count ?? 0,
@@ -597,14 +644,17 @@ export async function getDashboardStats(fiscalYear: number) {
  * Find a matching booking rule for a given counterparty name.
  * Returns the best matching rule (highest priority, then highest usageCount).
  */
-export async function findMatchingRule(counterpartyName: string): Promise<BookingRule | null> {
+export async function findMatchingRule(orgId: number, counterpartyName: string): Promise<BookingRule | null> {
   const db = await getDb();
   if (!db || !counterpartyName) return null;
-  
+
   const rules = await db.select().from(bookingRules)
-    .where(eq(bookingRules.isActive, true))
+    .where(and(
+      eq(bookingRules.organizationId, orgId),
+      eq(bookingRules.isActive, true),
+    ))
     .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
-  
+
   const cpLower = counterpartyName.toLowerCase();
   for (const rule of rules) {
     if (cpLower.includes(rule.counterpartyPattern.toLowerCase())) {
@@ -617,11 +667,14 @@ export async function findMatchingRule(counterpartyName: string): Promise<Bookin
 /**
  * Get all active booking rules.
  */
-export async function getAllBookingRules(): Promise<BookingRule[]> {
+export async function getAllBookingRules(orgId: number): Promise<BookingRule[]> {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(bookingRules)
-    .where(eq(bookingRules.isActive, true))
+    .where(and(
+      eq(bookingRules.organizationId, orgId),
+      eq(bookingRules.isActive, true),
+    ))
     .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
 }
 
@@ -631,6 +684,7 @@ export async function getAllBookingRules(): Promise<BookingRule[]> {
  * Otherwise, create a new one.
  */
 export async function upsertBookingRule(data: {
+  organizationId: number;
   counterpartyPattern: string;
   bookingTextTemplate?: string;
   debitAccountId?: number;
@@ -640,9 +694,12 @@ export async function upsertBookingRule(data: {
   const db = await getDb();
   if (!db) return;
 
-  // Check if a rule with this pattern already exists (case-insensitive)
+  // Check if a rule with this pattern already exists (case-insensitive) within this org
   const existing = await db.select().from(bookingRules)
-    .where(eq(bookingRules.counterpartyPattern, data.counterpartyPattern))
+    .where(and(
+      eq(bookingRules.organizationId, data.organizationId),
+      eq(bookingRules.counterpartyPattern, data.counterpartyPattern),
+    ))
     .limit(1);
 
   if (existing.length > 0) {
@@ -658,6 +715,7 @@ export async function upsertBookingRule(data: {
   } else {
     // Create new rule
     await db.insert(bookingRules).values({
+      organizationId: data.organizationId,
       counterpartyPattern: data.counterpartyPattern,
       bookingTextTemplate: data.bookingTextTemplate,
       debitAccountId: data.debitAccountId,
@@ -764,7 +822,7 @@ export function calculateMatchScore(
  * Run auto-matching: find best matches between unmatched documents and pending transactions.
  * Returns array of matches with scores >= threshold.
  */
-export async function autoMatchDocuments(threshold: number = 50): Promise<{
+export async function autoMatchDocuments(orgId: number, threshold: number = 50): Promise<{
   documentId: number;
   transactionId: number;
   score: number;
@@ -774,16 +832,20 @@ export async function autoMatchDocuments(threshold: number = 50): Promise<{
   const db = await getDb();
   if (!db) return [];
 
-  // Get unmatched documents with AI metadata
+  // Get unmatched documents with AI metadata (org-scoped)
   const unmatchedDocs = await db.select().from(documents)
     .where(and(
+      eq(documents.organizationId, orgId),
       eq(documents.matchStatus, 'unmatched'),
-      sql`${documents.aiMetadata} IS NOT NULL`
+      sql`${documents.aiMetadata} IS NOT NULL`,
     ));
 
-  // Get pending (unmatched) bank transactions
+  // Get pending (unmatched) bank transactions (org-scoped)
   const pendingTxns = await db.select().from(bankTransactions)
-    .where(eq(bankTransactions.status, 'pending'));
+    .where(and(
+      eq(bankTransactions.organizationId, orgId),
+      eq(bankTransactions.status, 'pending'),
+    ));
 
   if (unmatchedDocs.length === 0 || pendingTxns.length === 0) return [];
 

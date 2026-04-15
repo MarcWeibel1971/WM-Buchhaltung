@@ -160,6 +160,15 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       } catch { /* keep original filename */ }
     }
 
+    // Phase 1 Multi-Tenancy: Upload ist an die aktuelle Organisation des
+    // Users gebunden. Ohne aktive Org wird der Upload abgelehnt.
+    const orgId = user.currentOrganizationId;
+    if (orgId == null) {
+      return res.status(403).json({
+        error: "Keine aktive Organisation. Bitte zuerst eine Organisation einrichten.",
+      });
+    }
+
     // Auto-create or link supplier for incoming invoices
     let autoSupplierId: number | undefined = undefined;
     if (detectedDocType === "invoice_in" && aiMetadata) {
@@ -167,7 +176,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
         const tempDb = await getDb();
         if (tempDb) {
           const parsed = JSON.parse(aiMetadata);
-          const supplierResult = await findOrCreateSupplierFromMetadata(parsed, tempDb);
+          const supplierResult = await findOrCreateSupplierFromMetadata(orgId, parsed, tempDb);
           if (supplierResult) {
             autoSupplierId = supplierResult.supplierId;
             console.log(`[Upload] ${supplierResult.created ? 'Created' : 'Linked'} supplier #${supplierResult.supplierId} for invoice from ${parsed.counterparty}`);
@@ -182,6 +191,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "Datenbank nicht verfügbar" });
     const [result] = await db.insert(documents).values({
+      organizationId: orgId,
       filename: smartFilename,
       s3Key,
       s3Url: url,

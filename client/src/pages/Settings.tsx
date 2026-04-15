@@ -203,7 +203,7 @@ function CompanyTab() {
 
   const startEdit = () => {
     setForm({
-      companyName: (current as Record<string, unknown>).companyName as string ?? "WM Weibel Mueller AG",
+      companyName: (current as Record<string, unknown>).companyName as string ?? "Meine Firma",
       legalForm: (current as Record<string, unknown>).legalForm as string ?? "AG",
       street: (current as Record<string, unknown>).street as string ?? "",
       zipCode: (current as Record<string, unknown>).zipCode as string ?? "",
@@ -226,7 +226,7 @@ function CompanyTab() {
 
   const save = () => {
     upsert.mutate({
-      companyName: form.companyName || "WM Weibel Mueller AG",
+      companyName: form.companyName || "Meine Firma",
       legalForm: form.legalForm || undefined,
       street: form.street || undefined,
       zipCode: form.zipCode || undefined,
@@ -2854,8 +2854,9 @@ function PrivacySection() {
         <CardContent className="prose prose-sm max-w-none text-foreground">
           <h3 className="text-base font-semibold mt-0">1. Verantwortliche Stelle</h3>
           <p>
-            WM Weibel Mueller AG ist verantwortlich für die Bearbeitung der Personendaten in dieser Anwendung.
-            Bei Fragen zum Datenschutz wenden Sie sich bitte an die Geschäftsleitung.
+            Die in den Unternehmens­einstellungen hinterlegte Firma ist verantwortlich
+            für die Bearbeitung der Personendaten in dieser Anwendung. Bei Fragen
+            zum Datenschutz wenden Sie sich bitte an die Geschäftsleitung.
           </p>
 
           <h3 className="text-base font-semibold">2. Erhobene Daten</h3>

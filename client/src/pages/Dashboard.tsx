@@ -17,6 +17,7 @@ export default function Dashboard() {
   const { data: incomeStatement } = trpc.reports.incomeStatement.useQuery({ fiscalYear: year });
   const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 5 });
   const { data: pendingBank } = trpc.bankImport.getPendingTransactions.useQuery({});
+  const { data: company } = trpc.settings.getCompanySettings.useQuery();
 
   const totalRevenue = useMemo(() => {
     if (!incomeStatement?.revenues) return 0;
@@ -35,7 +36,7 @@ export default function Dashboard() {
       {/* Header */}
       <div>
         <h2 className="text-2xl font-bold text-foreground">Übersicht {year}</h2>
-        <p className="text-muted-foreground text-sm mt-1">WM Weibel Mueller AG – Buchhaltung</p>
+        <p className="text-muted-foreground text-sm mt-1">{company?.companyName ?? "Meine Firma"} – Buchhaltung</p>
       </div>
 
       {/* KPI Cards */}

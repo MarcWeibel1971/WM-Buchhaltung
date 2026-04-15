@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, router } from "./_core/trpc";
+import { orgProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import {
   companySettings, insuranceSettings, employees, bankAccounts, bankTransactions, bookingRules, accounts,
@@ -96,30 +96,33 @@ export const settingsRouter = router({
 
   // ── Company Settings ────────────────────────────────────────────────────────
 
-  getCompanySettings: protectedProcedure.query(async () => {
+  getCompanySettings: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error('Database not available');
-    const rows = await db.select().from(companySettings).limit(1);
+    const rows = await db.select().from(companySettings)
+      .where(eq(companySettings.organizationId, ctx.organizationId))
+      .limit(1);
     if (rows.length === 0) {
-      // Return default values if not set
+      // Return minimal default values if no company settings exist for this org.
+      // Phase 1c: this is deprecated – UI should read from `organizations` directly.
       return {
         id: null,
-        companyName: "WM Weibel Mueller AG",
+        companyName: "Meine Firma",
         legalForm: "AG",
-        street: "Grendelstrasse 2",
-        zipCode: "6004",
-        city: "Luzern",
-        canton: "LU",
+        street: null,
+        zipCode: null,
+        city: null,
+        canton: null,
         country: "Schweiz",
-        uid: "CHE-101.177.334",
-        vatNumber: "CHE-101.177.334 MWST",
+        uid: null,
+        vatNumber: null,
         vatMethod: "effective" as const,
-        vatSaldoRate: "6.20",
+        vatSaldoRate: "0",
         vatPeriod: "quarterly" as const,
         fiscalYearStartMonth: 1,
-        phone: "+41 41 417 44 44",
-        email: "marc.weibel@weibel-mueller.ch",
-        website: "weibel-mueller.ch",
+        phone: null,
+        email: null,
+        website: null,
         hrNumber: null,
         logoUrl: null,
         createdAt: new Date(),
@@ -129,14 +132,17 @@ export const settingsRouter = router({
     return rows[0];
   }),
 
-  upsertCompanySettings: protectedProcedure
+  upsertCompanySettings: orgProcedure
     .input(companySettingsInput)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      const existing = await db.select({ id: companySettings.id }).from(companySettings).limit(1);
+      const existing = await db.select({ id: companySettings.id }).from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
       if (existing.length === 0) {
         await db.insert(companySettings).values({
+          organizationId: ctx.organizationId,
           companyName: input.companyName,
           legalForm: input.legalForm,
           street: input.street,
@@ -178,22 +184,27 @@ export const settingsRouter = router({
             hrNumber: input.hrNumber,
             logoUrl: input.logoUrl,
           })
-          .where(eq(companySettings.id, existing[0].id));
+          .where(and(
+            eq(companySettings.organizationId, ctx.organizationId),
+            eq(companySettings.id, existing[0].id),
+          ));
       }
       return { success: true };
     }),
 
   // ── Insurance Settings ───────────────────────────────────────────────────────
 
-  getInsuranceSettings: protectedProcedure.query(async () => {
+  getInsuranceSettings: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error('Database not available');
-    return db.select().from(insuranceSettings).orderBy(asc(insuranceSettings.insuranceType));
+    return db.select().from(insuranceSettings)
+      .where(eq(insuranceSettings.organizationId, ctx.organizationId))
+      .orderBy(asc(insuranceSettings.insuranceType));
   }),
 
-  upsertInsuranceSetting: protectedProcedure
+  upsertInsuranceSetting: orgProcedure
     .input(insuranceSettingInput.extend({ id: z.number().int().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const { id, employeeRate, employerRate, maxInsuredSalary, minInsuredSalary, bvgEmployeeMonthly, bvgEmployerMonthly, ...rest } = input;
@@ -207,9 +218,14 @@ export const settingsRouter = router({
         bvgEmployerMonthly: bvgEmployerMonthly !== undefined ? String(bvgEmployerMonthly) : undefined,
       };
       if (id) {
-        await db.update(insuranceSettings).set(data).where(eq(insuranceSettings.id, id));
+        await db.update(insuranceSettings).set(data)
+          .where(and(
+            eq(insuranceSettings.organizationId, ctx.organizationId),
+            eq(insuranceSettings.id, id),
+          ));
       } else {
         await db.insert(insuranceSettings).values({
+          organizationId: ctx.organizationId,
           insuranceType: data.insuranceType,
           insurerName: data.insurerName,
           policyNumber: data.policyNumber,
@@ -228,33 +244,44 @@ export const settingsRouter = router({
       return { success: true };
     }),
 
-  deleteInsuranceSetting: protectedProcedure
+  deleteInsuranceSetting: orgProcedure
     .input(z.object({ id: z.number().int() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      await db.delete(insuranceSettings).where(eq(insuranceSettings.id, input.id));
+      await db.delete(insuranceSettings)
+        .where(and(
+          eq(insuranceSettings.organizationId, ctx.organizationId),
+          eq(insuranceSettings.id, input.id),
+        ));
       return { success: true };
     }),
 
   // ── Employees ────────────────────────────────────────────────────────────────
 
-  getEmployees: protectedProcedure.query(async () => {
+  getEmployees: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error('Database not available');
-    return db.select().from(employees).orderBy(asc(employees.lastName));
+    return db.select().from(employees)
+      .where(eq(employees.organizationId, ctx.organizationId))
+      .orderBy(asc(employees.lastName));
   }),
 
-  upsertEmployee: protectedProcedure
+  upsertEmployee: orgProcedure
     .input(employeeInput.extend({ id: z.number().int().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const { id, ...data } = input;
       if (id) {
-        await db.update(employees).set(data).where(eq(employees.id, id));
+        await db.update(employees).set(data)
+          .where(and(
+            eq(employees.organizationId, ctx.organizationId),
+            eq(employees.id, id),
+          ));
       } else {
         await db.insert(employees).values({
+          organizationId: ctx.organizationId,
           code: data.code,
           firstName: data.firstName,
           lastName: data.lastName,
@@ -275,33 +302,39 @@ export const settingsRouter = router({
       return { success: true };
     }),
 
-  deleteEmployee: protectedProcedure
+  deleteEmployee: orgProcedure
     .input(z.object({ id: z.number().int() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       await db.update(employees)
         .set({ isActive: false })
-        .where(eq(employees.id, input.id));
+        .where(and(
+          eq(employees.organizationId, ctx.organizationId),
+          eq(employees.id, input.id),
+        ));
       return { success: true };
     }),
 
   // ── Bank Accounts ─────────────────────────────────────────────────────────────
 
-  getBankAccounts: protectedProcedure.query(async () => {
+  getBankAccounts: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error('Database not available');
-    const bas = await db.select().from(bankAccounts).orderBy(asc(bankAccounts.accountId));
-    // Enrich with account name
+    const bas = await db.select().from(bankAccounts)
+      .where(eq(bankAccounts.organizationId, ctx.organizationId))
+      .orderBy(asc(bankAccounts.accountId));
+    // Enrich with account name (scoped to this org)
     const accs = await db.select({ id: accounts.id, number: accounts.number, name: accounts.name })
-      .from(accounts);
+      .from(accounts)
+      .where(eq(accounts.organizationId, ctx.organizationId));
     return bas.map(ba => {
       const acc = accs.find(a => a.id === ba.accountId);
       return { ...ba, accountNumber: acc?.number, accountName: acc?.name };
     });
   }),
 
-  updateBankAccount: protectedProcedure
+  updateBankAccount: orgProcedure
     .input(z.object({
       id: z.number().int(),
       name: z.string().max(100).optional(),
@@ -309,24 +342,30 @@ export const settingsRouter = router({
       bank: z.string().max(100).optional(),
       owner: z.string().max(10).optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const { id, ...data } = input;
-      await db.update(bankAccounts).set(data).where(eq(bankAccounts.id, id));
+      await db.update(bankAccounts).set(data)
+        .where(and(
+          eq(bankAccounts.organizationId, ctx.organizationId),
+          eq(bankAccounts.id, id),
+        ));
       return { success: true };
     }),
 
   // ── Booking Rules ─────────────────────────────────────────────────────────────
 
-  getBookingRules: protectedProcedure.query(async () => {
+  getBookingRules: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error('Database not available');
     const rules = await db.select().from(bookingRules)
+      .where(eq(bookingRules.organizationId, ctx.organizationId))
       .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
-    // Enrich with account names
+    // Enrich with account names (scoped to this org)
     const accs = await db.select({ id: accounts.id, number: accounts.number, name: accounts.name })
-      .from(accounts);
+      .from(accounts)
+      .where(eq(accounts.organizationId, ctx.organizationId));
     return rules.map(r => {
       const debit = accs.find(a => a.id === r.debitAccountId);
       const credit = accs.find(a => a.id === r.creditAccountId);
@@ -340,51 +379,66 @@ export const settingsRouter = router({
     });
   }),
 
-  updateBookingRule: protectedProcedure
+  updateBookingRule: orgProcedure
     .input(bookingRuleInput.extend({ id: z.number().int() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const { id, vatRate, ...rest } = input;
       await db.update(bookingRules).set({
         ...rest,
         vatRate: vatRate !== undefined ? String(vatRate) : undefined,
-      }).where(eq(bookingRules.id, id));
+      }).where(and(
+        eq(bookingRules.organizationId, ctx.organizationId),
+        eq(bookingRules.id, id),
+      ));
       return { success: true };
     }),
 
-  deleteBookingRule: protectedProcedure
+  deleteBookingRule: orgProcedure
     .input(z.object({ id: z.number().int() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      await db.delete(bookingRules).where(eq(bookingRules.id, input.id));
+      await db.delete(bookingRules)
+        .where(and(
+          eq(bookingRules.organizationId, ctx.organizationId),
+          eq(bookingRules.id, input.id),
+        ));
       return { success: true };
     }),
 
-  toggleBookingRule: protectedProcedure
+  toggleBookingRule: orgProcedure
     .input(z.object({ id: z.number().int(), isActive: z.boolean() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       await db.update(bookingRules)
         .set({ isActive: input.isActive })
-        .where(eq(bookingRules.id, input.id));
+        .where(and(
+          eq(bookingRules.organizationId, ctx.organizationId),
+          eq(bookingRules.id, input.id),
+        ));
       return { success: true };
     }),
 
   // ── Eröffnungssalden ──────────────────────────────────────────────────────────
 
-  getOpeningBalances: protectedProcedure
+  getOpeningBalances: orgProcedure
     .input(z.object({ fiscalYear: z.number().int() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       // Get all accounts with their opening balances for the given fiscal year
       // Only return active accounts (or accounts that have a non-zero opening balance)
-      const allAccounts = await db.select().from(accounts).orderBy(asc(accounts.number));
+      const allAccounts = await db.select().from(accounts)
+        .where(eq(accounts.organizationId, ctx.organizationId))
+        .orderBy(asc(accounts.number));
       const obs = await db.select().from(openingBalances)
-        .where(eq(openingBalances.fiscalYear, input.fiscalYear));
+        .where(and(
+          eq(openingBalances.organizationId, ctx.organizationId),
+          eq(openingBalances.fiscalYear, input.fiscalYear),
+        ));
       return allAccounts
         .filter(acc => acc.isActive || obs.some(o => o.accountId === acc.id && parseFloat(o.balance as string) !== 0))
         .map(acc => {
@@ -403,7 +457,7 @@ export const settingsRouter = router({
         });
     }),
 
-  upsertOpeningBalances: protectedProcedure
+  upsertOpeningBalances: orgProcedure
     .input(z.object({
       fiscalYear: z.number().int(),
       balances: z.array(z.object({
@@ -411,13 +465,14 @@ export const settingsRouter = router({
         balance: z.number(),
       })),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
 
       // Validate: sum of asset accounts must equal sum of liability+equity accounts
       const allAccounts = await db.select({ id: accounts.id, accountType: accounts.accountType })
-        .from(accounts);
+        .from(accounts)
+        .where(eq(accounts.organizationId, ctx.organizationId));
 
       let totalAssets = 0;
       let totalLiabilities = 0;
@@ -437,13 +492,14 @@ export const settingsRouter = router({
         });
       }
 
-      // Upsert each balance
+      // Upsert each balance (scoped to org)
       for (const b of input.balances) {
         const existing = await db.select({ id: openingBalances.id })
           .from(openingBalances)
           .where(and(
+            eq(openingBalances.organizationId, ctx.organizationId),
             eq(openingBalances.accountId, b.accountId),
-            eq(openingBalances.fiscalYear, input.fiscalYear)
+            eq(openingBalances.fiscalYear, input.fiscalYear),
           ))
           .limit(1);
 
@@ -452,8 +508,9 @@ export const settingsRouter = router({
           if (existing.length > 0) {
             await db.delete(openingBalances)
               .where(and(
+                eq(openingBalances.organizationId, ctx.organizationId),
                 eq(openingBalances.accountId, b.accountId),
-                eq(openingBalances.fiscalYear, input.fiscalYear)
+                eq(openingBalances.fiscalYear, input.fiscalYear),
               ));
           }
         } else if (existing.length > 0) {
@@ -462,6 +519,7 @@ export const settingsRouter = router({
             .where(eq(openingBalances.id, existing[0].id));
         } else {
           await db.insert(openingBalances).values({
+            organizationId: ctx.organizationId,
             accountId: b.accountId,
             fiscalYear: input.fiscalYear,
             balance: String(b.balance),
@@ -469,21 +527,19 @@ export const settingsRouter = router({
         }
       }
 
-      // Rebuild the Eröffnungsbilanz journal entry for this fiscal year
-      // Delete existing Eröffnungsbilanz entry
-      // Find existing Eröffnungsbilanz entries (description-based)
+      // Rebuild the Eröffnungsbilanz journal entry for this fiscal year (scoped to org)
       const existingEntries = await db.select({ id: journalEntries.id })
         .from(journalEntries)
         .where(and(
+          eq(journalEntries.organizationId, ctx.organizationId),
           eq(journalEntries.fiscalYear, input.fiscalYear),
-          eq(journalEntries.source, 'system')
+          eq(journalEntries.source, 'system'),
         ));
 
       // Only delete entries that are Eröffnungsbilanz (by description).
       // NOTE (Phase 1 GeBüV): This system operation bypasses journal-immutability
-      // because it rebuilds the opening balance entry. In a multi-tenant SaaS this
-      // should require admin rights and be audit-logged. Acceptable for single-
-      // tenant setup where opening balances are only recomputed during onboarding.
+      // because it rebuilds the opening balance entry. Should require admin rights
+      // and be audit-logged in Phase 1c.
       for (const e of existingEntries) {
         const entry = await db.select({ description: journalEntries.description })
           .from(journalEntries).where(eq(journalEntries.id, e.id)).limit(1);
@@ -498,6 +554,7 @@ export const settingsRouter = router({
       if (nonZeroBalances.length > 0) {
         const startDate = `${input.fiscalYear}-01-01`;
         const [newEntry] = await db.insert(journalEntries).values({
+          organizationId: ctx.organizationId,
           bookingDate: startDate,
           valueDate: startDate,
           description: `Eröffnungsbilanz per 01.01.${input.fiscalYear}`,
@@ -526,13 +583,15 @@ export const settingsRouter = router({
 
   // ── Chart of Accounts (Kontenplan) CRUD ────────────────────────────────────────────
 
-  getAllAccounts: protectedProcedure.query(async () => {
+  getAllAccounts: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-    return db.select().from(accounts).orderBy(asc(accounts.number));
+    return db.select().from(accounts)
+      .where(eq(accounts.organizationId, ctx.organizationId))
+      .orderBy(asc(accounts.number));
   }),
 
-  createAccount: protectedProcedure
+  createAccount: orgProcedure
     .input(z.object({
       number: z.string().min(1).max(10),
       name: z.string().min(1).max(200),
@@ -546,13 +605,19 @@ export const settingsRouter = router({
       isActive: z.boolean().optional(),
       sortOrder: z.number().int().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      // Check for duplicate number
-      const existing = await db.select().from(accounts).where(eq(accounts.number, input.number)).limit(1);
+      // Check for duplicate number (within this org)
+      const existing = await db.select().from(accounts)
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          eq(accounts.number, input.number),
+        ))
+        .limit(1);
       if (existing.length > 0) throw new TRPCError({ code: "CONFLICT", message: `Konto ${input.number} existiert bereits` });
       const [result] = await db.insert(accounts).values({
+        organizationId: ctx.organizationId,
         number: input.number,
         name: input.name,
         accountType: input.accountType,
@@ -568,9 +633,15 @@ export const settingsRouter = router({
 
       // Auto-create bank account entry if isBankAccount is true
       if (input.isBankAccount) {
-        const existing = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, result.id)).limit(1);
+        const existing = await db.select().from(bankAccounts)
+          .where(and(
+            eq(bankAccounts.organizationId, ctx.organizationId),
+            eq(bankAccounts.accountId, result.id),
+          ))
+          .limit(1);
         if (existing.length === 0) {
           await db.insert(bankAccounts).values({
+            organizationId: ctx.organizationId,
             accountId: result.id,
             name: input.name,
             currency: "CHF",
@@ -582,7 +653,7 @@ export const settingsRouter = router({
       return { success: true, id: result.id, bankAccountCreated: !!input.isBankAccount };
     }),
 
-  updateAccount: protectedProcedure
+  updateAccount: orgProcedure
     .input(z.object({
       id: z.number(),
       number: z.string().min(1).max(10).optional(),
@@ -597,7 +668,7 @@ export const settingsRouter = router({
       isActive: z.boolean().optional(),
       sortOrder: z.number().int().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { id, ...data } = input;
@@ -607,15 +678,30 @@ export const settingsRouter = router({
         if (v !== undefined) cleanData[k] = v;
       }
       if (Object.keys(cleanData).length === 0) return { success: true };
-      await db.update(accounts).set(cleanData).where(eq(accounts.id, id));
+      await db.update(accounts).set(cleanData)
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          eq(accounts.id, id),
+        ));
 
       // Sync bank account when isBankAccount changes
       if (input.isBankAccount !== undefined) {
-        const existingBA = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, id)).limit(1);
+        const existingBA = await db.select().from(bankAccounts)
+          .where(and(
+            eq(bankAccounts.organizationId, ctx.organizationId),
+            eq(bankAccounts.accountId, id),
+          ))
+          .limit(1);
         if (input.isBankAccount && existingBA.length === 0) {
           // Create bank account entry
-          const [acct] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+          const [acct] = await db.select().from(accounts)
+            .where(and(
+              eq(accounts.organizationId, ctx.organizationId),
+              eq(accounts.id, id),
+            ))
+            .limit(1);
           await db.insert(bankAccounts).values({
+            organizationId: ctx.organizationId,
             accountId: id,
             name: acct?.name ?? `Konto ${id}`,
             currency: "CHF",
@@ -625,19 +711,27 @@ export const settingsRouter = router({
         } else if (!input.isBankAccount && existingBA.length > 0) {
           // Check if bank account has transactions before removing
           const [txCount] = await db.select({ count: sql`COUNT(*)` })
-            .from(bankTransactions).where(eq(bankTransactions.bankAccountId, existingBA[0].id));
+            .from(bankTransactions)
+            .where(and(
+              eq(bankTransactions.organizationId, ctx.organizationId),
+              eq(bankTransactions.bankAccountId, existingBA[0].id),
+            ));
           if (Number(txCount?.count) === 0) {
             await db.delete(bankAccounts).where(eq(bankAccounts.id, existingBA[0].id));
             return { success: true, bankAccountRemoved: true };
           }
-          // If transactions exist, keep bank account but update the flag
           return { success: true, bankAccountKept: true, reason: "Bankkonto hat Transaktionen und kann nicht entfernt werden" };
         }
       }
 
       // Also sync name changes to bank account
       if (input.name) {
-        const existingBA = await db.select().from(bankAccounts).where(eq(bankAccounts.accountId, id)).limit(1);
+        const existingBA = await db.select().from(bankAccounts)
+          .where(and(
+            eq(bankAccounts.organizationId, ctx.organizationId),
+            eq(bankAccounts.accountId, id),
+          ))
+          .limit(1);
         if (existingBA.length > 0) {
           await db.update(bankAccounts).set({ name: input.name }).where(eq(bankAccounts.id, existingBA[0].id));
         }
@@ -646,27 +740,44 @@ export const settingsRouter = router({
       return { success: true };
     }),
 
-  deleteAccount: protectedProcedure
+  deleteAccount: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      // Check if account has journal lines
+      // Check if account has journal lines (via the org's journal entries)
       const [usage] = await db.select({ count: sql`COUNT(*)` })
-        .from(journalLines).where(eq(journalLines.accountId, input.id));
+        .from(journalLines)
+        .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+        .where(and(
+          eq(journalEntries.organizationId, ctx.organizationId),
+          eq(journalLines.accountId, input.id),
+        ));
       if (Number(usage?.count) > 0) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Konto hat ${usage.count} Buchungszeilen und kann nicht gelöscht werden. Deaktivieren Sie es stattdessen.` });
       }
       // Also clean up bankAccounts if this was a bank account
-      const [acct] = await db.select().from(accounts).where(eq(accounts.id, input.id));
+      const [acct] = await db.select().from(accounts)
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          eq(accounts.id, input.id),
+        ));
       if (acct?.isBankAccount) {
-        await db.delete(bankAccounts).where(eq(bankAccounts.accountId, input.id));
+        await db.delete(bankAccounts)
+          .where(and(
+            eq(bankAccounts.organizationId, ctx.organizationId),
+            eq(bankAccounts.accountId, input.id),
+          ));
       }
-      await db.delete(accounts).where(eq(accounts.id, input.id));
+      await db.delete(accounts)
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          eq(accounts.id, input.id),
+        ));
       return { success: true };
     }),
 
-  updateAccountSortOrder: protectedProcedure
+  updateAccountSortOrder: orgProcedure
     .input(z.object({
       updates: z.array(z.object({
         id: z.number(),
@@ -675,45 +786,56 @@ export const settingsRouter = router({
         subCategory: z.string().optional(),
       })),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       for (const u of input.updates) {
         const data: Record<string, any> = { sortOrder: u.sortOrder };
         if (u.category !== undefined) data.category = u.category;
         if (u.subCategory !== undefined) data.subCategory = u.subCategory;
-        await db.update(accounts).set(data).where(eq(accounts.id, u.id));
+        await db.update(accounts).set(data)
+          .where(and(
+            eq(accounts.organizationId, ctx.organizationId),
+            eq(accounts.id, u.id),
+          ));
       }
       return { success: true };
     }),
 
-  toggleAccountActive: protectedProcedure
+  toggleAccountActive: orgProcedure
     .input(z.object({ id: z.number(), isActive: z.boolean() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      await db.update(accounts).set({ isActive: input.isActive }).where(eq(accounts.id, input.id));
+      await db.update(accounts).set({ isActive: input.isActive })
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          eq(accounts.id, input.id),
+        ));
       return { success: true };
     }),
 
-  updateAccountVat: protectedProcedure
+  updateAccountVat: orgProcedure
     .input(z.object({
       id: z.number(),
       isVatRelevant: z.boolean(),
       defaultVatRate: z.string().optional().nullable(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       await db.update(accounts).set({
         isVatRelevant: input.isVatRelevant,
         defaultVatRate: input.defaultVatRate ?? null,
-      }).where(eq(accounts.id, input.id));
+      }).where(and(
+        eq(accounts.organizationId, ctx.organizationId),
+        eq(accounts.id, input.id),
+      ));
       return { success: true };
     }),
 
   // ─── Bulk Import Accounts ─────────────────────────────────────────────────
-  bulkImportAccounts: protectedProcedure
+  bulkImportAccounts: orgProcedure
     .input(z.object({
       accounts: z.array(z.object({
         number: z.string().min(1).max(10),
@@ -724,7 +846,7 @@ export const settingsRouter = router({
       })),
       mode: z.enum(["merge", "replace"]).default("merge"),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
@@ -733,14 +855,17 @@ export const settingsRouter = router({
       let skipped = 0;
 
       if (input.mode === "replace") {
-        // Check which accounts have journal lines
+        // Check which accounts have journal lines (within this org)
         const usedAccounts = await db.select({ accountId: journalLines.accountId })
           .from(journalLines)
+          .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+          .where(eq(journalEntries.organizationId, ctx.organizationId))
           .groupBy(journalLines.accountId);
         const usedIds = new Set(usedAccounts.map(u => u.accountId));
 
-        // Delete unused accounts
-        const allAccs = await db.select().from(accounts);
+        // Delete unused accounts (within this org)
+        const allAccs = await db.select().from(accounts)
+          .where(eq(accounts.organizationId, ctx.organizationId));
         for (const acc of allAccs) {
           if (!usedIds.has(acc.id)) {
             await db.delete(accounts).where(eq(accounts.id, acc.id));
@@ -750,7 +875,12 @@ export const settingsRouter = router({
 
       for (const acc of input.accounts) {
         const normalBalance = (acc.accountType === "liability" || acc.accountType === "revenue" || acc.accountType === "equity") ? "credit" : "debit";
-        const existing = await db.select().from(accounts).where(eq(accounts.number, acc.number)).limit(1);
+        const existing = await db.select().from(accounts)
+          .where(and(
+            eq(accounts.organizationId, ctx.organizationId),
+            eq(accounts.number, acc.number),
+          ))
+          .limit(1);
 
         if (existing.length > 0) {
           if (input.mode === "merge") {
@@ -766,6 +896,7 @@ export const settingsRouter = router({
           }
         } else {
           await db.insert(accounts).values({
+            organizationId: ctx.organizationId,
             number: acc.number,
             name: acc.name,
             accountType: acc.accountType,
@@ -783,7 +914,7 @@ export const settingsRouter = router({
     }),
 
   // ─── KMU-Kontenplan Template ──────────────────────────────────────────────
-  getKmuTemplate: protectedProcedure.query(async () => {
+  getKmuTemplate: orgProcedure.query(async () => {
     // Standard Swiss KMU chart of accounts based on Käfer-Kontenrahmen
     return {
       name: "Schweizer KMU-Kontenrahmen (Käfer)",
@@ -870,13 +1001,13 @@ export const settingsRouter = router({
 
   // ── Company Logo Upload ──────────────────────────────────────────────────────
 
-  uploadCompanyLogo: protectedProcedure
+  uploadCompanyLogo: orgProcedure
     .input(z.object({
       base64: z.string(),
       filename: z.string(),
       mimeType: z.string(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { storagePut } = await import('./storage');
       const db = await getDb();
       if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
@@ -889,32 +1020,43 @@ export const settingsRouter = router({
       const key = `company-logo/logo-${Date.now()}.${ext}`;
       const { url } = await storagePut(key, buffer, input.mimeType);
 
-      // Update company settings with logo URL
-      const existing = await db.select({ id: companySettings.id }).from(companySettings).limit(1);
+      // Update company settings with logo URL (scoped to this organization)
+      const existing = await db.select({ id: companySettings.id }).from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
       if (existing.length === 0) {
         await db.insert(companySettings).values({
-          companyName: 'WM Weibel Mueller AG',
+          organizationId: ctx.organizationId,
+          companyName: 'Meine Firma',
           logoUrl: url,
         });
       } else {
         await db.update(companySettings)
           .set({ logoUrl: url })
-          .where(eq(companySettings.id, existing[0].id));
+          .where(and(
+            eq(companySettings.organizationId, ctx.organizationId),
+            eq(companySettings.id, existing[0].id),
+          ));
       }
 
       return { url };
     }),
 
-  deleteCompanyLogo: protectedProcedure
-    .mutation(async () => {
+  deleteCompanyLogo: orgProcedure
+    .mutation(async ({ ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
 
-      const existing = await db.select({ id: companySettings.id }).from(companySettings).limit(1);
+      const existing = await db.select({ id: companySettings.id }).from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
       if (existing.length > 0) {
         await db.update(companySettings)
           .set({ logoUrl: null })
-          .where(eq(companySettings.id, existing[0].id));
+          .where(and(
+            eq(companySettings.organizationId, ctx.organizationId),
+            eq(companySettings.id, existing[0].id),
+          ));
       }
 
       return { success: true };
@@ -922,13 +1064,15 @@ export const settingsRouter = router({
 
   // ─── Templates ───────────────────────────────────────────────────────────────
 
-  listTemplates: protectedProcedure.query(async () => {
+  listTemplates: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error('Database not available');
-    return db.select().from(templates).orderBy(asc(templates.templateType), asc(templates.name));
+    return db.select().from(templates)
+      .where(eq(templates.organizationId, ctx.organizationId))
+      .orderBy(asc(templates.templateType), asc(templates.name));
   }),
 
-  uploadTemplate: protectedProcedure
+  uploadTemplate: orgProcedure
     .input(z.object({
       name: z.string().min(1),
       templateType: z.enum(["invoice", "letter", "contract", "other"]),
@@ -938,13 +1082,14 @@ export const settingsRouter = router({
       mimeType: z.string(),
       fileSize: z.number(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const buffer = Buffer.from(input.fileData, "base64");
-      const key = `templates/${Date.now()}-${input.fileName}`;
+      const key = `templates/${ctx.organizationId}/${Date.now()}-${input.fileName}`;
       const { url } = await storagePut(key, buffer, input.mimeType);
       const [result] = await db.insert(templates).values({
+        organizationId: ctx.organizationId,
         name: input.name,
         templateType: input.templateType,
         description: input.description || null,
@@ -956,24 +1101,36 @@ export const settingsRouter = router({
       return { id: result.insertId, url };
     }),
 
-  deleteTemplate: protectedProcedure
+  deleteTemplate: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      await db.delete(templates).where(eq(templates.id, input.id));
+      await db.delete(templates)
+        .where(and(
+          eq(templates.organizationId, ctx.organizationId),
+          eq(templates.id, input.id),
+        ));
       return { success: true };
     }),
 
-  setDefaultTemplate: protectedProcedure
+  setDefaultTemplate: orgProcedure
     .input(z.object({ id: z.number(), templateType: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      // Unset all defaults for this type
-      await db.update(templates).set({ isDefault: false }).where(eq(templates.templateType, input.templateType as any));
+      // Unset all defaults for this type (within this org)
+      await db.update(templates).set({ isDefault: false })
+        .where(and(
+          eq(templates.organizationId, ctx.organizationId),
+          eq(templates.templateType, input.templateType as any),
+        ));
       // Set this one as default
-      await db.update(templates).set({ isDefault: true }).where(eq(templates.id, input.id));
+      await db.update(templates).set({ isDefault: true })
+        .where(and(
+          eq(templates.organizationId, ctx.organizationId),
+          eq(templates.id, input.id),
+        ));
       return { success: true };
     }),
 });

@@ -336,7 +336,7 @@ function VatDetailInline({ detail, isLoading, vatMethod, saldoRate, period }: {
     const rightM = pageW - 14;
 
     // Header
-    const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+    const companyName = company?.companyName ?? 'Meine Firma';
     const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     const vatNr = company?.vatNumber ? `MWST-Nr.: ${company.vatNumber}` : '';
 
@@ -507,7 +507,7 @@ function VatDetailInline({ detail, isLoading, vatMethod, saldoRate, period }: {
         .section-title { background: #f5f5f5; padding: 6px 8px; font-weight: 600; margin: 8px 0 4px; }
         @media print { body { margin: 10mm; } }
       </style></head><body>
-      <h3>${company?.companyName ?? 'WM Weibel Mueller AG'}</h3>
+      <h3>${company?.companyName ?? 'Meine Firma'}</h3>
       <p style="color:#888;font-size:9px;">${company?.vatNumber ? 'MWST-Nr.: ' + company.vatNumber : ''}</p>
       <h3>MWST-Abrechnung ${period.period} ${period.year}</h3>
       <p style="color:#666;font-size:10px;">Periode: ${formatDate(period.startDate)} – ${formatDate(period.endDate)}${vatMethod === "saldo" ? ` | Saldosteuersatz ${saldoRate}%` : ''}</p>
@@ -696,7 +696,7 @@ function VatDetailDialog({ period, vatMethod, saldoRate, onClose }: {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
     let y = 20;
-    const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+    const companyName = company?.companyName ?? 'Meine Firma';
     const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     const vatNr = company?.vatNumber ? `MWST-Nr.: ${company.vatNumber}` : '';
     doc.setFontSize(14); doc.setFont('helvetica', 'bold');

@@ -13,7 +13,7 @@ function exportToPdf(title: string, year: number, rows: Array<{label: string; am
   let y = 20;
   
   // Header
-  const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+  const companyName = company?.companyName ?? 'Meine Firma';
   const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const companyUid = company?.uid ? `UID: ${company.uid}` : '';
   const companyVat = company?.vatNumber ? `MWST-Nr.: ${company.vatNumber}` : '';

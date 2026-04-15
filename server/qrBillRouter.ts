@@ -6,7 +6,7 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, router } from "./_core/trpc";
+import { orgProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions } from "../drizzle/schema";
 import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
@@ -55,34 +55,45 @@ function formatQRRef(ref: string): string {
 export const qrBillRouter = router({
 
   // ─── QR Settings CRUD ───────────────────────────────────────────────────────
-  getQrSettings: protectedProcedure.query(async () => {
+  getQrSettings: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-    const rows = await db.select().from(qrSettings).limit(1);
+    const rows = await db.select().from(qrSettings)
+      .where(eq(qrSettings.organizationId, ctx.organizationId))
+      .limit(1);
     return rows[0] ?? null;
   }),
 
-  saveQrSettings: protectedProcedure
+  saveQrSettings: orgProcedure
     .input(z.object({
       iban: z.string().min(15).max(34),
       referenceType: z.enum(["QRR", "SCOR", "NON"]),
       currency: z.enum(["CHF", "EUR"]),
       additionalInfo: z.string().max(140).optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const existing = await db.select().from(qrSettings).limit(1);
+      const existing = await db.select().from(qrSettings)
+        .where(eq(qrSettings.organizationId, ctx.organizationId))
+        .limit(1);
       if (existing.length > 0) {
-        await db.update(qrSettings).set(input).where(eq(qrSettings.id, existing[0].id));
+        await db.update(qrSettings).set(input)
+          .where(and(
+            eq(qrSettings.organizationId, ctx.organizationId),
+            eq(qrSettings.id, existing[0].id),
+          ));
       } else {
-        await db.insert(qrSettings).values(input);
+        await db.insert(qrSettings).values({
+          organizationId: ctx.organizationId,
+          ...input,
+        });
       }
       return { success: true };
     }),
 
   // ─── Generate QR-Rechnung PDF ───────────────────────────────────────────────
-  generateQrBill: protectedProcedure
+  generateQrBill: orgProcedure
     .input(z.object({
       // Debtor info
       debtorName: z.string().min(1),
@@ -100,12 +111,12 @@ export const qrBillRouter = router({
       // Optional: link to journal entry
       journalEntryId: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Load QR settings
-      const qrRows = await db.select().from(qrSettings).limit(1);
+      const qrRows = await db.select().from(qrSettings).where(eq(qrSettings.organizationId, ctx.organizationId)).limit(1);
       if (!qrRows.length) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -115,7 +126,7 @@ export const qrBillRouter = router({
       const qr = qrRows[0];
 
       // Load company settings
-      const compRows = await db.select().from(companySettings).limit(1);
+      const compRows = await db.select().from(companySettings).where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
       const comp = compRows[0];
       if (!comp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
@@ -237,7 +248,7 @@ export const qrBillRouter = router({
     }),
 
   // ─── ISO 20022 pain.001 Export ──────────────────────────────────────────────
-  generatePain001: protectedProcedure
+  generatePain001: orgProcedure
     .input(z.object({
       // Type of payment file
       paymentType: z.enum(["salary", "creditor"]),
@@ -263,12 +274,12 @@ export const qrBillRouter = router({
       // Document IDs of invoices included in this payment (for marking as paid)
       documentIds: z.array(z.number()).optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Load company settings
-      const compRows = await db.select().from(companySettings).limit(1);
+      const compRows = await db.select().from(companySettings).where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
       const comp = compRows[0];
       if (!comp) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
 
@@ -454,23 +465,26 @@ export const qrBillRouter = router({
         },
       };
     }),  // ─── List unpaid invoices from Documents for ISO 20022 export ─────────────
-  listUnpaidInvoices: protectedProcedure
+  listUnpaidInvoices: orgProcedure
     .input(z.object({
       fiscalYear: z.number().optional(),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Get all incoming invoices (Eingangsrechnungen)
-      const conditions: any[] = [eq(documents.documentType, "invoice_in")];
+      // Get all incoming invoices (Eingangsrechnungen) scoped to this org
+      const conditions: any[] = [
+        eq(documents.organizationId, ctx.organizationId),
+        eq(documents.documentType, "invoice_in"),
+      ];
       if (input.fiscalYear) conditions.push(eq(documents.fiscalYear, input.fiscalYear));
 
       const invoices = await db.select().from(documents)
         .where(and(...conditions))
         .orderBy(documents.createdAt);
 
-      // Get all bank transactions to check which invoices are already paid
+      // Get all bank transactions (scoped to this org) to check paid status
       const allTxs = await db.select({
         id: bankTransactions.id,
         matchedDocumentId: bankTransactions.matchedDocumentId,
@@ -478,7 +492,8 @@ export const qrBillRouter = router({
         amount: bankTransactions.amount,
         status: bankTransactions.status,
         journalEntryId: bankTransactions.journalEntryId,
-      }).from(bankTransactions);
+      }).from(bankTransactions)
+        .where(eq(bankTransactions.organizationId, ctx.organizationId));
 
       // Build a set of document IDs that are matched to bank transactions
       // A document is considered "paid" if it has a matched bank transaction
@@ -550,25 +565,28 @@ export const qrBillRouter = router({
     }),
 
   // ─── Mark invoice as manually paid ──────────────────────────────────────────
-  markInvoicePaid: protectedProcedure
+  markInvoicePaid: orgProcedure
     .input(z.object({
       documentId: z.number(),
       isPaid: z.boolean(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Update match status: "manual" means manually marked as paid, "unmatched" means not paid
       await db.update(documents).set({
         matchStatus: input.isPaid ? "manual" : "unmatched",
-      }).where(eq(documents.id, input.documentId));
+      }).where(and(
+        eq(documents.organizationId, ctx.organizationId),
+        eq(documents.id, input.documentId),
+      ));
 
       return { success: true };
     }),
 
   // ─── Professional Invoice with QR Payment Slip ─────────────────────────────
-  generateInvoiceWithQr: protectedProcedure
+  generateInvoiceWithQr: orgProcedure
     .input(z.object({
       recipientTitle: z.string().optional(),
       recipientName: z.string().min(1),
@@ -592,12 +610,12 @@ export const qrBillRouter = router({
       signerTitle: z.string().optional(),
       paymentDays: z.number().int().default(30),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Load QR settings
-      const qrRows = await db.select().from(qrSettings).limit(1);
+      const qrRows = await db.select().from(qrSettings).where(eq(qrSettings.organizationId, ctx.organizationId)).limit(1);
       if (!qrRows.length) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -607,7 +625,7 @@ export const qrBillRouter = router({
       const qr = qrRows[0];
 
       // Load company settings
-      const compRows = await db.select().from(companySettings).limit(1);
+      const compRows = await db.select().from(companySettings).where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
       const comp = compRows[0];
       if (!comp) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
@@ -824,7 +842,7 @@ export const qrBillRouter = router({
 
   // ─── AcroForms-based Professional Invoice (like Lohnausweis) ─────────────────
   // Layout matches WMRechnungBeratung2025_Vorlagemw.pdf exactly
-  generateInvoiceAcroform: protectedProcedure
+  generateInvoiceAcroform: orgProcedure
     .input(z.object({
       recipientTitle: z.string().optional(),
       recipientName: z.string().min(1),
@@ -848,21 +866,21 @@ export const qrBillRouter = router({
       signerTitle: z.string().optional(),
       paymentDays: z.number().int().default(30),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { PDFDocument: PDFLib, rgb, StandardFonts } = await import('pdf-lib');
       const fontkit = await import('@pdf-lib/fontkit');
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Load QR settings
-      const qrRows = await db.select().from(qrSettings).limit(1);
+      const qrRows = await db.select().from(qrSettings).where(eq(qrSettings.organizationId, ctx.organizationId)).limit(1);
       if (!qrRows.length) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "QR-Rechnungs-Einstellungen fehlen." });
       }
       const qr = qrRows[0];
 
       // Load company settings
-      const compRows = await db.select().from(companySettings).limit(1);
+      const compRows = await db.select().from(companySettings).where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
       const comp = compRows[0];
       if (!comp) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
 
@@ -1190,12 +1208,12 @@ export const qrBillRouter = router({
 
   // ─── CAMT.054 Import & Reconciliation ────────────────────────────────────
 
-  importCamt054: protectedProcedure
+  importCamt054: orgProcedure
     .input(z.object({
       xmlContent: z.string(),
       filename: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { parseCAMT054, isCAMT054 } = await import("../shared/camt054Parser");
       
       if (!isCAMT054(input.xmlContent)) {
@@ -1294,7 +1312,7 @@ export const qrBillRouter = router({
       };
     }),
 
-  getReconciliationStatus: protectedProcedure
+  getReconciliationStatus: orgProcedure
     .input(z.object({
       fiscalYear: z.number().optional(),
     }))

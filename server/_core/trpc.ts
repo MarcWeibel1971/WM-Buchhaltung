@@ -27,6 +27,39 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
+/**
+ * orgProcedure erzwingt, dass der aufrufende User eine aktive Organisation
+ * hat. `ctx.organizationId` ist nach dieser Middleware garantiert eine
+ * Zahl – alle tRPC-Prozeduren, die auf organizations-bezogene Daten
+ * zugreifen, MÜSSEN diese Middleware verwenden und `ctx.organizationId`
+ * in jedem WHERE-Filter einsetzen (Phase 1 Multi-Tenancy).
+ */
+const requireOrganization = t.middleware(async opts => {
+  const { ctx, next } = opts;
+
+  if (!ctx.user) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+  }
+
+  if (ctx.organizationId == null) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message:
+        "Keine aktive Organisation. Bitte zuerst eine Organisation einrichten oder auswählen.",
+    });
+  }
+
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+      organizationId: ctx.organizationId,
+    },
+  });
+});
+
+export const orgProcedure = t.procedure.use(requireOrganization);
+
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;

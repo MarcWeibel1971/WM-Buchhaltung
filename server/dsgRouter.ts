@@ -6,7 +6,7 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, router } from "./_core/trpc";
+import { orgProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import { auditLog, employees, payrollEntries, users } from "../drizzle/schema";
 import { eq, desc, and, gte, lte, like, sql } from "drizzle-orm";
@@ -14,6 +14,7 @@ import { eq, desc, and, gte, lte, like, sql } from "drizzle-orm";
 // ─── Audit Log Helper ─────────────────────────────────────────────────────────
 
 export async function logAudit(params: {
+  organizationId?: number | null;
   userId: string;
   userName?: string;
   action: "create" | "read" | "update" | "delete" | "export" | "login" | "logout";
@@ -26,6 +27,7 @@ export async function logAudit(params: {
     const db = await getDb();
     if (!db) return;
     await db.insert(auditLog).values({
+      organizationId: params.organizationId ?? null,
       userId: params.userId,
       userName: params.userName,
       action: params.action,
@@ -45,7 +47,7 @@ export async function logAudit(params: {
 export const dsgRouter = router({
 
   // ─── Audit Log: List entries ────────────────────────────────────────────────
-  auditLog: protectedProcedure
+  auditLog: orgProcedure
     .input(z.object({
       page: z.number().int().min(1).default(1),
       pageSize: z.number().int().min(10).max(100).default(50),
@@ -60,7 +62,7 @@ export const dsgRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       const params = input ?? { page: 1, pageSize: 50 };
-      const conditions: any[] = [];
+      const conditions: any[] = [eq(auditLog.organizationId, ctx.organizationId)];
 
       if (params.action) conditions.push(eq(auditLog.action, params.action));
       if (params.entityType) conditions.push(like(auditLog.entityType, `%${params.entityType}%`));
@@ -68,7 +70,7 @@ export const dsgRouter = router({
       if (params.dateFrom) conditions.push(gte(auditLog.createdAt, new Date(params.dateFrom)));
       if (params.dateTo) conditions.push(lte(auditLog.createdAt, new Date(params.dateTo + "T23:59:59")));
 
-      const where = conditions.length > 0 ? and(...conditions) : undefined;
+      const where = and(...conditions);
 
       const [rows, countResult] = await Promise.all([
         db.select().from(auditLog)
@@ -81,8 +83,9 @@ export const dsgRouter = router({
 
       // Log this read action
       await logAudit({
-        userId: String(ctx.user?.id ?? "unknown"),
-        userName: ctx.user?.name ?? undefined,
+        organizationId: ctx.organizationId,
+        userId: String(ctx.user.id ?? "unknown"),
+        userName: ctx.user.name ?? undefined,
         action: "read",
         entityType: "audit_log",
         details: JSON.stringify({ filters: params }),
@@ -97,7 +100,7 @@ export const dsgRouter = router({
     }),
 
   // ─── Data Export (Auskunftsrecht Art. 25 DSG) ──────────────────────────────
-  exportPersonalData: protectedProcedure
+  exportPersonalData: orgProcedure
     .input(z.object({
       employeeId: z.number().int(),
       format: z.enum(["json", "csv"]).default("json"),
@@ -106,18 +109,26 @@ export const dsgRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Get employee data
-      const emp = await db.select().from(employees).where(eq(employees.id, input.employeeId));
+      // Get employee data (scoped to org)
+      const emp = await db.select().from(employees)
+        .where(and(
+          eq(employees.organizationId, ctx.organizationId),
+          eq(employees.id, input.employeeId),
+        ));
       if (!emp.length) throw new TRPCError({ code: "NOT_FOUND", message: "Mitarbeiter nicht gefunden." });
 
-      // Get payroll data
+      // Get payroll data (scoped to org)
       const payrolls = await db.select().from(payrollEntries)
-        .where(eq(payrollEntries.employeeId, input.employeeId))
+        .where(and(
+          eq(payrollEntries.organizationId, ctx.organizationId),
+          eq(payrollEntries.employeeId, input.employeeId),
+        ))
         .orderBy(desc(payrollEntries.year), desc(payrollEntries.month));
 
-      // Get audit log entries for this employee
+      // Get audit log entries for this employee (scoped to org)
       const auditEntries = await db.select().from(auditLog)
         .where(and(
+          eq(auditLog.organizationId, ctx.organizationId),
           eq(auditLog.entityType, "employee"),
           eq(auditLog.entityId, String(input.employeeId)),
         ))
@@ -126,8 +137,9 @@ export const dsgRouter = router({
 
       // Log this export
       await logAudit({
-        userId: String(ctx.user?.id ?? "unknown"),
-        userName: ctx.user?.name ?? undefined,
+        organizationId: ctx.organizationId,
+        userId: String(ctx.user.id ?? "unknown"),
+        userName: ctx.user.name ?? undefined,
         action: "export",
         entityType: "employee",
         entityId: String(input.employeeId),
@@ -201,7 +213,7 @@ export const dsgRouter = router({
     }),
 
   // ─── Data Anonymization (Löschungsrecht) ───────────────────────────────────
-  anonymizeEmployee: protectedProcedure
+  anonymizeEmployee: orgProcedure
     .input(z.object({
       employeeId: z.number().int(),
       confirmName: z.string(), // Must match employee name for safety
@@ -210,7 +222,11 @@ export const dsgRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const emp = await db.select().from(employees).where(eq(employees.id, input.employeeId));
+      const emp = await db.select().from(employees)
+        .where(and(
+          eq(employees.organizationId, ctx.organizationId),
+          eq(employees.id, input.employeeId),
+        ));
       if (!emp.length) throw new TRPCError({ code: "NOT_FOUND", message: "Mitarbeiter nicht gefunden." });
 
       const fullName = `${emp[0].firstName} ${emp[0].lastName}`;
@@ -221,10 +237,11 @@ export const dsgRouter = router({
         });
       }
 
-      // Check if employee has active payroll entries in current year
+      // Check if employee has active payroll entries in current year (scoped to org)
       const currentYear = new Date().getFullYear();
       const activePayroll = await db.select().from(payrollEntries)
         .where(and(
+          eq(payrollEntries.organizationId, ctx.organizationId),
           eq(payrollEntries.employeeId, input.employeeId),
           eq(payrollEntries.year, currentYear),
         ));
@@ -237,8 +254,9 @@ export const dsgRouter = router({
 
       // Log before anonymization
       await logAudit({
-        userId: String(ctx.user?.id ?? "unknown"),
-        userName: ctx.user?.name ?? undefined,
+        organizationId: ctx.organizationId,
+        userId: String(ctx.user.id ?? "unknown"),
+        userName: ctx.user.name ?? undefined,
         action: "delete",
         entityType: "employee",
         entityId: String(input.employeeId),
@@ -259,7 +277,10 @@ export const dsgRouter = router({
         dateOfBirth: null,
         lohnausweisRemarks: null,
         isActive: false,
-      }).where(eq(employees.id, input.employeeId));
+      }).where(and(
+        eq(employees.organizationId, ctx.organizationId),
+        eq(employees.id, input.employeeId),
+      ));
 
       return {
         success: true,

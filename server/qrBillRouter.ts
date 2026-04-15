@@ -450,7 +450,10 @@ export const qrBillRouter = router({
         for (const docId of input.documentIds) {
           await db.update(documents).set({
             matchStatus: "pain001",
-          }).where(eq(documents.id, docId));
+          }).where(and(
+            eq(documents.organizationId, ctx.organizationId),
+            eq(documents.id, docId),
+          ));
         }
       }
 
@@ -1245,9 +1248,10 @@ export const qrBillRouter = router({
         
         let wasMatched = false;
         
-        // Get all pending pain.001 documents
+        // Get all pending pain.001 documents (scoped to this org)
         const pendingDocs = await db.select().from(documents)
           .where(and(
+            eq(documents.organizationId, ctx.organizationId),
             eq(documents.matchStatus, "pain001"),
             eq(documents.documentType, "invoice_in")
           ));
@@ -1274,7 +1278,10 @@ export const qrBillRouter = router({
           if (amountMatches && nameMatches) {
             await db.update(documents).set({
               matchStatus: "matched",
-            }).where(eq(documents.id, doc.id));
+            }).where(and(
+              eq(documents.organizationId, ctx.organizationId),
+              eq(documents.id, doc.id),
+            ));
             
             matched++;
             wasMatched = true;
@@ -1316,11 +1323,14 @@ export const qrBillRouter = router({
     .input(z.object({
       fiscalYear: z.number().optional(),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      
-      const conditions: any[] = [eq(documents.documentType, "invoice_in")];
+
+      const conditions: any[] = [
+        eq(documents.organizationId, ctx.organizationId),
+        eq(documents.documentType, "invoice_in"),
+      ];
       if (input.fiscalYear) conditions.push(eq(documents.fiscalYear, input.fiscalYear));
       
       const docs = await db.select({

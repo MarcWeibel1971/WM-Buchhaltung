@@ -709,3 +709,13 @@
 - [x] MWST-Abrechnung: Export/Druckfunktion für detaillierte MWST-Abrechnung mit Transaktionen
 - [x] Fix: Stadt "Lucerne" → "Luzern" in Datenbank korrigiert
 - [x] Fix: Rechnungs-PDF mit pdf-lib komplett neu geschrieben (WM Logo, ZwoOT Fonts, exaktes Layout)
+
+## Journal Export-Funktion
+- [x] Backend: Export-Endpoint für Journal-Buchungen im Infoniqa CSV-Format
+- [x] Backend: Mapping von Journal-Daten auf Infoniqa-Felder (BlgNr, Date DD.MM.YY, AccId, MType, Type, CAcc, TaxId, ValNt, Text)
+- [x] Backend: Korrekte Behandlung von Einzel- vs. Sammelbuchungen (MType 1 vs 2)
+- [x] Backend: MWST-Steuercode-Mapping (USt81 für 8.1%)
+- [x] Backend: Latin-1 Encoding für CSV-Ausgabe
+- [x] Frontend: Export-Dialog mit Auswahl-Möglichkeiten (Infoniqa als erste Option)
+- [x] Frontend: Datumsbereich-Filter für Export
+- [x] Frontend: Export-Button im Journal-Header

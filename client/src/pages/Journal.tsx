@@ -2,7 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useRef } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -46,6 +46,7 @@ export default function Journal() {
   const [showCreateDialog, setShowCreateDialog] = useState<false | "single" | "collective">(false);
   const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
+  const [showExportDialog, setShowExportDialog] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [crossPageAll, setCrossPageAll] = useState(false); // true = alle Seiten selektiert
   const lastClickedIndexRef = useRef<number | null>(null);
@@ -235,21 +236,26 @@ export default function Journal() {
           <h2 className="text-xl font-bold">Journal</h2>
           <p className="text-sm text-muted-foreground">{total} Buchungen</p>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" className="gap-2">
-              <Plus className="h-4 w-4" /> Neue Buchung <ChevronDown className="h-3 w-3 ml-1" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setShowCreateDialog("single")}>
-              <Edit2 className="h-4 w-4 mr-2" /> Einzelbuchung
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowCreateDialog("collective")}>
-              <Layers className="h-4 w-4 mr-2" /> Sammelbuchung
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="gap-2" onClick={() => setShowExportDialog(true)}>
+            <Download className="h-4 w-4" /> Export
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" className="gap-2">
+                <Plus className="h-4 w-4" /> Neue Buchung <ChevronDown className="h-3 w-3 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setShowCreateDialog("single")}>
+                <Edit2 className="h-4 w-4 mr-2" /> Einzelbuchung
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowCreateDialog("collective")}>
+                <Layers className="h-4 w-4 mr-2" /> Sammelbuchung
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Filters */}
@@ -556,6 +562,14 @@ export default function Journal() {
         open={detailEntryId !== null}
         onOpenChange={(open) => { if (!open) setDetailEntryId(null); }}
       />
+
+      {/* Export Dialog */}
+      {showExportDialog && (
+        <ExportDialog
+          fiscalYear={fiscalYear}
+          onClose={() => setShowExportDialog(false)}
+        />
+      )}
 
       {/* Bestätigungs-Dialog */}
       {confirmDialog && (
@@ -1123,6 +1137,192 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
                 ? "Einzelbuchung erstellen"
                 : `Sammelbuchung erstellen${validSollLines.length > 0 ? ` (${validSollLines.length} Pos.)` : ""}`
             }
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Export Dialog ──────────────────────────────────────────────────────────
+function ExportDialog({ fiscalYear, onClose }: { fiscalYear: number; onClose: () => void }) {
+  const [format, setFormat] = useState("infoniqa");
+  const [statusFilter, setStatusFilter] = useState<"approved" | "all">("approved");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+
+  const exportInfoniqaMut = trpc.journal.exportInfoniqa.useMutation({
+    onSuccess: (data) => {
+      // Infoniqa uses Latin-1 encoding
+      const encoder = new TextEncoder();
+      const utf8Bytes = encoder.encode(data.csv);
+      // Convert to Latin-1 manually for Infoniqa compatibility
+      const latin1Bytes = new Uint8Array(data.csv.length);
+      for (let i = 0; i < data.csv.length; i++) {
+        latin1Bytes[i] = data.csv.charCodeAt(i) & 0xFF;
+      }
+      const blob = new Blob([latin1Bytes], { type: "text/csv;charset=iso-8859-1" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${data.entryCount} Buchungen exportiert (Infoniqa-Format)`);
+      onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const exportCsvMut = trpc.journal.exportCsv.useMutation({
+    onSuccess: (data) => {
+      const BOM = "\uFEFF";
+      const blob = new Blob([BOM + data.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${data.entryCount} Buchungen exportiert (CSV)`);
+      onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleExport = () => {
+    const params = {
+      fiscalYear,
+      statusFilter,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+    };
+    if (format === "infoniqa") {
+      exportInfoniqaMut.mutate(params);
+    } else {
+      exportCsvMut.mutate(params);
+    }
+  };
+
+  const isExporting = exportInfoniqaMut.isPending || exportCsvMut.isPending;
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="w-[min(95vw,32rem)] max-w-none">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileSpreadsheet className="h-5 w-5" />
+            Journal exportieren
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {/* Format Selection */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Export-Format</label>
+            <div className="space-y-2">
+              <label
+                className={cn(
+                  "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
+                  format === "infoniqa" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                )}
+                onClick={() => setFormat("infoniqa")}
+              >
+                <input
+                  type="radio"
+                  name="exportFormat"
+                  value="infoniqa"
+                  checked={format === "infoniqa"}
+                  onChange={() => setFormat("infoniqa")}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium text-sm">Infoniqa (sfbbuch.csv)</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Kompatibel mit Infoniqa ONE / Sage / Topal. Felder: BlgNr, Date, AccId, MType, Type, CAcc, TaxId, ValNt etc. Latin-1 Encoding.
+                  </div>
+                </div>
+              </label>
+              <label
+                className={cn(
+                  "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
+                  format === "csv" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                )}
+                onClick={() => setFormat("csv")}
+              >
+                <input
+                  type="radio"
+                  name="exportFormat"
+                  value="csv"
+                  checked={format === "csv"}
+                  onChange={() => setFormat("csv")}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium text-sm">Standard CSV</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Allgemeines CSV-Format mit Semikolon-Trennung. Felder: Belegnummer, Datum, Konto, Soll, Haben, Beschreibung, MWST. UTF-8 mit BOM.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Status Filter */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Status</label>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "approved" | "all")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="approved">Nur genehmigte Buchungen</SelectItem>
+                <SelectItem value="all">Alle Buchungen</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Date Range */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Von (optional)</label>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                placeholder="Startdatum"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Bis (optional)</label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                placeholder="Enddatum"
+              />
+            </div>
+          </div>
+
+          {/* Info */}
+          <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground">
+            <p>Geschäftsjahr: <strong>{fiscalYear}</strong></p>
+            <p className="mt-1">
+              {format === "infoniqa"
+                ? "Die Buchungen werden im Infoniqa-kompatiblen Format (sfbbuch.csv) exportiert. Einzelbuchungen als MType=1, Sammelbuchungen als MType=2. MWST-Codes werden automatisch gemappt (z.B. USt81 für 8.1%)."
+                : "Die Buchungen werden als Standard-CSV mit Semikolon-Trennung exportiert. UTF-8 mit BOM für Excel-Kompatibilität."
+              }
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose} disabled={isExporting}>
+            Abbrechen
+          </Button>
+          <Button onClick={handleExport} disabled={isExporting} className="gap-2">
+            <Download className="h-4 w-4" />
+            {isExporting ? "Exportiere..." : "Exportieren"}
           </Button>
         </DialogFooter>
       </DialogContent>

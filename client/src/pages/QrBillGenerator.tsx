@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,7 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText } from "lucide-react";
+import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText, Users } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
 
 interface LineItem {
@@ -19,9 +21,30 @@ interface LineItem {
 export default function QrBillGenerator() {
   const { data: qrSettings, isLoading: qrLoading } = trpc.qrBill.getQrSettings.useQuery();
   const { data: companySettings } = trpc.settings.getCompanySettings.useQuery();
+  const { data: customersList } = trpc.customers.list.useQuery();
 
   // Tab state
   const [activeTab, setActiveTab] = useState("invoice");
+  const [customerPopoverOpen, setCustomerPopoverOpen] = useState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+
+  const handleSelectCustomer = useCallback((customerId: number) => {
+    const c = (customersList ?? []).find((x: any) => x.id === customerId);
+    if (!c) return;
+    setSelectedCustomerId(customerId);
+    setCustomerPopoverOpen(false);
+    // Fill recipient fields
+    setRecipientTitle(c.salutation?.split(",")[0] || "");
+    const displayName = c.lastName && c.firstName
+      ? `${c.firstName} ${c.lastName}`
+      : c.company || c.name;
+    setRecipientName(displayName);
+    setRecipientStreet(c.street || "");
+    setRecipientZip(c.zipCode || "");
+    setRecipientCity(c.city || "");
+    // Also set salutation if available
+    if (c.salutation) setSalutation(c.salutation);
+  }, [customersList]);
 
   // ─── Invoice Template Form ─────────────────────────────────────────────────
   const [recipientTitle, setRecipientTitle] = useState("");
@@ -250,8 +273,43 @@ export default function QrBillGenerator() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Recipient */}
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-base">Empfänger</CardTitle>
+                <Popover open={customerPopoverOpen} onOpenChange={setCustomerPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <Users className="h-3.5 w-3.5" />
+                      {selectedCustomerId ? "Kunde ändern" : "Kunde wählen"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[320px] p-0" align="end">
+                    <Command>
+                      <CommandInput placeholder="Kunde suchen..." />
+                      <CommandList>
+                        <CommandEmpty>Kein Kunde gefunden.</CommandEmpty>
+                        <CommandGroup>
+                          {(customersList ?? []).map((c: any) => (
+                            <CommandItem
+                              key={c.id}
+                              value={`${c.customerNumber || ""} ${c.name} ${c.company || ""} ${c.city || ""}`}
+                              onSelect={() => handleSelectCustomer(c.id)}
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">
+                                  {c.customerNumber && <span className="font-mono text-muted-foreground mr-1">{c.customerNumber}</span>}
+                                  {c.lastName && c.firstName ? `${c.lastName} ${c.firstName}` : c.name}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {[c.company, c.city].filter(Boolean).join(" · ")}
+                                </span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>

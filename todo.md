@@ -815,3 +815,14 @@
 - [x] Kundeneinträge in der App erstellt – 157 Kunden importiert
 - [x] customerNumber Feld zum Schema hinzugefügt
 - [x] Kunden-Nr. in UI anzeigen und bearbeitbar machen
+
+## Kunden-Schema erweitern und QR-Rechnung Kundenauswahl
+- [x] Schema: Name aufteilen in firstName (Vorname) und lastName (Nachname)
+- [x] Schema: Feld für Ehepartner (spouseFirstName, spouseLastName)
+- [x] Schema: Feld für Zivilstand (maritalStatus)
+- [x] Schema: Geburtsdatum für Kunde (birthDate) und Ehepartner (spouseBirthDate)
+- [x] Backend: Router-Endpoints für neue Felder anpassen (create, update, importFromList)
+- [x] Frontend: Kundenformular mit neuen Feldern aktualisieren
+- [x] Frontend: Kundenliste-Anzeige mit Vorname/Nachname anpassen
+- [x] Datenmigration: 157 bestehende Namen in firstName/lastName aufgeteilt
+- [x] QR-Rechnung: Kundenauswahl-Dropdown im Rechnungsformular (Empfänger automatisch ausfüllen)

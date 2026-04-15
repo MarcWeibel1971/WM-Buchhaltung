@@ -3466,8 +3466,14 @@ function CustomersTab() {
 
   // Customer form
   const [cCustNr, setCCustNr] = useReactState("");
-  const [cName, setCName] = useReactState("");
+  const [cFirstName, setCFirstName] = useReactState("");
+  const [cLastName, setCLastName] = useReactState("");
   const [cCompany, setCCompany] = useReactState("");
+  const [cSpouseFirstName, setCSpouseFirstName] = useReactState("");
+  const [cSpouseLastName, setCSpouseLastName] = useReactState("");
+  const [cMaritalStatus, setCMaritalStatus] = useReactState("");
+  const [cBirthDate, setCBirthDate] = useReactState("");
+  const [cSpouseBirthDate, setCSpouseBirthDate] = useReactState("");
   const [cStreet, setCStreet] = useReactState("");
   const [cZip, setCZip] = useReactState("");
   const [cCity, setCCity] = useReactState("");
@@ -3527,7 +3533,10 @@ function CustomersTab() {
   });
 
   function resetCustForm() {
-    setCCustNr(""); setCName(""); setCCompany(""); setCStreet(""); setCZip(""); setCCity("");
+    setCCustNr(""); setCFirstName(""); setCLastName(""); setCCompany("");
+    setCSpouseFirstName(""); setCSpouseLastName(""); setCMaritalStatus("");
+    setCBirthDate(""); setCSpouseBirthDate("");
+    setCStreet(""); setCZip(""); setCCity("");
     setCCountry("Schweiz"); setCEmail(""); setCPhone(""); setCSalutation(""); setCNotes("");
     setEditCustomer(null);
   }
@@ -3540,7 +3549,13 @@ function CustomersTab() {
 
   function openEditCust(c: any) {
     setEditCustomer(c);
-    setCCustNr(c.customerNumber || ""); setCName(c.name || ""); setCCompany(c.company || ""); setCStreet(c.street || "");
+    setCCustNr(c.customerNumber || "");
+    setCFirstName(c.firstName || ""); setCLastName(c.lastName || "");
+    setCCompany(c.company || "");
+    setCSpouseFirstName(c.spouseFirstName || ""); setCSpouseLastName(c.spouseLastName || "");
+    setCMaritalStatus(c.maritalStatus || "");
+    setCBirthDate(c.birthDate || ""); setCSpouseBirthDate(c.spouseBirthDate || "");
+    setCStreet(c.street || "");
     setCZip(c.zipCode || ""); setCCity(c.city || ""); setCCountry(c.country || "Schweiz");
     setCEmail(c.email || ""); setCPhone(c.phone || ""); setCSalutation(c.salutation || "");
     setCNotes(c.notes || "");
@@ -3548,9 +3563,20 @@ function CustomersTab() {
   }
 
   function handleSaveCust() {
-    if (!cName.trim()) { toast.error("Name ist erforderlich"); return; }
+    if (!cLastName.trim()) { toast.error("Nachname ist erforderlich"); return; }
+    const displayName = [cLastName.trim(), cFirstName.trim()].filter(Boolean).join(" ");
     const data = {
-      name: cName.trim(), customerNumber: cCustNr || undefined, company: cCompany || undefined, street: cStreet || undefined,
+      name: displayName,
+      customerNumber: cCustNr || undefined,
+      firstName: cFirstName.trim() || undefined,
+      lastName: cLastName.trim() || undefined,
+      company: cCompany || undefined,
+      spouseFirstName: cSpouseFirstName || undefined,
+      spouseLastName: cSpouseLastName || undefined,
+      maritalStatus: cMaritalStatus || undefined,
+      birthDate: cBirthDate || undefined,
+      spouseBirthDate: cSpouseBirthDate || undefined,
+      street: cStreet || undefined,
       zipCode: cZip || undefined, city: cCity || undefined, country: cCountry || undefined,
       email: cEmail || undefined, phone: cPhone || undefined, salutation: cSalutation || undefined,
       notes: cNotes || undefined,
@@ -3666,11 +3692,12 @@ function CustomersTab() {
                   <div>
                     <div className="font-semibold">
                       {c.customerNumber && <span className="font-mono text-muted-foreground mr-2">{c.customerNumber}</span>}
-                      {c.name}
+                      {c.lastName || c.firstName ? [c.lastName, c.firstName].filter(Boolean).join(" ") : c.name}
                     </div>
                     <div className="text-sm text-muted-foreground">
                       {[c.company, [c.zipCode, c.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}
                       {c.email && ` · ${c.email}`}
+                      {c.spouseFirstName && ` · Partner: ${[c.spouseFirstName, c.spouseLastName].filter(Boolean).join(" ")}`}
                     </div>
                   </div>
                 </div>
@@ -3764,24 +3791,69 @@ function CustomersTab() {
             <DialogTitle>{editCustomer ? "Kunde bearbeiten" : "Neuer Kunde"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 gap-4">
-              <div>
+            {/* Row 1: Kunden-Nr, Nachname, Vorname, Firma */}
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-2">
                 <Label>Kunden-Nr.</Label>
                 <Input value={cCustNr} onChange={e => setCCustNr(e.target.value)} placeholder="784" className="font-mono" />
               </div>
-              <div className="col-span-2">
-                <Label>Name *</Label>
-                <Input value={cName} onChange={e => setCName(e.target.value)} placeholder="Peter Meier" />
+              <div className="col-span-3">
+                <Label>Nachname *</Label>
+                <Input value={cLastName} onChange={e => setCLastName(e.target.value)} placeholder="Meier" />
               </div>
-              <div>
+              <div className="col-span-3">
+                <Label>Vorname</Label>
+                <Input value={cFirstName} onChange={e => setCFirstName(e.target.value)} placeholder="Peter" />
+              </div>
+              <div className="col-span-4">
                 <Label>Firma</Label>
                 <Input value={cCompany} onChange={e => setCCompany(e.target.value)} placeholder="Meier AG" />
               </div>
             </div>
-            <div>
-              <Label>Anrede (für Rechnungen)</Label>
-              <Input value={cSalutation} onChange={e => setCSalutation(e.target.value)} placeholder="Sehr geehrter Herr Meier" />
+            {/* Row 2: Zivilstand, Geburtsdatum */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Zivilstand</Label>
+                <Select value={cMaritalStatus} onValueChange={setCMaritalStatus}>
+                  <SelectTrigger><SelectValue placeholder="Bitte wählen" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ledig">Ledig</SelectItem>
+                    <SelectItem value="verheiratet">Verheiratet</SelectItem>
+                    <SelectItem value="geschieden">Geschieden</SelectItem>
+                    <SelectItem value="verwitwet">Verwitwet</SelectItem>
+                    <SelectItem value="eingetragene_partnerschaft">Eingetragene Partnerschaft</SelectItem>
+                    <SelectItem value="getrennt">Getrennt</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Geburtsdatum</Label>
+                <Input type="date" value={cBirthDate} onChange={e => setCBirthDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>Anrede (für Rechnungen)</Label>
+                <Input value={cSalutation} onChange={e => setCSalutation(e.target.value)} placeholder="Sehr geehrter Herr Meier" />
+              </div>
             </div>
+            {/* Row 3: Ehepartner */}
+            <div className="border rounded-md p-3 bg-muted/30">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Ehepartner / Partner</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <Label>Nachname</Label>
+                  <Input value={cSpouseLastName} onChange={e => setCSpouseLastName(e.target.value)} placeholder="Meier" />
+                </div>
+                <div>
+                  <Label>Vorname</Label>
+                  <Input value={cSpouseFirstName} onChange={e => setCSpouseFirstName(e.target.value)} placeholder="Anna" />
+                </div>
+                <div>
+                  <Label>Geburtsdatum</Label>
+                  <Input type="date" value={cSpouseBirthDate} onChange={e => setCSpouseBirthDate(e.target.value)} />
+                </div>
+              </div>
+            </div>
+            {/* Row 4: Adresse */}
             <div>
               <Label>Strasse</Label>
               <Input value={cStreet} onChange={e => setCStreet(e.target.value)} placeholder="Musterstrasse 1" />

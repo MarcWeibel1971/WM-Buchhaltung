@@ -595,9 +595,21 @@ export const customers = mysqlTable("customers", {
   id: int("id").autoincrement().primaryKey(),
   // Customer number from legacy system
   customerNumber: varchar("customerNumber", { length: 20 }),
-  // Name or company name
+  // Name (kept for backward compat / display name / company name)
   name: varchar("name", { length: 200 }).notNull(),
+  // Split name fields
+  firstName: varchar("firstName", { length: 100 }),
+  lastName: varchar("lastName", { length: 100 }),
   company: varchar("company", { length: 200 }),
+  // Spouse / partner
+  spouseFirstName: varchar("spouseFirstName", { length: 100 }),
+  spouseLastName: varchar("spouseLastName", { length: 100 }),
+  // Marital status
+  maritalStatus: varchar("maritalStatus", { length: 30 }),
+  // Birth dates
+  birthDate: varchar("birthDate", { length: 10 }),
+  spouseBirthDate: varchar("spouseBirthDate", { length: 10 }),
+  // Address
   street: varchar("street", { length: 200 }),
   zipCode: varchar("zipCode", { length: 10 }),
   city: varchar("city", { length: 100 }),

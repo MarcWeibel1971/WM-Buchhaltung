@@ -141,6 +141,13 @@
       "when": 1776260427685,
       "tag": "0019_short_korvac",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1776261434403,
+      "tag": "0020_flippant_black_bolt",
+      "breakpoints": true
     }
   ]
 }

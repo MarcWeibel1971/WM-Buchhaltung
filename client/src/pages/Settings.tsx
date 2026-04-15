@@ -2921,6 +2921,8 @@ function SuppliersTab() {
   const [showInactive, setShowInactive] = useReactState(false);
   const [showDialog, setShowDialog] = useReactState(false);
   const [editSupplier, setEditSupplier] = useReactState<any>(null);
+  const [showImportDialog, setShowImportDialog] = useReactState(false);
+  const [importPreview, setImportPreview] = useReactState<Array<{name:string;street?:string;zipCode?:string;city?:string;country?:string;iban?:string;bic?:string;paymentTermDays?:number;contactPerson?:string;email?:string;phone?:string;notes?:string}>>([]);
 
   // Form state
   const [formName, setFormName] = useReactState("");
@@ -2958,6 +2960,22 @@ function SuppliersTab() {
   });
   const deleteMut = trpc.suppliers.delete.useMutation({
     onSuccess: () => { toast.success("Lieferant deaktiviert"); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const importFromDocsMut = trpc.suppliers.importFromDocuments.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import: ${data.created} erstellt, ${data.linked} verknüpft, ${data.skipped} übersprungen`);
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const importFromListMut = trpc.suppliers.importFromList.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import: ${data.created} erstellt, ${data.skipped} übersprungen`);
+      refetch();
+      setShowImportDialog(false);
+      setImportPreview([]);
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -3018,6 +3036,38 @@ function SuppliersTab() {
     }
   }
 
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+      const parsed = rows.map((r: Record<string, any>) => {
+        const name = String(r["Name"] ?? r["Firma"] ?? r["Lieferant"] ?? r["name"] ?? r["company"] ?? "").trim();
+        const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
+        const zipCode = String(r["PLZ"] ?? r["Postleitzahl"] ?? r["zipCode"] ?? r["zip"] ?? "").trim() || undefined;
+        const city = String(r["Ort"] ?? r["Stadt"] ?? r["city"] ?? "").trim() || undefined;
+        const country = String(r["Land"] ?? r["country"] ?? "").trim() || undefined;
+        const iban = String(r["IBAN"] ?? r["iban"] ?? "").trim() || undefined;
+        const bic = String(r["BIC"] ?? r["SWIFT"] ?? r["bic"] ?? "").trim() || undefined;
+        const paymentTermDays = parseInt(String(r["Zahlungsfrist"] ?? r["paymentTermDays"] ?? r["Tage"] ?? "")) || undefined;
+        const contactPerson = String(r["Kontakt"] ?? r["Kontaktperson"] ?? r["contactPerson"] ?? "").trim() || undefined;
+        const email = String(r["E-Mail"] ?? r["Email"] ?? r["email"] ?? "").trim() || undefined;
+        const phone = String(r["Telefon"] ?? r["Tel"] ?? r["phone"] ?? "").trim() || undefined;
+        const notes = String(r["Notizen"] ?? r["Bemerkung"] ?? r["notes"] ?? "").trim() || undefined;
+        return { name, street, zipCode, city, country, iban, bic, paymentTermDays, contactPerson, email, phone, notes };
+      }).filter(s => s.name.length > 0);
+      setImportPreview(parsed);
+      toast.success(`${parsed.length} Lieferanten aus Datei gelesen`);
+    } catch (err) {
+      toast.error("Fehler beim Lesen der Datei");
+    }
+    e.target.value = "";
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -3027,10 +3077,42 @@ function SuppliersTab() {
             Lieferanten mit IBAN, Zahlungsfristen und Kontaktdaten für ISO 20022 Zahlungen
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4 mr-2" /> Neuer Lieferant
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => importFromDocsMut.mutate()} disabled={importFromDocsMut.isPending}>
+            {importFromDocsMut.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+            Aus Rechnungen
+          </Button>
+          <Button variant="outline" onClick={() => { setShowImportDialog(true); setImportPreview([]); }}>
+            <Upload className="h-4 w-4 mr-2" /> CSV/Excel Import
+          </Button>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4 mr-2" /> Neuer Lieferant
+          </Button>
+        </div>
       </div>
+
+      {/* Import from documents result */}
+      {importFromDocsMut.data && (
+        <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2 text-sm">
+              <Check className="h-4 w-4 text-green-600" />
+              <span className="font-medium">Rechnungs-Import abgeschlossen:</span>
+              <span>{importFromDocsMut.data.created} neu erstellt, {importFromDocsMut.data.linked} verknüpft, {importFromDocsMut.data.skipped} übersprungen</span>
+              <span className="text-muted-foreground">({importFromDocsMut.data.total} Rechnungen geprüft)</span>
+            </div>
+            {importFromDocsMut.data.details.length > 0 && (
+              <div className="mt-2 max-h-32 overflow-y-auto">
+                {importFromDocsMut.data.details.map((d, i) => (
+                  <div key={i} className="text-xs text-muted-foreground">
+                    {d.supplierName} – {d.action}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex items-center gap-4">
         <Input
@@ -3071,6 +3153,7 @@ function SuppliersTab() {
                   <TableCell className="font-medium">
                     {s.name}
                     {!s.isActive && <Badge variant="secondary" className="ml-2 text-xs">Inaktiv</Badge>}
+                    {s.notes === "Automatisch aus Rechnung erstellt" && <Badge variant="outline" className="ml-2 text-xs text-blue-600 border-blue-300">Auto</Badge>}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {[s.street, [s.zipCode, s.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
@@ -3203,6 +3286,77 @@ function SuppliersTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* CSV/Excel Import Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Lieferanten importieren (CSV/Excel)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Laden Sie eine Excel- oder CSV-Datei hoch. Unterstützte Spalten:
+              <strong> Name/Firma/Lieferant</strong>, Strasse/Adresse, PLZ, Ort/Stadt, Land, IBAN, BIC/SWIFT, Zahlungsfrist, Kontakt/Kontaktperson, E-Mail/Email, Telefon/Tel, Notizen/Bemerkung.
+              Duplikate (gleicher Name oder IBAN) werden automatisch übersprungen.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                id="supplier-import-file"
+                onChange={handleImportFile}
+              />
+              <Button variant="outline" asChild>
+                <label htmlFor="supplier-import-file" className="cursor-pointer">
+                  <Upload className="h-4 w-4 mr-2" /> Datei wählen
+                </label>
+              </Button>
+            </div>
+            {importPreview.length > 0 && (
+              <div className="border rounded-lg max-h-64 overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Adresse</TableHead>
+                      <TableHead>IBAN</TableHead>
+                      <TableHead>E-Mail</TableHead>
+                      <TableHead>Zahlungsfrist</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview.slice(0, 50).map((s, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium text-sm">{s.name}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {[s.street, [s.zipCode, s.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">{s.iban || "–"}</TableCell>
+                        <TableCell className="text-xs">{s.email || "–"}</TableCell>
+                        <TableCell className="text-xs">{s.paymentTermDays ? `${s.paymentTermDays} Tage` : "–"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {importPreview.length > 50 && (
+                  <p className="text-xs text-muted-foreground p-2 text-center">... und {importPreview.length - 50} weitere</p>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowImportDialog(false); setImportPreview([]); }}>Abbrechen</Button>
+            <Button
+              onClick={() => importFromListMut.mutate({ suppliers: importPreview })}
+              disabled={importPreview.length === 0 || importFromListMut.isPending}
+            >
+              {importFromListMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
+              {importPreview.length} Lieferanten importieren
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -3216,6 +3370,8 @@ function CustomersTab() {
   const [showServiceDialog, setShowServiceDialog] = useReactState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useReactState<number | null>(null);
   const [expandedCustomer, setExpandedCustomer] = useReactState<number | null>(null);
+  const [showImportDialog, setShowImportDialog] = useReactState(false);
+  const [importPreview, setImportPreview] = useReactState<Array<{name:string;company?:string;street?:string;zipCode?:string;city?:string;country?:string;email?:string;phone?:string;salutation?:string;notes?:string}>>([]);
 
   // Customer form
   const [cName, setCName] = useReactState("");
@@ -3268,6 +3424,15 @@ function CustomersTab() {
     onSuccess: () => { toast.success("Dienstleistung entfernt"); refetch(); },
     onError: (e) => toast.error(e.message),
   });
+  const importFromListMut = trpc.customers.importFromList.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import: ${data.created} erstellt, ${data.skipped} übersprungen`);
+      refetch();
+      setShowImportDialog(false);
+      setImportPreview([]);
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   function resetCustForm() {
     setCName(""); setCCompany(""); setCStreet(""); setCZip(""); setCCity("");
@@ -3303,6 +3468,36 @@ function CustomersTab() {
     } else {
       createCust.mutate(data);
     }
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const XLSX = await import("xlsx");
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+      const parsed = rows.map((r: Record<string, any>) => {
+        const name = String(r["Name"] ?? r["Kunde"] ?? r["Kontakt"] ?? r["name"] ?? "").trim();
+        const company = String(r["Firma"] ?? r["Unternehmen"] ?? r["company"] ?? "").trim() || undefined;
+        const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
+        const zipCode = String(r["PLZ"] ?? r["Postleitzahl"] ?? r["zipCode"] ?? r["zip"] ?? "").trim() || undefined;
+        const city = String(r["Ort"] ?? r["Stadt"] ?? r["city"] ?? "").trim() || undefined;
+        const country = String(r["Land"] ?? r["country"] ?? "").trim() || undefined;
+        const email = String(r["E-Mail"] ?? r["Email"] ?? r["email"] ?? "").trim() || undefined;
+        const phone = String(r["Telefon"] ?? r["Tel"] ?? r["phone"] ?? "").trim() || undefined;
+        const salutation = String(r["Anrede"] ?? r["salutation"] ?? "").trim() || undefined;
+        const notes = String(r["Notizen"] ?? r["Bemerkung"] ?? r["notes"] ?? "").trim() || undefined;
+        return { name, company, street, zipCode, city, country, email, phone, salutation, notes };
+      }).filter(c => c.name.length > 0);
+      setImportPreview(parsed);
+      toast.success(`${parsed.length} Kunden aus Datei gelesen`);
+    } catch (err) {
+      toast.error("Fehler beim Lesen der Datei");
+    }
+    e.target.value = "";
   }
 
   function openAddService(custId: number) {
@@ -3346,9 +3541,14 @@ function CustomersTab() {
             Kunden mit Dienstleistungen und Ertragskonten-Zuordnung
           </p>
         </div>
-        <Button onClick={openCreateCust}>
-          <Plus className="h-4 w-4 mr-2" /> Neuer Kunde
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setShowImportDialog(true); setImportPreview([]); }}>
+            <Upload className="h-4 w-4 mr-2" /> CSV/Excel Import
+          </Button>
+          <Button onClick={openCreateCust}>
+            <Plus className="h-4 w-4 mr-2" /> Neuer Kunde
+          </Button>
+        </div>
       </div>
 
       <Input
@@ -3521,6 +3721,77 @@ function CustomersTab() {
             <Button onClick={handleSaveCust} disabled={createCust.isPending || updateCust.isPending}>
               {(createCust.isPending || updateCust.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {editCustomer ? "Speichern" : "Erstellen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CSV/Excel Import Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Kunden importieren (CSV/Excel)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Laden Sie eine Excel- oder CSV-Datei hoch. Unterstützte Spalten:
+              <strong> Name/Kunde/Kontakt</strong>, Firma/Unternehmen, Strasse/Adresse, PLZ, Ort/Stadt, Land, E-Mail/Email, Telefon/Tel, Anrede, Notizen/Bemerkung.
+              Duplikate (gleicher Name oder Firma) werden automatisch übersprungen.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                id="customer-import-file"
+                onChange={handleImportFile}
+              />
+              <Button variant="outline" asChild>
+                <label htmlFor="customer-import-file" className="cursor-pointer">
+                  <Upload className="h-4 w-4 mr-2" /> Datei wählen
+                </label>
+              </Button>
+            </div>
+            {importPreview.length > 0 && (
+              <div className="border rounded-lg max-h-64 overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Firma</TableHead>
+                      <TableHead>Adresse</TableHead>
+                      <TableHead>E-Mail</TableHead>
+                      <TableHead>Telefon</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importPreview.slice(0, 50).map((c, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium text-sm">{c.name}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{c.company || "–"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {[c.street, [c.zipCode, c.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                        </TableCell>
+                        <TableCell className="text-xs">{c.email || "–"}</TableCell>
+                        <TableCell className="text-xs">{c.phone || "–"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {importPreview.length > 50 && (
+                  <p className="text-xs text-muted-foreground p-2 text-center">... und {importPreview.length - 50} weitere</p>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowImportDialog(false); setImportPreview([]); }}>Abbrechen</Button>
+            <Button
+              onClick={() => importFromListMut.mutate({ customers: importPreview })}
+              disabled={importPreview.length === 0 || importFromListMut.isPending}
+            >
+              {importFromListMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
+              {importPreview.length} Kunden importieren
             </Button>
           </DialogFooter>
         </DialogContent>

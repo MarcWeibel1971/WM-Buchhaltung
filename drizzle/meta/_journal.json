@@ -127,6 +127,13 @@
       "when": 1776255256162,
       "tag": "0017_early_pride",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1776258275520,
+      "tag": "0018_blushing_the_enforcers",
+      "breakpoints": true
     }
   ]
 }

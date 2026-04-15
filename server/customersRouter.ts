@@ -216,4 +216,77 @@ export const customersRouter = router({
       await db.delete(customerServices).where(eq(customerServices.id, input.id));
       return { success: true };
     }),
+
+  // ─── Bulk import customers from CSV/Excel data ─────────────────────────────
+  importFromList: protectedProcedure
+    .input(z.object({
+      customers: z.array(z.object({
+        name: z.string().min(1),
+        company: z.string().optional(),
+        street: z.string().optional(),
+        zipCode: z.string().optional(),
+        city: z.string().optional(),
+        country: z.string().optional(),
+        email: z.string().optional(),
+        phone: z.string().optional(),
+        salutation: z.string().optional(),
+        notes: z.string().optional(),
+      })),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      let created = 0;
+      let skipped = 0;
+      const details: Array<{ name: string; action: string }> = [];
+
+      for (const c of input.customers) {
+        // Check for duplicate by name (case-insensitive)
+        const existing = await db
+          .select({ id: customers.id })
+          .from(customers)
+          .where(sql`LOWER(${customers.name}) = LOWER(${c.name.trim()})`)
+          .limit(1);
+
+        if (existing.length > 0) {
+          skipped++;
+          details.push({ name: c.name, action: "übersprungen (existiert bereits)" });
+          continue;
+        }
+
+        // Also check by company name if provided
+        if (c.company) {
+          const companyMatch = await db
+            .select({ id: customers.id })
+            .from(customers)
+            .where(sql`LOWER(${customers.company}) = LOWER(${c.company.trim()})`)
+            .limit(1);
+
+          if (companyMatch.length > 0) {
+            skipped++;
+            details.push({ name: c.name, action: "übersprungen (Firma existiert)" });
+            continue;
+          }
+        }
+
+        await db.insert(customers).values({
+          name: c.name.trim(),
+          company: c.company || null,
+          street: c.street || null,
+          zipCode: c.zipCode || null,
+          city: c.city || null,
+          country: c.country || "Schweiz",
+          email: c.email || null,
+          phone: c.phone || null,
+          salutation: c.salutation || null,
+          notes: c.notes || null,
+        });
+
+        created++;
+        details.push({ name: c.name, action: "erstellt" });
+      }
+
+      return { total: input.customers.length, created, skipped, details };
+    }),
 });

@@ -785,3 +785,17 @@
 
 ## UI Cleanup
 - [x] QR-Rechnung Tab aus Einstellungen-Sidebar entfernen
+
+## Lieferanten: Auto-Erstellung aus Rechnungen + Listenimport
+- [x] Backend: Auto-Erstellung Lieferant aus Rechnungs-AI-Metadaten (senderName, senderAddress, IBAN)
+- [x] Backend: Bestehende Rechnungen durchgehen und fehlende Lieferanten nachträglich erstellen
+- [x] Backend: Bei zukünftigen Rechnungs-Uploads automatisch Lieferant erstellen/zuordnen
+- [x] Backend: CSV/Excel-Upload Endpoint für Lieferantenliste
+- [x] Frontend: "Lieferanten importieren" Button mit CSV/Excel-Upload Dialog
+- [x] Frontend: Vorschau der importierten Daten vor dem Speichern
+- [x] Frontend: Hinweis bei automatisch erstellten Lieferanten (aus Rechnung)
+
+## Kunden: Listenimport
+- [x] Backend: CSV/Excel-Upload Endpoint für Kundenliste mit Extraktion
+- [x] Frontend: "Kunden importieren" Button mit CSV/Excel-Upload Dialog
+- [x] Frontend: Vorschau der importierten Kundendaten vor dem Speichern

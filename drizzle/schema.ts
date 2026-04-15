@@ -398,6 +398,8 @@ export const documents = mysqlTable("documents", {
   matchScore: int("matchScore"),
   // Fiscal year this document belongs to
   fiscalYear: int("fiscalYear"),
+  // Linked supplier (auto-created from invoice AI extraction)
+  supplierId: int("supplierId"),
   // Uploader
   uploadedBy: int("uploadedBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

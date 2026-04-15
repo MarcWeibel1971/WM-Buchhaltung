@@ -7,6 +7,7 @@ import { documents } from "../drizzle/schema";
 import { sdk } from "./_core/sdk";
 import { eq } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
+import { findOrCreateSupplierFromMetadata } from "./suppliersRouter";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -159,6 +160,24 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       } catch { /* keep original filename */ }
     }
 
+    // Auto-create or link supplier for incoming invoices
+    let autoSupplierId: number | undefined = undefined;
+    if (detectedDocType === "invoice_in" && aiMetadata) {
+      try {
+        const tempDb = await getDb();
+        if (tempDb) {
+          const parsed = JSON.parse(aiMetadata);
+          const supplierResult = await findOrCreateSupplierFromMetadata(parsed, tempDb);
+          if (supplierResult) {
+            autoSupplierId = supplierResult.supplierId;
+            console.log(`[Upload] ${supplierResult.created ? 'Created' : 'Linked'} supplier #${supplierResult.supplierId} for invoice from ${parsed.counterparty}`);
+          }
+        }
+      } catch (supplierErr) {
+        console.warn("[Upload] Auto-supplier creation failed:", supplierErr);
+      }
+    }
+
     // Save to database
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "Datenbank nicht verfügbar" });
@@ -175,6 +194,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       aiMetadata,
       notes: notes ?? null,
       fiscalYear: fiscalYear ? parseInt(fiscalYear) : undefined,
+      supplierId: autoSupplierId,
       uploadedBy: user.id,
     });
 

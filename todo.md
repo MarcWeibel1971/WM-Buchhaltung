@@ -591,3 +591,15 @@
 - [x] Frontend: Datenschutzerklärung-Seite mit Schweizer DSG-konformem Inhalt (8 Abschnitte)
 - [x] Frontend: Audit-Log-Ansicht unter Einstellungen (wer hat wann was geändert)
 - [x] Frontend: Datenexport- und Löschungs-Buttons unter Einstellungen
+
+## Fix: Kontoüberträge als eine zusammengefasste Zeile anzeigen
+
+- [x] Backend: Kontoübertrag-Erkennung verbessern – zusammengehörige Belastung/Gutschrift zwischen eigenen Konten als ein Paar identifizieren
+- [x] Frontend: Gepaarte Kontoüberträge als eine kombinierte Zeile im Bankimport anzeigen statt zwei separate Zeilen (⇄-Symbol, Partner-Kontoname, Label "Übertrag")
+
+## Feature: ISO 20022 Zahlungen aus Dokumenten/Rechnungen
+
+- [x] Backend: Dokumente/Rechnungen als Quelle für offene Zahlungen verwenden statt Bankimport-Transaktionen (getUnpaidInvoices Endpunkt)
+- [x] Backend: Abgleich Rechnungen vs. Bankimport – prüfen ob Rechnung bereits als Banktransaktion importiert wurde (= bezahlt)
+- [x] Frontend: ISO 20022 Vorschau zeigt unbezahlte Rechnungen mit automatischem Zahlungsdatum (Rechnungsdatum + 30 Tage Zahlungsfrist)
+- [x] Frontend: Checkbox in ISO 20022 Vorschau ob Rechnung bereits manuell bezahlt wurde + "Als unbezahlt markieren" Button

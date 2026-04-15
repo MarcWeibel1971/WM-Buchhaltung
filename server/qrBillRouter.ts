@@ -8,8 +8,8 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
-import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts } from "../drizzle/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions } from "../drizzle/schema";
+import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { SwissQRBill } from "swissqrbill/pdf";
 import type { Data } from "swissqrbill/types";
@@ -427,7 +427,105 @@ export const qrBillRouter = router({
           executionDate: execDate,
         },
       };
+    }),  // ─── List unpaid invoices from Documents for ISO 20022 export ─────────────
+  listUnpaidInvoices: protectedProcedure
+    .input(z.object({
+      fiscalYear: z.number().optional(),
+    }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Get all incoming invoices (Eingangsrechnungen)
+      const conditions: any[] = [eq(documents.documentType, "invoice_in")];
+      if (input.fiscalYear) conditions.push(eq(documents.fiscalYear, input.fiscalYear));
+
+      const invoices = await db.select().from(documents)
+        .where(and(...conditions))
+        .orderBy(documents.createdAt);
+
+      // Get all bank transactions to check which invoices are already paid
+      const allTxs = await db.select({
+        id: bankTransactions.id,
+        matchedDocumentId: bankTransactions.matchedDocumentId,
+        counterparty: bankTransactions.counterparty,
+        amount: bankTransactions.amount,
+        status: bankTransactions.status,
+      }).from(bankTransactions);
+
+      // Build a set of document IDs that are matched to bank transactions (= paid)
+      const paidDocIds = new Set(
+        allTxs
+          .filter(tx => tx.matchedDocumentId && tx.matchedDocumentId > 0)
+          .map(tx => tx.matchedDocumentId!)
+      );
+
+      // Process each invoice
+      const results = invoices.map(doc => {
+        let metadata: any = {};
+        if (doc.aiMetadata) {
+          try { metadata = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
+        }
+
+        const totalAmount = parseFloat(metadata.totalAmount || "0");
+        const counterparty = metadata.counterparty || "Unbekannt";
+        const counterpartyIban = metadata.counterpartyIban || "";
+        const referenceNumber = metadata.referenceNumber || "";
+        const documentDate = metadata.documentDate || "";
+        const currency = metadata.currency || "CHF";
+        const description = metadata.description || doc.filename;
+
+        // Check if paid: matched to a bank transaction
+        const isPaid = paidDocIds.has(doc.id) || doc.matchStatus === "matched";
+
+        // Calculate due date: documentDate + 30 days (default payment term)
+        let dueDate = "";
+        if (documentDate) {
+          try {
+            const d = new Date(documentDate);
+            d.setDate(d.getDate() + 30);
+            dueDate = d.toISOString().slice(0, 10);
+          } catch { /* ignore */ }
+        }
+
+        return {
+          id: doc.id,
+          filename: doc.filename,
+          counterparty,
+          counterpartyIban,
+          referenceNumber,
+          totalAmount,
+          currency,
+          documentDate,
+          dueDate,
+          description,
+          isPaid,
+          matchStatus: doc.matchStatus,
+          s3Url: doc.s3Url,
+        };
+      });
+
+      return results;
     }),
+
+  // ─── Mark invoice as manually paid ──────────────────────────────────────────
+  markInvoicePaid: protectedProcedure
+    .input(z.object({
+      documentId: z.number(),
+      isPaid: z.boolean(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Update match status: "manual" means manually marked as paid, "unmatched" means not paid
+      await db.update(documents).set({
+        matchStatus: input.isPaid ? "manual" : "unmatched",
+      }).where(eq(documents.id, input.documentId));
+
+      return { success: true };
+    }),
+
 });
 
 function escapeXml(str: string): string {

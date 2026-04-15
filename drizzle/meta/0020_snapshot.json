@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "c5d94260-eb51-4437-a720-033e82717a2b",
-  "prevId": "81d6f318-40ad-42c5-b784-2c6fe046aa77",
+  "id": "7a110103-91e0-4700-a303-19584d656307",
+  "prevId": "c5d94260-eb51-4437-a720-033e82717a2b",
   "tables": {
     "accounts": {
       "name": "accounts",
@@ -13,6 +13,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "number": {
           "name": "number",
@@ -114,14 +121,7 @@
           ]
         }
       },
-      "uniqueConstraints": {
-        "accounts_number_unique": {
-          "name": "accounts_number_unique",
-          "columns": [
-            "number"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "checkConstraint": {}
     },
     "audit_log": {
@@ -133,6 +133,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "userId": {
           "name": "userId",
@@ -214,6 +221,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "accountId": {
           "name": "accountId",
@@ -297,6 +311,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "bankAccountId": {
           "name": "bankAccountId",
@@ -502,6 +523,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "counterpartyPattern": {
           "name": "counterpartyPattern",
           "type": "varchar(300)",
@@ -617,13 +645,20 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "companyName": {
           "name": "companyName",
           "type": "varchar(200)",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'WM Weibel Mueller AG'"
+          "default": "'Meine Firma'"
         },
         "legalForm": {
           "name": "legalForm",
@@ -791,6 +826,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "statementDate": {
           "name": "statementDate",
           "type": "date",
@@ -882,6 +924,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "customerId": {
           "name": "customerId",
           "type": "int",
@@ -957,6 +1006,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "customerNumber": {
           "name": "customerNumber",
@@ -1134,6 +1190,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "accountId": {
           "name": "accountId",
           "type": "int",
@@ -1225,6 +1288,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "filename": {
           "name": "filename",
@@ -1372,6 +1442,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "code": {
           "name": "code",
           "type": "varchar(10)",
@@ -1497,14 +1574,7 @@
           ]
         }
       },
-      "uniqueConstraints": {
-        "employees_code_unique": {
-          "name": "employees_code_unique",
-          "columns": [
-            "code"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "checkConstraint": {}
     },
     "fiscal_years": {
@@ -1516,6 +1586,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "year": {
           "name": "year",
@@ -1588,14 +1665,7 @@
           ]
         }
       },
-      "uniqueConstraints": {
-        "fiscal_years_year_unique": {
-          "name": "fiscal_years_year_unique",
-          "columns": [
-            "year"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "checkConstraint": {}
     },
     "import_history": {
@@ -1607,6 +1677,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "bankAccountId": {
           "name": "bankAccountId",
@@ -1734,6 +1811,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "insuranceType": {
           "name": "insuranceType",
@@ -1870,6 +1954,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "entryNumber": {
           "name": "entryNumber",
           "type": "varchar(20)",
@@ -1987,6 +2078,55 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "journal_entry_sequences": {
+      "name": "journal_entry_sequences",
+      "columns": {
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fiscalYear": {
+          "name": "fiscalYear",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "nextSequence": {
+          "name": "nextSequence",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "journal_entry_sequences_organizationId_fiscalYear_pk": {
+          "name": "journal_entry_sequences_organizationId_fiscalYear_pk",
+          "columns": [
+            "organizationId",
+            "fiscalYear"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "journal_lines": {
       "name": "journal_lines",
       "columns": {
@@ -2078,6 +2218,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "accountId": {
           "name": "accountId",
           "type": "int",
@@ -2121,6 +2268,200 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "organizations": {
+      "name": "organizations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "slug": {
+          "name": "slug",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "legalForm": {
+          "name": "legalForm",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "street": {
+          "name": "street",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "zipCode": {
+          "name": "zipCode",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "city": {
+          "name": "city",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "canton": {
+          "name": "canton",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "country": {
+          "name": "country",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'Schweiz'"
+        },
+        "uid": {
+          "name": "uid",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "hrNumber": {
+          "name": "hrNumber",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "vatNumber": {
+          "name": "vatNumber",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "vatMethod": {
+          "name": "vatMethod",
+          "type": "enum('effective','saldo','pauschal')",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'effective'"
+        },
+        "vatSaldoRate": {
+          "name": "vatSaldoRate",
+          "type": "decimal(5,2)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'0'"
+        },
+        "vatPeriod": {
+          "name": "vatPeriod",
+          "type": "enum('quarterly','semi-annual')",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'quarterly'"
+        },
+        "fiscalYearStartMonth": {
+          "name": "fiscalYearStartMonth",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 1
+        },
+        "phone": {
+          "name": "phone",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "website": {
+          "name": "website",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "logoUrl": {
+          "name": "logoUrl",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "isActive": {
+          "name": "isActive",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "organizations_id": {
+          "name": "organizations_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "organizations_slug_unique": {
+          "name": "organizations_slug_unique",
+          "columns": [
+            "slug"
+          ]
+        }
+      },
+      "checkConstraint": {}
+    },
     "pain001_exports": {
       "name": "pain001_exports",
       "columns": {
@@ -2130,6 +2471,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "filename": {
           "name": "filename",
@@ -2221,6 +2569,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "exportId": {
           "name": "exportId",
@@ -2325,6 +2680,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "employeeId": {
           "name": "employeeId",
@@ -2479,6 +2841,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "iban": {
           "name": "iban",
           "type": "varchar(34)",
@@ -2549,6 +2918,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "name": {
           "name": "name",
@@ -2634,6 +3010,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "name": {
           "name": "name",
@@ -2784,6 +3167,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "name": {
           "name": "name",
           "type": "varchar(200)",
@@ -2891,6 +3281,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "customerId": {
           "name": "customerId",
           "type": "int",
@@ -2993,6 +3390,60 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "user_organizations": {
+      "name": "user_organizations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "userId": {
+          "name": "userId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "enum('owner','admin','bookkeeper','viewer')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'viewer'"
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "user_organizations_id": {
+          "name": "user_organizations_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "users": {
       "name": "users",
       "columns": {
@@ -3038,6 +3489,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'user'"
+        },
+        "currentOrganizationId": {
+          "name": "currentOrganizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "createdAt": {
           "name": "createdAt",
@@ -3094,6 +3552,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "year": {
           "name": "year",
@@ -3234,6 +3699,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "fiscalYear": {
           "name": "fiscalYear",

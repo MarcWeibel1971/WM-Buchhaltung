@@ -50,8 +50,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-foreground mb-2">WM Weibel Mueller AG</h1>
-            <p className="text-lg font-semibold text-primary mb-1">Buchhaltung</p>
+            <h1 className="text-2xl font-bold text-foreground mb-2">WM-Buchhaltung</h1>
+            <p className="text-lg font-semibold text-primary mb-1">Schweizer KMU-Buchhaltung</p>
             <p className="text-muted-foreground text-sm">Bitte melden Sie sich an, um fortzufahren.</p>
           </div>
           <a

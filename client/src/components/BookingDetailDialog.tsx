@@ -73,7 +73,7 @@ export default function BookingDetailDialog({ entryId, open, onOpenChange }: Boo
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">Buchungsliste</DialogTitle>
           <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
-            <span>WM Weibel Mueller AG</span>
+            <span>{/* Firmenname kommt aus dem Layout-Header – hier bewusst leer */}</span>
             <span>{new Date().toLocaleDateString("de-CH")}</span>
           </div>
         </DialogHeader>

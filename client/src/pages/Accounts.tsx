@@ -158,6 +158,8 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
   const [dateTo, setDateTo] = useState("");
 
   const { data, isLoading } = trpc.accounts.getLedger.useQuery({ accountId, fiscalYear });
+  const { data: company } = trpc.settings.getCompanySettings.useQuery();
+  const companyName = company?.companyName;
   const utils = trpc.useUtils();
 
   const account = data?.account;
@@ -235,9 +237,9 @@ function AccountDetail({ accountId, fiscalYear, onBack }: { accountId: number; f
         @media print { body { padding: 0; } }
       </style></head><body>
       <h1>Konto ${account?.number} – ${account?.name}</h1>
-      <h2>WM Weibel Mueller AG | Geschäftsjahr ${fiscalYear}</h2>
+      <h2>${companyName || "Meine Firma"} | Geschäftsjahr ${fiscalYear}</h2>
       ${content.querySelector('table')?.outerHTML ?? ''}
-      <div class="footer">Gedruckt am ${new Date().toLocaleDateString('de-CH')} | WM Weibel Mueller AG Buchhaltung</div>
+      <div class="footer">Gedruckt am ${new Date().toLocaleDateString('de-CH')} | ${companyName || "Meine Firma"} Buchhaltung</div>
       </body></html>
     `);
     printWindow.document.close();

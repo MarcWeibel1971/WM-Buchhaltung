@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { orgProcedure, router } from "./_core/trpc";
 import { suppliers, accounts, documents } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, like, or, isNull } from "drizzle-orm";
 import { getDb } from "./db";
 
 // ─── Helper: Find or create supplier from AI metadata ────────────────────────
 export async function findOrCreateSupplierFromMetadata(
+  orgId: number,
   metadata: {
     counterparty?: string | null;
     counterpartyIban?: string | null;
@@ -17,25 +18,31 @@ export async function findOrCreateSupplierFromMetadata(
 
   const name = metadata.counterparty.trim();
 
-  // 1. Try exact name match (case-insensitive)
+  // 1. Try exact name match (case-insensitive) within this organization
   const existing = await db
     .select({ id: suppliers.id })
     .from(suppliers)
-    .where(sql`LOWER(${suppliers.name}) = LOWER(${name})`)
+    .where(and(
+      eq(suppliers.organizationId, orgId),
+      sql`LOWER(${suppliers.name}) = LOWER(${name})`,
+    ))
     .limit(1);
 
   if (existing.length > 0) {
     return { supplierId: existing[0].id, created: false };
   }
 
-  // 2. Try IBAN match if available
+  // 2. Try IBAN match if available (within this organization)
   if (metadata.counterpartyIban) {
     const ibanClean = metadata.counterpartyIban.replace(/\s/g, "").toUpperCase();
     if (ibanClean.length >= 15) {
       const ibanMatch = await db
         .select({ id: suppliers.id })
         .from(suppliers)
-        .where(sql`REPLACE(UPPER(${suppliers.iban}), ' ', '') = ${ibanClean}`)
+        .where(and(
+          eq(suppliers.organizationId, orgId),
+          sql`REPLACE(UPPER(${suppliers.iban}), ' ', '') = ${ibanClean}`,
+        ))
         .limit(1);
 
       if (ibanMatch.length > 0) {
@@ -44,16 +51,17 @@ export async function findOrCreateSupplierFromMetadata(
     }
   }
 
-  // 3. Try fuzzy name match (contains)
+  // 3. Try fuzzy name match (contains, within this organization)
   const fuzzyMatch = await db
     .select({ id: suppliers.id, name: suppliers.name })
     .from(suppliers)
-    .where(
+    .where(and(
+      eq(suppliers.organizationId, orgId),
       or(
         sql`LOWER(${suppliers.name}) LIKE LOWER(${`%${name}%`})`,
-        sql`LOWER(${name}) LIKE CONCAT('%', LOWER(${suppliers.name}), '%')`
-      )
-    )
+        sql`LOWER(${name}) LIKE CONCAT('%', LOWER(${suppliers.name}), '%')`,
+      ),
+    ))
     .limit(1);
 
   if (fuzzyMatch.length > 0) {
@@ -62,6 +70,7 @@ export async function findOrCreateSupplierFromMetadata(
 
   // 4. Create new supplier
   const [result] = await db.insert(suppliers).values({
+    organizationId: orgId,
     name,
     iban: metadata.counterpartyIban?.replace(/\s/g, "") || null,
     matchPattern: name,
@@ -74,15 +83,15 @@ export async function findOrCreateSupplierFromMetadata(
 }
 
 export const suppliersRouter = router({
-  list: protectedProcedure
+  list: orgProcedure
     .input(z.object({
       includeInactive: z.boolean().optional().default(false),
       search: z.string().optional(),
     }).optional())
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      const conditions = [];
+      const conditions = [eq(suppliers.organizationId, ctx.organizationId)];
       if (!input?.includeInactive) {
         conditions.push(eq(suppliers.isActive, true));
       }
@@ -94,17 +103,20 @@ export const suppliersRouter = router({
       const result = await db
         .select()
         .from(suppliers)
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .where(and(...conditions))
         .orderBy(asc(suppliers.name));
 
-      // Fetch account names for defaultDebitAccountId
+      // Fetch account names for defaultDebitAccountId (scoped to this org)
       const accountIds = result.filter(s => s.defaultDebitAccountId).map(s => s.defaultDebitAccountId!);
       let accountMap: Record<number, { number: string; name: string }> = {};
       if (accountIds.length > 0) {
         const accs = await db
           .select({ id: accounts.id, number: accounts.number, name: accounts.name })
           .from(accounts)
-          .where(sql`${accounts.id} IN (${sql.join(accountIds.map(id => sql`${id}`), sql`, `)})`);
+          .where(and(
+            eq(accounts.organizationId, ctx.organizationId),
+            sql`${accounts.id} IN (${sql.join(accountIds.map(id => sql`${id}`), sql`, `)})`,
+          ));
         accountMap = Object.fromEntries(accs.map(a => [a.id, { number: a.number, name: a.name }]));
       }
 
@@ -114,17 +126,21 @@ export const suppliersRouter = router({
       }));
     }),
 
-  getById: protectedProcedure
+  getById: orgProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      const [supplier] = await db.select().from(suppliers).where(eq(suppliers.id, input.id));
+      const [supplier] = await db.select().from(suppliers)
+        .where(and(
+          eq(suppliers.organizationId, ctx.organizationId),
+          eq(suppliers.id, input.id),
+        ));
       if (!supplier) throw new Error("Lieferant nicht gefunden");
       return supplier;
     }),
 
-  create: protectedProcedure
+  create: orgProcedure
     .input(z.object({
       name: z.string().min(1),
       street: z.string().optional(),
@@ -141,10 +157,11 @@ export const suppliersRouter = router({
       defaultDebitAccountId: z.number().optional(),
       matchPattern: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const [result] = await db.insert(suppliers).values({
+        organizationId: ctx.organizationId,
         name: input.name,
         street: input.street || null,
         zipCode: input.zipCode || null,
@@ -163,7 +180,7 @@ export const suppliersRouter = router({
       return { id: result.insertId };
     }),
 
-  update: protectedProcedure
+  update: orgProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().min(1).optional(),
@@ -182,31 +199,39 @@ export const suppliersRouter = router({
       matchPattern: z.string().optional(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const { id, ...data } = input;
-      await db.update(suppliers).set(data).where(eq(suppliers.id, id));
+      await db.update(suppliers).set(data)
+        .where(and(
+          eq(suppliers.organizationId, ctx.organizationId),
+          eq(suppliers.id, id),
+        ));
       return { success: true };
     }),
 
-  delete: protectedProcedure
+  delete: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       // Soft delete - set isActive to false
-      await db.update(suppliers).set({ isActive: false }).where(eq(suppliers.id, input.id));
+      await db.update(suppliers).set({ isActive: false })
+        .where(and(
+          eq(suppliers.organizationId, ctx.organizationId),
+          eq(suppliers.id, input.id),
+        ));
       return { success: true };
     }),
 
   // ─── Import suppliers from existing invoice documents ────────────────────────
-  importFromDocuments: protectedProcedure
-    .mutation(async () => {
+  importFromDocuments: orgProcedure
+    .mutation(async ({ ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
 
-      // Find all invoice_in documents that have AI metadata but no supplier linked
+      // Find all invoice_in documents that have AI metadata but no supplier linked (within org)
       const docs = await db
         .select({
           id: documents.id,
@@ -216,6 +241,7 @@ export const suppliersRouter = router({
         .from(documents)
         .where(
           and(
+            eq(documents.organizationId, ctx.organizationId),
             eq(documents.documentType, "invoice_in"),
             isNull(documents.supplierId),
           )
@@ -240,7 +266,7 @@ export const suppliersRouter = router({
           continue;
         }
 
-        const result = await findOrCreateSupplierFromMetadata(metadata, db);
+        const result = await findOrCreateSupplierFromMetadata(ctx.organizationId, metadata, db);
         if (!result) {
           skipped++;
           continue;
@@ -270,7 +296,7 @@ export const suppliersRouter = router({
     }),
 
   // ─── Bulk import suppliers from CSV/Excel data ───────────────────────────────
-  importFromList: protectedProcedure
+  importFromList: orgProcedure
     .input(z.object({
       suppliers: z.array(z.object({
         name: z.string().min(1),
@@ -287,7 +313,7 @@ export const suppliersRouter = router({
         notes: z.string().optional(),
       })),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
 
@@ -296,11 +322,14 @@ export const suppliersRouter = router({
       const details: Array<{ name: string; action: string }> = [];
 
       for (const s of input.suppliers) {
-        // Check for duplicate by name (case-insensitive)
+        // Check for duplicate by name (case-insensitive) within org
         const existing = await db
           .select({ id: suppliers.id })
           .from(suppliers)
-          .where(sql`LOWER(${suppliers.name}) = LOWER(${s.name.trim()})`)
+          .where(and(
+            eq(suppliers.organizationId, ctx.organizationId),
+            sql`LOWER(${suppliers.name}) = LOWER(${s.name.trim()})`,
+          ))
           .limit(1);
 
         if (existing.length > 0) {
@@ -309,14 +338,17 @@ export const suppliersRouter = router({
           continue;
         }
 
-        // Also check by IBAN if provided
+        // Also check by IBAN if provided (within org)
         if (s.iban) {
           const ibanClean = s.iban.replace(/\s/g, "").toUpperCase();
           if (ibanClean.length >= 15) {
             const ibanMatch = await db
               .select({ id: suppliers.id })
               .from(suppliers)
-              .where(sql`REPLACE(UPPER(${suppliers.iban}), ' ', '') = ${ibanClean}`)
+              .where(and(
+                eq(suppliers.organizationId, ctx.organizationId),
+                sql`REPLACE(UPPER(${suppliers.iban}), ' ', '') = ${ibanClean}`,
+              ))
               .limit(1);
 
             if (ibanMatch.length > 0) {
@@ -328,6 +360,7 @@ export const suppliersRouter = router({
         }
 
         await db.insert(suppliers).values({
+          organizationId: ctx.organizationId,
           name: s.name.trim(),
           street: s.street || null,
           zipCode: s.zipCode || null,

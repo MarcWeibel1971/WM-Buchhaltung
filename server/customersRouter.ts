@@ -1,19 +1,19 @@
 import { z } from "zod";
-import { protectedProcedure, router } from "./_core/trpc";
+import { orgProcedure, router } from "./_core/trpc";
 import { customers, customerServices, accounts } from "../drizzle/schema";
 import { eq, and, asc, sql } from "drizzle-orm";
 import { getDb } from "./db";
 
 export const customersRouter = router({
-  list: protectedProcedure
+  list: orgProcedure
     .input(z.object({
       includeInactive: z.boolean().optional().default(false),
       search: z.string().optional(),
     }).optional())
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      const conditions = [];
+      const conditions = [eq(customers.organizationId, ctx.organizationId)];
       if (!input?.includeInactive) {
         conditions.push(eq(customers.isActive, true));
       }
@@ -25,26 +25,32 @@ export const customersRouter = router({
       const custs = await db
         .select()
         .from(customers)
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .where(and(...conditions))
         .orderBy(asc(customers.name));
 
-      // Fetch services for each customer
+      // Fetch services for each customer (scoped to this org)
       const result = [];
       for (const c of custs) {
         const svcs = await db
           .select()
           .from(customerServices)
-          .where(eq(customerServices.customerId, c.id))
+          .where(and(
+            eq(customerServices.organizationId, ctx.organizationId),
+            eq(customerServices.customerId, c.id),
+          ))
           .orderBy(asc(customerServices.sortOrder));
 
-        // Fetch account names for services
+        // Fetch account names for services (scoped to this org)
         const accountIds = svcs.filter(s => s.revenueAccountId).map(s => s.revenueAccountId!);
         let accountMap: Record<number, { number: string; name: string }> = {};
         if (accountIds.length > 0) {
           const accs = await db
             .select({ id: accounts.id, number: accounts.number, name: accounts.name })
             .from(accounts)
-            .where(sql`${accounts.id} IN (${sql.join(accountIds.map(id => sql`${id}`), sql`, `)})`);
+            .where(and(
+              eq(accounts.organizationId, ctx.organizationId),
+              sql`${accounts.id} IN (${sql.join(accountIds.map(id => sql`${id}`), sql`, `)})`,
+            ));
           accountMap = Object.fromEntries(accs.map(a => [a.id, { number: a.number, name: a.name }]));
         }
 
@@ -59,24 +65,31 @@ export const customersRouter = router({
       return result;
     }),
 
-  getById: protectedProcedure
+  getById: orgProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      const [customer] = await db.select().from(customers).where(eq(customers.id, input.id));
+      const [customer] = await db.select().from(customers)
+        .where(and(
+          eq(customers.organizationId, ctx.organizationId),
+          eq(customers.id, input.id),
+        ));
       if (!customer) throw new Error("Kunde nicht gefunden");
 
       const svcs = await db
         .select()
         .from(customerServices)
-        .where(eq(customerServices.customerId, customer.id))
+        .where(and(
+          eq(customerServices.organizationId, ctx.organizationId),
+          eq(customerServices.customerId, customer.id),
+        ))
         .orderBy(asc(customerServices.sortOrder));
 
       return { ...customer, services: svcs };
     }),
 
-  create: protectedProcedure
+  create: orgProcedure
     .input(z.object({
       name: z.string().min(1),
       customerNumber: z.string().optional(),
@@ -97,10 +110,11 @@ export const customersRouter = router({
       salutation: z.string().optional(),
       notes: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const [result] = await db.insert(customers).values({
+        organizationId: ctx.organizationId,
         name: input.name,
         customerNumber: input.customerNumber || null,
         firstName: input.firstName || null,
@@ -123,7 +137,7 @@ export const customersRouter = router({
       return { id: result.insertId };
     }),
 
-  update: protectedProcedure
+  update: orgProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().min(1).optional(),
@@ -146,26 +160,34 @@ export const customersRouter = router({
       notes: z.string().optional(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const { id, ...data } = input;
-      await db.update(customers).set(data).where(eq(customers.id, id));
+      await db.update(customers).set(data)
+        .where(and(
+          eq(customers.organizationId, ctx.organizationId),
+          eq(customers.id, id),
+        ));
       return { success: true };
     }),
 
-  delete: protectedProcedure
+  delete: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      await db.update(customers).set({ isActive: false }).where(eq(customers.id, input.id));
+      await db.update(customers).set({ isActive: false })
+        .where(and(
+          eq(customers.organizationId, ctx.organizationId),
+          eq(customers.id, input.id),
+        ));
       return { success: true };
     }),
 
   // ─── Customer Services ─────────────────────────────────────────────────────
 
-  addService: protectedProcedure
+  addService: orgProcedure
     .input(z.object({
       customerId: z.number(),
       description: z.string().min(1),
@@ -173,25 +195,32 @@ export const customersRouter = router({
       hourlyRate: z.number().optional(),
       isDefault: z.boolean().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
 
-      // If this is set as default, unset other defaults for this customer
+      // If this is set as default, unset other defaults for this customer (within org)
       if (input.isDefault) {
         await db.update(customerServices)
           .set({ isDefault: false })
-          .where(eq(customerServices.customerId, input.customerId));
+          .where(and(
+            eq(customerServices.organizationId, ctx.organizationId),
+            eq(customerServices.customerId, input.customerId),
+          ));
       }
 
-      // Get max sort order
+      // Get max sort order (within org)
       const existing = await db
         .select({ maxSort: sql<number>`COALESCE(MAX(${customerServices.sortOrder}), 0)` })
         .from(customerServices)
-        .where(eq(customerServices.customerId, input.customerId));
+        .where(and(
+          eq(customerServices.organizationId, ctx.organizationId),
+          eq(customerServices.customerId, input.customerId),
+        ));
       const nextSort = (existing[0]?.maxSort ?? 0) + 1;
 
       const [result] = await db.insert(customerServices).values({
+        organizationId: ctx.organizationId,
         customerId: input.customerId,
         description: input.description,
         revenueAccountId: input.revenueAccountId,
@@ -202,7 +231,7 @@ export const customersRouter = router({
       return { id: result.insertId };
     }),
 
-  updateService: protectedProcedure
+  updateService: orgProcedure
     .input(z.object({
       id: z.number(),
       customerId: z.number(),
@@ -211,7 +240,7 @@ export const customersRouter = router({
       hourlyRate: z.number().optional(),
       isDefault: z.boolean().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
       const { id, customerId, ...data } = input;
@@ -219,7 +248,10 @@ export const customersRouter = router({
       if (data.isDefault) {
         await db.update(customerServices)
           .set({ isDefault: false })
-          .where(eq(customerServices.customerId, customerId));
+          .where(and(
+            eq(customerServices.organizationId, ctx.organizationId),
+            eq(customerServices.customerId, customerId),
+          ));
       }
 
       const updateData: any = {};
@@ -228,21 +260,29 @@ export const customersRouter = router({
       if (data.hourlyRate !== undefined) updateData.hourlyRate = String(data.hourlyRate);
       if (data.isDefault !== undefined) updateData.isDefault = data.isDefault;
 
-      await db.update(customerServices).set(updateData).where(eq(customerServices.id, id));
+      await db.update(customerServices).set(updateData)
+        .where(and(
+          eq(customerServices.organizationId, ctx.organizationId),
+          eq(customerServices.id, id),
+        ));
       return { success: true };
     }),
 
-  deleteService: protectedProcedure
+  deleteService: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
-      await db.delete(customerServices).where(eq(customerServices.id, input.id));
+      await db.delete(customerServices)
+        .where(and(
+          eq(customerServices.organizationId, ctx.organizationId),
+          eq(customerServices.id, input.id),
+        ));
       return { success: true };
     }),
 
   // ─── Bulk import customers from CSV/Excel data ─────────────────────────────
-  importFromList: protectedProcedure
+  importFromList: orgProcedure
     .input(z.object({
       customers: z.array(z.object({
         name: z.string().min(1),
@@ -258,7 +298,7 @@ export const customersRouter = router({
         notes: z.string().optional(),
       })),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error('Database not available');
 
@@ -267,11 +307,14 @@ export const customersRouter = router({
       const details: Array<{ name: string; action: string }> = [];
 
       for (const c of input.customers) {
-        // Check for duplicate by name (case-insensitive)
+        // Check for duplicate by name (case-insensitive) within org
         const existing = await db
           .select({ id: customers.id })
           .from(customers)
-          .where(sql`LOWER(${customers.name}) = LOWER(${c.name.trim()})`)
+          .where(and(
+            eq(customers.organizationId, ctx.organizationId),
+            sql`LOWER(${customers.name}) = LOWER(${c.name.trim()})`,
+          ))
           .limit(1);
 
         if (existing.length > 0) {
@@ -280,12 +323,15 @@ export const customersRouter = router({
           continue;
         }
 
-        // Also check by company name if provided
+        // Also check by company name if provided (within org)
         if (c.company) {
           const companyMatch = await db
             .select({ id: customers.id })
             .from(customers)
-            .where(sql`LOWER(${customers.company}) = LOWER(${c.company.trim()})`)
+            .where(and(
+              eq(customers.organizationId, ctx.organizationId),
+              sql`LOWER(${customers.company}) = LOWER(${c.company.trim()})`,
+            ))
             .limit(1);
 
           if (companyMatch.length > 0) {
@@ -296,6 +342,7 @@ export const customersRouter = router({
         }
 
         await db.insert(customers).values({
+          organizationId: ctx.organizationId,
           name: c.name.trim(),
           customerNumber: c.customerNumber || null,
           company: c.company || null,

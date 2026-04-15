@@ -300,7 +300,7 @@ function generateOfficialLohnausweis(summary: any, emp: any, company: any) {
   doc.text(`${city}, ${today}`, LM + 5, y);
 
   // Employer info (right column)
-  const compName = company?.companyName ?? 'WM Weibel Mueller AG';
+  const compName = company?.companyName ?? 'Meine Firma';
   const ownerName = company?.ownerName ?? '';
   const compStreet = company?.street ?? '';
   const compCity = [company?.zipCode, company?.city].filter(Boolean).join(' ');
@@ -327,7 +327,7 @@ function generateLohnabrechnung(p: any, emp: any, company?: any) {
   let y = 20;
 
   // Company header
-  const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+  const companyName = company?.companyName ?? 'Meine Firma';
   const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const companyUid = company?.uid ? `UID: ${company.uid}` : '';
 
@@ -441,7 +441,7 @@ function generateJahreslohnausweis(summary: any, emp: any, company?: any) {
   let y = 18;
 
   // Company header (left)
-  const companyName = company?.companyName ?? 'WM Weibel Mueller AG';
+  const companyName = company?.companyName ?? 'Meine Firma';
   const companyAddress = [company?.street, [company?.zipCode, company?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const companyUid = company?.uid ? `UID: ${company.uid}` : '';
   doc.setFontSize(12); doc.setFont('helvetica', 'bold');

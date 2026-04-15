@@ -51,6 +51,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   });
 
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
+  const { data: companyData } = trpc.settings.getCompanySettings.useQuery();
 
   const pendingCount = (stats?.pendingEntries ?? 0) + (stats?.pendingBankTransactions ?? 0);
 
@@ -207,9 +208,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Logo */}
         <div className="flex items-center justify-between px-5 py-5 border-b" style={{ borderColor: "oklch(0.28 0.04 240)" }}>
-          <div>
-            <div className="text-sm font-bold" style={{ color: "oklch(0.95 0.01 240)" }}>WM Weibel Mueller AG</div>
-            <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>Buchhaltung</div>
+          <div className="flex items-center gap-3">
+            {companyData?.logoUrl && (
+              <img src={companyData.logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
+            )}
+            <div>
+              <div className="text-sm font-bold" style={{ color: "oklch(0.95 0.01 240)" }}>{companyData?.companyName || 'WM Weibel Mueller AG'}</div>
+              <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>Buchhaltung</div>
+            </div>
           </div>
           <button
             onClick={() => setMobileOpen(false)}

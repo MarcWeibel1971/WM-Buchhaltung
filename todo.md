@@ -656,3 +656,18 @@
 - [x] Rechnungen erst als "bezahlt" markieren wenn pain.001 tatsächlich heruntergeladen wird (nicht beim Öffnen der Seite)
 - [x] Manuelles Zurücksetzen auf "offen" ermöglichen (Button "Als unbezahlt markieren")
 - [x] Automatischer Match beim Bankimport: Wenn Banktransaktion zu bekannter Rechnung passt (Betrag, Kreditor, Referenz), automatisch Match erstellen und Rechnung als bezahlt markieren
+
+## Feature: AcroForms-basierte Rechnungsvorlage (wie Lohnausweis)
+
+- [x] PDF-Vorlage analysieren und AcroForms-Template erstellen (exaktes Layout wie WM Rechnung)
+- [x] AcroForms-Felder: Logo, Firmenname, Adresse, Empfänger, Datum, Referenz, Betreff, Positionen, MWST, Total, Zahlungsfrist, Grussformel
+- [x] Backend-Endpoint: AcroForms-Template mit Rechnungsdaten füllen und als PDF generieren
+- [x] Debitoren-Seite: Neue Rechnungserstellung mit AcroForms-basiertem PDF-Download
+- [x] QR-Zahlungsteil in AcroForms-Rechnung integrieren (Seite 2 oder unten)
+
+## Feature: Firmenlogo-Upload unter Einstellungen/Unternehmen
+
+- [x] Einstellungen/Unternehmen: Logo-Upload-Funktion implementieren (S3-Storage)
+- [x] Logo in der Sidebar/Header der Webseite anzeigen
+- [x] Logo in der AcroForms-Rechnungsvorlage verwenden
+- [x] WM Logo als Standard hochladen

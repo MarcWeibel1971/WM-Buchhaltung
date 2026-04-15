@@ -32,6 +32,7 @@ const companySettingsInput = z.object({
   email: z.string().max(200).optional(),
   website: z.string().max(200).optional(),
   hrNumber: z.string().max(50).optional(),
+  logoUrl: z.string().max(500).optional(),
 });
 
 // ─── Insurance Settings ───────────────────────────────────────────────────────
@@ -119,6 +120,7 @@ export const settingsRouter = router({
         email: "marc.weibel@weibel-mueller.ch",
         website: "weibel-mueller.ch",
         hrNumber: null,
+        logoUrl: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -151,6 +153,7 @@ export const settingsRouter = router({
           email: input.email,
           website: input.website,
           hrNumber: input.hrNumber,
+          logoUrl: input.logoUrl,
         });
       } else {
         await db.update(companySettings)
@@ -172,6 +175,7 @@ export const settingsRouter = router({
             email: input.email,
             website: input.website,
             hrNumber: input.hrNumber,
+            logoUrl: input.logoUrl,
           })
           .where(eq(companySettings.id, existing[0].id));
       }
@@ -798,4 +802,56 @@ export const settingsRouter = router({
       ],
     };
   }),
+
+  // ── Company Logo Upload ──────────────────────────────────────────────────────
+
+  uploadCompanyLogo: protectedProcedure
+    .input(z.object({
+      base64: z.string(),
+      filename: z.string(),
+      mimeType: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const { storagePut } = await import('./storage');
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+
+      // Decode base64 to buffer
+      const buffer = Buffer.from(input.base64, 'base64');
+
+      // Upload to S3 with unique key
+      const ext = input.filename.split('.').pop() || 'png';
+      const key = `company-logo/logo-${Date.now()}.${ext}`;
+      const { url } = await storagePut(key, buffer, input.mimeType);
+
+      // Update company settings with logo URL
+      const existing = await db.select({ id: companySettings.id }).from(companySettings).limit(1);
+      if (existing.length === 0) {
+        await db.insert(companySettings).values({
+          companyName: 'WM Weibel Mueller AG',
+          logoUrl: url,
+        });
+      } else {
+        await db.update(companySettings)
+          .set({ logoUrl: url })
+          .where(eq(companySettings.id, existing[0].id));
+      }
+
+      return { url };
+    }),
+
+  deleteCompanyLogo: protectedProcedure
+    .mutation(async () => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+
+      const existing = await db.select({ id: companySettings.id }).from(companySettings).limit(1);
+      if (existing.length > 0) {
+        await db.update(companySettings)
+          .set({ logoUrl: null })
+          .where(eq(companySettings.id, existing[0].id));
+      }
+
+      return { success: true };
+    }),
 });

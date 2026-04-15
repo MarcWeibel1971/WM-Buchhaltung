@@ -620,12 +620,13 @@ export const qrBillRouter = router({
       // Generate reference
       const reference = generateQRReference(Date.now() % 100000, new Date().getFullYear());
 
-      // Format invoice date
-      const invDate = new Date(input.invoiceDate);
+      // Format invoice date (parse YYYY-MM-DD without timezone offset)
+      const [yyyy2, mm2, dd2] = input.invoiceDate.split('-').map(Number);
+      const invDate = new Date(yyyy2, mm2 - 1, dd2);
       const dateStr = invDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
 
       // Calculate payment due date
-      const dueDate = new Date(invDate);
+      const dueDate = new Date(yyyy2, mm2 - 1, dd2);
       dueDate.setDate(dueDate.getDate() + input.paymentDays);
       const dueDateStr = dueDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
 
@@ -820,7 +821,372 @@ export const qrBillRouter = router({
       };
     }),
 
+  // ─── AcroForms-based Professional Invoice (like Lohnausweis) ─────────────────
+  generateInvoiceAcroform: protectedProcedure
+    .input(z.object({
+      recipientTitle: z.string().optional(),
+      recipientName: z.string().min(1),
+      recipientStreet: z.string().min(1),
+      recipientZip: z.string().min(1),
+      recipientCity: z.string().min(1),
+      recipientCountry: z.string().default("CH"),
+      invoiceDate: z.string(),
+      invoiceSubject: z.string(),
+      salutation: z.string().optional(),
+      introText: z.string(),
+      lineItems: z.array(z.object({
+        description: z.string(),
+        amount: z.number(),
+      })),
+      vatRate: z.number().min(0).max(100),
+      currency: z.enum(["CHF", "EUR"]).default("CHF"),
+      closingText: z.string(),
+      greeting: z.string(),
+      signerName: z.string(),
+      signerTitle: z.string().optional(),
+      paymentDays: z.number().int().default(30),
+    }))
+    .mutation(async ({ input }) => {
+      const { PDFDocument: PDFLib, rgb, StandardFonts } = await import('pdf-lib');
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Load QR settings
+      const qrRows = await db.select().from(qrSettings).limit(1);
+      if (!qrRows.length) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "QR-Rechnungs-Einstellungen fehlen." });
+      }
+      const qr = qrRows[0];
+
+      // Load company settings
+      const compRows = await db.select().from(companySettings).limit(1);
+      const comp = compRows[0];
+      if (!comp) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
+
+      // Calculate totals
+      const subtotal = input.lineItems.reduce((s, i) => s + i.amount, 0);
+      const vatAmount = subtotal * (input.vatRate / 100);
+      const total = subtotal + vatAmount;
+
+      // Generate reference
+      const cleanIban = qr.iban.replace(/\s/g, "");
+      const iid = parseInt(cleanIban.substring(4, 9));
+      const isQrIban = iid >= 30000 && iid <= 31999;
+      const effectiveRefType = isQrIban ? (qr.referenceType || "QRR") : "SCOR";
+
+      let referenceStr = "";
+      if (effectiveRefType === "QRR" && isQrIban) {
+        const ref = generateQRReference(Date.now() % 100000, new Date().getFullYear());
+        referenceStr = formatQRRef(ref);
+      } else if (effectiveRefType === "SCOR") {
+        const refBody = String(Date.now() % 100000000000).padStart(11, "0");
+        const numericStr = refBody + "2715" + "00";
+        let remainder = 0;
+        for (const ch of numericStr) { remainder = (remainder * 10 + parseInt(ch)) % 97; }
+        const checkDigits = String(98 - remainder).padStart(2, "0");
+        referenceStr = `RF${checkDigits}${refBody}`;
+      }
+
+      // Format dates (parse YYYY-MM-DD without timezone offset)
+      const [yyyy, mm, dd] = input.invoiceDate.split('-').map(Number);
+      const invDate = new Date(yyyy, mm - 1, dd);
+      const dateStr = invDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
+      const dueDate = new Date(yyyy, mm - 1, dd);
+      dueDate.setDate(dueDate.getDate() + input.paymentDays);
+      const dueDateStr = dueDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
+
+      // Create PDF from scratch with pdf-lib (pixel-perfect layout matching the WM Rechnung)
+      const pdfDoc = await PDFLib.create();
+      const page = pdfDoc.addPage([595.28, 841.89]); // A4
+      const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      const pageH = 841.89;
+      const pageW = 595.28;
+      const leftM = 56;
+      const rightM = 56;
+      const contentW = pageW - leftM - rightM;
+
+      // Helper to draw text (y from top)
+      const drawText = (text: string, x: number, yFromTop: number, opts: { font?: typeof helvetica, size?: number, color?: [number, number, number], maxWidth?: number } = {}) => {
+        const font = opts.font ?? helvetica;
+        const size = opts.size ?? 10;
+        const color = opts.color ?? [0, 0, 0];
+        page.drawText(text, {
+          x,
+          y: pageH - yFromTop,
+          size,
+          font,
+          color: rgb(color[0], color[1], color[2]),
+          maxWidth: opts.maxWidth,
+        });
+      };
+
+      // Helper to draw right-aligned text
+      const drawTextRight = (text: string, rightX: number, yFromTop: number, opts: { font?: typeof helvetica, size?: number, color?: [number, number, number] } = {}) => {
+        const font = opts.font ?? helvetica;
+        const size = opts.size ?? 10;
+        const width = font.widthOfTextAtSize(text, size);
+        drawText(text, rightX - width, yFromTop, opts);
+      };
+
+      // ═══ LOGO (if available) ═══
+      let logoEndY = 42; // Default start for company text if no logo
+      if (comp.logoUrl) {
+        try {
+          const logoResponse = await fetch(comp.logoUrl);
+          const logoBytes = new Uint8Array(await logoResponse.arrayBuffer());
+          const isPng = comp.logoUrl.toLowerCase().includes('.png');
+          const logoImage = isPng
+            ? await pdfDoc.embedPng(logoBytes)
+            : await pdfDoc.embedJpg(logoBytes);
+
+          // Scale logo to fit within 150x45 area
+          const maxW = 150;
+          const maxH = 45;
+          const scale = Math.min(maxW / logoImage.width, maxH / logoImage.height);
+          const logoW = logoImage.width * scale;
+          const logoH = logoImage.height * scale;
+
+          page.drawImage(logoImage, {
+            x: leftM,
+            y: pageH - 42 - logoH,
+            width: logoW,
+            height: logoH,
+          });
+          logoEndY = 42 + logoH + 8;
+        } catch {
+          // Logo loading failed, continue without logo
+        }
+      }
+
+      // ═══ COMPANY HEADER (below logo) ═══
+      let yPos = logoEndY;
+      drawText(comp.companyName, leftM, yPos, { font: helveticaBold, size: 11 });
+      yPos += 14;
+      const compColor: [number, number, number] = [0.27, 0.27, 0.27];
+      if (comp.street) { drawText(comp.street, leftM, yPos, { size: 8.5, color: compColor }); yPos += 11; }
+      drawText(`${comp.zipCode ?? ''} ${comp.city ?? ''}`, leftM, yPos, { size: 8.5, color: compColor });
+      yPos += 11;
+      if (comp.phone) { drawText(`Tel: ${comp.phone}`, leftM, yPos, { size: 8.5, color: compColor }); yPos += 11; }
+      if (comp.email) { drawText(comp.email, leftM, yPos, { size: 8.5, color: compColor }); yPos += 11; }
+
+      // ═══ RECIPIENT ADDRESS (right side, window envelope position) ═══
+      let addrY = 130;
+      if (input.recipientTitle) {
+        drawText(input.recipientTitle, 320, addrY, { size: 9 });
+        addrY += 14;
+      }
+      drawText(input.recipientName, 320, addrY, { font: helveticaBold, size: 10 });
+      addrY += 14;
+      drawText(input.recipientStreet, 320, addrY, { size: 9 });
+      addrY += 14;
+      drawText(`${input.recipientZip} ${input.recipientCity}`, 320, addrY, { size: 9 });
+
+      // ═══ DATE AND REFERENCE (right-aligned) ═══
+      const grayColor: [number, number, number] = [0.4, 0.4, 0.4];
+      drawTextRight(`${comp.city ?? 'Luzern'}, ${dateStr}`, pageW - rightM, 220, { size: 9, color: grayColor });
+      if (referenceStr) {
+        drawTextRight(`Referenz: ${referenceStr}`, pageW - rightM, 234, { size: 9, color: grayColor });
+      }
+
+      // ═══ SUBJECT LINE ═══
+      drawText(input.invoiceSubject, leftM, 270, { font: helveticaBold, size: 14 });
+
+      // ═══ SALUTATION & INTRO ═══
+      let textY = 300;
+      if (input.salutation) {
+        drawText(input.salutation, leftM, textY, { size: 10 });
+        textY += 20;
+      }
+      // Word-wrap intro text
+      const introLines = wrapText(input.introText, helvetica, 10, contentW);
+      for (const line of introLines) {
+        drawText(line, leftM, textY, { size: 10 });
+        textY += 14;
+      }
+      textY += 10;
+
+      // ═══ LINE ITEMS TABLE ═══
+      // Header
+      drawText("Pos.", leftM, textY, { font: helveticaBold, size: 8.5, color: grayColor });
+      drawText("Beschreibung", leftM + 35, textY, { font: helveticaBold, size: 8.5, color: grayColor });
+      drawTextRight(input.currency, pageW - rightM, textY, { font: helveticaBold, size: 8.5, color: grayColor });
+      textY += 12;
+      // Header line
+      page.drawLine({
+        start: { x: leftM, y: pageH - textY },
+        end: { x: pageW - rightM, y: pageH - textY },
+        thickness: 0.5,
+        color: rgb(0.8, 0.8, 0.8),
+      });
+      textY += 8;
+
+      // Items
+      input.lineItems.forEach((item, idx) => {
+        drawText(`${idx + 1}.`, leftM, textY, { size: 9.5 });
+        drawText(item.description, leftM + 35, textY, { size: 9.5 });
+        drawTextRight(formatCHF(item.amount), pageW - rightM, textY, { size: 9.5 });
+        textY += 18;
+      });
+
+      // Subtotal separator
+      textY += 4;
+      page.drawLine({
+        start: { x: pageW - rightM - 200, y: pageH - textY },
+        end: { x: pageW - rightM, y: pageH - textY },
+        thickness: 0.5,
+        color: rgb(0.8, 0.8, 0.8),
+      });
+      textY += 8;
+
+      // Subtotal
+      drawText("Zwischensumme", pageW - rightM - 200, textY, { size: 9 });
+      drawTextRight(`${input.currency} ${formatCHF(subtotal)}`, pageW - rightM, textY, { size: 9 });
+      textY += 16;
+
+      // VAT
+      if (input.vatRate > 0) {
+        const vatLabel = comp.uid
+          ? `MWST ${input.vatRate}% (MWST-Nr. ${comp.uid})`
+          : `MWST ${input.vatRate}%`;
+        drawText(vatLabel, pageW - rightM - 200, textY, { size: 9 });
+        drawTextRight(`${input.currency} ${formatCHF(vatAmount)}`, pageW - rightM, textY, { size: 9 });
+        textY += 16;
+      }
+
+      // Total separator
+      page.drawLine({
+        start: { x: pageW - rightM - 200, y: pageH - textY },
+        end: { x: pageW - rightM, y: pageH - textY },
+        thickness: 1,
+        color: rgb(0, 0, 0),
+      });
+      textY += 8;
+
+      // Total
+      drawText("Total", pageW - rightM - 200, textY, { font: helveticaBold, size: 11 });
+      drawTextRight(`${input.currency} ${formatCHF(total)}`, pageW - rightM, textY, { font: helveticaBold, size: 11 });
+      textY += 28;
+
+      // ═══ PAYMENT TERMS ═══
+      drawText(`Zahlbar innert ${input.paymentDays} Tagen bis ${dueDateStr}.`, leftM, textY, { size: 9, color: grayColor });
+      textY += 20;
+
+      // ═══ CLOSING TEXT ═══
+      const closingLines = wrapText(input.closingText, helvetica, 10, contentW);
+      for (const line of closingLines) {
+        drawText(line, leftM, textY, { size: 10 });
+        textY += 14;
+      }
+      textY += 10;
+
+      // ═══ GREETING & SIGNATURE ═══
+      drawText(input.greeting, leftM, textY, { size: 10 });
+      textY += 28;
+      drawText(comp.companyName, leftM, textY, { font: helveticaBold, size: 10 });
+      textY += 16;
+      drawText(input.signerName, leftM, textY, { font: helveticaBold, size: 10 });
+      if (input.signerTitle) {
+        textY += 14;
+        drawText(input.signerTitle, leftM, textY, { size: 9 });
+      }
+
+      // ═══ FOOTER ═══
+      const footerParts = [comp.companyName];
+      if (comp.street) footerParts.push(comp.street);
+      if (comp.zipCode && comp.city) footerParts.push(`${comp.zipCode} ${comp.city}`);
+      const footerLine1 = footerParts.join(', ');
+      const footerParts2: string[] = [];
+      if (comp.phone) footerParts2.push(comp.phone);
+      if (comp.email) footerParts2.push(comp.email);
+      if (comp.website) footerParts2.push(comp.website);
+      const footerLine2 = footerParts2.join(', ');
+
+      drawText(footerLine1, leftM, pageH - 22, { size: 7, color: grayColor });
+      if (footerLine2) {
+        drawText(footerLine2, leftM, pageH - 12, { size: 7, color: grayColor });
+      }
+
+      // Save the first page as bytes
+      const invoiceBytes = await pdfDoc.save();
+
+      // Now generate QR payment slip with pdfkit + swissqrbill
+      const qrData: Data = {
+        amount: total,
+        currency: input.currency,
+        creditor: {
+          account: cleanIban,
+          name: comp.companyName,
+          address: comp.street ?? "",
+          zip: parseInt(comp.zipCode ?? "0"),
+          city: comp.city ?? "",
+          country: "CH",
+        },
+        debtor: {
+          name: input.recipientName,
+          address: input.recipientStreet,
+          zip: parseInt(input.recipientZip),
+          city: input.recipientCity,
+          country: input.recipientCountry,
+        },
+      };
+
+      if (effectiveRefType === "QRR" && isQrIban) {
+        qrData.reference = referenceStr;
+      } else if (effectiveRefType === "SCOR" && referenceStr) {
+        qrData.reference = referenceStr;
+      }
+
+      // Generate QR slip page with pdfkit
+      const qrPdfDoc = new PDFDocument({ size: "A4", autoFirstPage: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } });
+      const qrChunks: Buffer[] = [];
+      qrPdfDoc.on("data", (chunk: Buffer) => qrChunks.push(chunk));
+
+      const qrBill = new SwissQRBill(qrData);
+      qrBill.attachTo(qrPdfDoc);
+
+      const qrPdfPromise = new Promise<Buffer>((resolve) => {
+        qrPdfDoc.on("end", () => resolve(Buffer.concat(qrChunks)));
+      });
+      qrPdfDoc.end();
+      const qrPdfBuffer = await qrPdfPromise;
+
+      // Merge: invoice page + QR slip page
+      const finalDoc = await PDFLib.load(invoiceBytes);
+      const qrDoc = await PDFLib.load(qrPdfBuffer);
+      const [qrPage] = await finalDoc.copyPages(qrDoc, [0]);
+      finalDoc.addPage(qrPage);
+
+      const finalBytes = await finalDoc.save();
+
+      return {
+        base64: Buffer.from(finalBytes).toString("base64"),
+        filename: `Rechnung_${input.recipientName.replace(/\s+/g, "_")}_${invDate.toISOString().slice(0, 10)}.pdf`,
+      };
+    }),
+
 });
+
+// Helper: word-wrap text for pdf-lib
+function wrapText(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, fontSize: number, maxWidth: number): string[] {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const width = font.widthOfTextAtSize(testLine, fontSize);
+    if (width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
 
 function escapeXml(str: string): string {
   return str

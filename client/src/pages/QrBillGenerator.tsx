@@ -76,7 +76,7 @@ export default function QrBillGenerator() {
   const total = useMemo(() => subtotal + vatAmount, [subtotal, vatAmount]);
 
   // ─── Mutations ─────────────────────────────────────────────────────────────
-  const generateInvoiceMut = trpc.qrBill.generateInvoiceWithQr.useMutation({
+  const generateInvoiceMut = trpc.qrBill.generateInvoiceAcroform.useMutation({
     onSuccess: (result) => {
       const byteChars = atob(result.base64);
       const byteArr = new Uint8Array(byteChars.length);

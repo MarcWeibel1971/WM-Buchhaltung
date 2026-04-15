@@ -468,6 +468,8 @@ export const companySettings = mysqlTable("company_settings", {
   website: varchar("website", { length: 200 }),
   // HR number
   hrNumber: varchar("hrNumber", { length: 50 }),
+  // Company logo URL (stored in S3)
+  logoUrl: varchar("logoUrl", { length: 500 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

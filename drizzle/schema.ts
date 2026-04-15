@@ -906,3 +906,132 @@ export const templates = mysqlTable("templates", {
 });
 export type Template = typeof templates.$inferSelect;
 export type InsertTemplate = typeof templates.$inferInsert;
+
+// ─── Invoices (Ausgangsrechnungen / Debitorenbuchhaltung) ───────────────────
+// Vollständiges Rechnungsmodul mit Nummernkreis, Positionen, MWST,
+// Zahlungsstatus und Anbindung an QR-Rechnung/Journal.
+//
+// Lifecycle:
+//   draft            → Entwurf, noch keine Belegnummer, kein Journal-Entry
+//   sent             → Versendet, Nummer vergeben, Debitoren-Buchung ausgelöst
+//   partially_paid   → Teilzahlung eingegangen
+//   paid             → Vollständig bezahlt
+//   overdue          → Fällig + Zahlungsziel überschritten (abgeleitet)
+//   cancelled        → Storniert (Gegenbuchung im Journal)
+//   written_off      → Abschreibung (Debitorenverlust)
+export const invoices = mysqlTable(
+  "invoices",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organizationId").notNull(),
+    // Fortlaufende Rechnungsnummer pro Org, Format "R-YYYY-NNNNN".
+    // NULL während Draft-Phase, wird bei `issue` vergeben.
+    invoiceNumber: varchar("invoiceNumber", { length: 30 }),
+    // Kunde (FK auf customers – nur eingeloggt innerhalb der Org)
+    customerId: int("customerId").notNull(),
+    // Rechnungsdatum (Ausstellungsdatum)
+    invoiceDate: date("invoiceDate", { mode: "string" }).notNull(),
+    // Fälligkeitsdatum – wird bei `issue` aus payment_terms_days berechnet,
+    // kann aber überschrieben werden.
+    dueDate: date("dueDate", { mode: "string" }).notNull(),
+    // Überweisungsdatum (für Status paid)
+    paidDate: date("paidDate", { mode: "string" }),
+    // Zahlungsziel in Tagen (Default aus Org oder 30)
+    paymentTermDays: int("paymentTermDays").default(30).notNull(),
+    // Status im Lifecycle
+    status: mysqlEnum("status", [
+      "draft",
+      "sent",
+      "partially_paid",
+      "paid",
+      "cancelled",
+      "written_off",
+    ]).default("draft").notNull(),
+    // Betreff / Kurzbeschreibung (z.B. "Beratung März 2026")
+    subject: varchar("subject", { length: 300 }),
+    // Einleitungstext (erscheint im PDF vor der Positionsliste)
+    introText: text("introText"),
+    // Fusszeile / Dankestext
+    footerText: text("footerText"),
+    // Beträge (werden aus invoice_items berechnet, aber gecacht für Filter)
+    subtotal: decimal("subtotal", { precision: 15, scale: 2 }).default("0").notNull(),
+    vatTotal: decimal("vatTotal", { precision: 15, scale: 2 }).default("0").notNull(),
+    total: decimal("total", { precision: 15, scale: 2 }).default("0").notNull(),
+    // Eingegangene Zahlungen (für partial-paid Tracking)
+    paidAmount: decimal("paidAmount", { precision: 15, scale: 2 }).default("0").notNull(),
+    currency: mysqlEnum("currency", ["CHF", "EUR"]).default("CHF").notNull(),
+    // QR-Referenz (für QR-Rechnung); wird bei `issue` generiert
+    qrReference: varchar("qrReference", { length: 50 }),
+    // Verknüpfte Buchhaltung
+    journalEntryId: int("journalEntryId"),            // Debitorenbuchung bei `sent`
+    cancelJournalEntryId: int("cancelJournalEntryId"),// Gegenbuchung bei `cancelled`/`written_off`
+    // Status-Zeitstempel (für Audit)
+    sentAt: timestamp("sentAt"),
+    cancelledAt: timestamp("cancelledAt"),
+    // Fiscal year (für Filter)
+    fiscalYear: int("fiscalYear"),
+    // PDF-Cache (nach erstem generatePdf)
+    pdfS3Key: varchar("pdfS3Key", { length: 500 }),
+    pdfS3Url: text("pdfS3Url"),
+    // Notizen (nur intern, nicht im PDF)
+    notes: text("notes"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    // Rechnungsnummer pro Org eindeutig. NULL für Drafts ist erlaubt
+    // (mehrere Drafts können parallel existieren).
+    orgInvoiceNumberUnique: unique("invoices_org_invoiceNumber_unique").on(
+      table.organizationId,
+      table.invoiceNumber,
+    ),
+  }),
+);
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = typeof invoices.$inferInsert;
+
+// ─── Invoice Line Items ─────────────────────────────────────────────────────
+export const invoiceItems = mysqlTable("invoice_items", {
+  id: int("id").autoincrement().primaryKey(),
+  invoiceId: int("invoiceId").notNull(),
+  // Reihenfolge in der Rechnung (1-basiert)
+  position: int("position").notNull(),
+  // Optional: FK auf services/customer_services für Templates
+  serviceId: int("serviceId"),
+  // Text (Pflicht – Beschreibung der Leistung)
+  description: text("description").notNull(),
+  // Menge (z.B. Stunden, Stück)
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).default("1").notNull(),
+  // Einheit (z.B. "h", "Stk", "Pauschal")
+  unit: varchar("unit", { length: 20 }).default("Stk"),
+  // Einzelpreis netto
+  unitPrice: decimal("unitPrice", { precision: 15, scale: 2 }).notNull(),
+  // MWST-Satz (0, 2.6, 3.8, 8.1)
+  vatRate: decimal("vatRate", { precision: 5, scale: 2 }).default("0").notNull(),
+  // Konto für Ertragsbuchung (Credit bei sent) – überschreibt Default aus Service
+  revenueAccountId: int("revenueAccountId"),
+  // Berechnet (gecacht für Summen-Queries)
+  lineSubtotal: decimal("lineSubtotal", { precision: 15, scale: 2 }).notNull(),
+  lineVat: decimal("lineVat", { precision: 15, scale: 2 }).notNull(),
+  lineTotal: decimal("lineTotal", { precision: 15, scale: 2 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type InvoiceItem = typeof invoiceItems.$inferSelect;
+export type InsertInvoiceItem = typeof invoiceItems.$inferInsert;
+
+// ─── Invoice Sequences (fortlaufende Rechnungsnummern pro Org+Jahr) ─────────
+// Analog zu journal_entry_sequences: atomare Allokation über MySQL
+// LAST_INSERT_ID()-Trick, Format "R-YYYY-NNNNN".
+export const invoiceSequences = mysqlTable(
+  "invoice_sequences",
+  {
+    organizationId: int("organizationId").notNull(),
+    fiscalYear: int("fiscalYear").notNull(),
+    nextSequence: int("nextSequence").default(1).notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.organizationId, table.fiscalYear] }),
+  }),
+);
+export type InvoiceSequence = typeof invoiceSequences.$inferSelect;

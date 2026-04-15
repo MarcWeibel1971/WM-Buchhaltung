@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch, useLocation } from "wouter";
+import { Route, Switch, Redirect, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { FiscalYearProvider } from "./contexts/FiscalYearContext";
@@ -55,16 +55,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    // Redirect to login page
-    window.location.href = "/login";
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Weiterleitung zur Anmeldung...</p>
-        </div>
-      </div>
-    );
+    return <Redirect to="/login" />;
   }
 
   return <>{children}</>;
@@ -185,7 +176,7 @@ function App() {
             <Route path="/verify-email" component={VerifyEmail} />
 
             {/* Protected routes – auth + org required */}
-            <Route path="/:rest*" component={ProtectedApp} />
+            <Route component={ProtectedApp} />
           </Switch>
         </TooltipProvider>
       </ThemeProvider>

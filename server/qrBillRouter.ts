@@ -252,6 +252,7 @@ export const qrBillRouter = router({
         creditorAddress: z.string().optional(),
         creditorZip: z.string().optional(),
         creditorCity: z.string().optional(),
+        creditorCountry: z.string().optional(),
         amount: z.number().positive(),
         currency: z.string().default("CHF"),
         reference: z.string().optional(),
@@ -259,6 +260,8 @@ export const qrBillRouter = router({
       })).optional(),
       // Execution date
       executionDate: z.string().optional(),
+      // Document IDs of invoices included in this payment (for marking as paid)
+      documentIds: z.array(z.number()).optional(),
     }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -278,6 +281,7 @@ export const qrBillRouter = router({
         creditorAddress?: string;
         creditorZip?: string;
         creditorCity?: string;
+        creditorCountry?: string;
         amount: number;
         currency: string;
         reference?: string;
@@ -402,13 +406,13 @@ export const qrBillRouter = router({
           </FinInstnId>
         </CdtrAgt>
         <Cdtr>
-          <Nm>${escapeXml(p.creditorName)}</Nm>${p.creditorAddress ? `
-          <PstlAdr>
-            <StrtNm>${escapeXml(p.creditorAddress)}</StrtNm>${p.creditorZip ? `
-            <PstCd>${escapeXml(p.creditorZip)}</PstCd>` : ""}${p.creditorCity ? `
-            <TwnNm>${escapeXml(p.creditorCity)}</TwnNm>` : ""}
-            <Ctry>CH</Ctry>
-          </PstlAdr>` : ""}
+          <Nm>${escapeXml(p.creditorName)}</Nm>
+          <PstlAdr>${p.creditorAddress ? `
+            <StrtNm>${escapeXml(p.creditorAddress)}</StrtNm>` : ""}${p.creditorZip ? `
+            <PstCd>${escapeXml(p.creditorZip)}</PstCd>` : ""}
+            <TwnNm>${escapeXml(p.creditorCity || "Unbekannt")}</TwnNm>
+            <Ctry>${escapeXml(p.creditorCountry || "CH")}</Ctry>
+          </PstlAdr>
         </Cdtr>${p.creditorIban ? `
         <CdtrAcct>
           <Id>
@@ -430,6 +434,15 @@ export const qrBillRouter = router({
         ? `Lohnzahlung_${input.year}_${String(input.month).padStart(2, "0")}_pain001.xml`
         : `Zahlungsauftrag_${execDate}_pain001.xml`;
 
+      // Mark included invoices as "paid" (matchStatus = 'pain001') when pain.001 is generated
+      if (input.documentIds && input.documentIds.length > 0) {
+        for (const docId of input.documentIds) {
+          await db.update(documents).set({
+            matchStatus: "pain001",
+          }).where(eq(documents.id, docId));
+        }
+      }
+
       return {
         xml,
         filename,
@@ -437,6 +450,7 @@ export const qrBillRouter = router({
           nbOfTxs,
           ctrlSum: parseFloat(ctrlSum),
           executionDate: execDate,
+          markedAsPaid: input.documentIds?.length ?? 0,
         },
       };
     }),  // ─── List unpaid invoices from Documents for ISO 20022 export ─────────────
@@ -463,12 +477,15 @@ export const qrBillRouter = router({
         counterparty: bankTransactions.counterparty,
         amount: bankTransactions.amount,
         status: bankTransactions.status,
+        journalEntryId: bankTransactions.journalEntryId,
       }).from(bankTransactions);
 
-      // Build a set of document IDs that are matched to bank transactions (= paid)
+      // Build a set of document IDs that are matched to bank transactions that have been
+      // actually processed (verbucht = journalEntryId exists, or status = matched with journal entry)
+      // A transaction in the bankimport that is still "pending" does NOT mean the invoice is paid
       const paidDocIds = new Set(
         allTxs
-          .filter(tx => tx.matchedDocumentId && tx.matchedDocumentId > 0)
+          .filter(tx => tx.matchedDocumentId && tx.matchedDocumentId > 0 && tx.journalEntryId && tx.journalEntryId > 0)
           .map(tx => tx.matchedDocumentId!)
       );
 
@@ -486,9 +503,16 @@ export const qrBillRouter = router({
         const documentDate = metadata.documentDate || "";
         const currency = metadata.currency || "CHF";
         const description = metadata.description || doc.filename;
+        const creditorCity = metadata.creditorCity || metadata.city || "";
+        const creditorCountry = metadata.creditorCountry || metadata.country || "CH";
+        const creditorAddress = metadata.creditorAddress || metadata.address || metadata.street || "";
+        const creditorZip = metadata.creditorZip || metadata.zipCode || metadata.zip || "";
 
-        // Check if paid: matched to a bank transaction
-        const isPaid = paidDocIds.has(doc.id) || doc.matchStatus === "matched";
+        // Check if paid:
+        // - matched to a bank transaction with journalEntryId (verbucht)
+        // - manually marked as paid (matchStatus = 'manual')
+        // - included in a pain.001 export (matchStatus = 'pain001')
+        const isPaid = paidDocIds.has(doc.id) || doc.matchStatus === "manual" || doc.matchStatus === "pain001";
 
         // Calculate due date: documentDate + 30 days (default payment term)
         let dueDate = "";
@@ -514,6 +538,10 @@ export const qrBillRouter = router({
           isPaid,
           matchStatus: doc.matchStatus,
           s3Url: doc.s3Url,
+          creditorCity,
+          creditorCountry,
+          creditorAddress,
+          creditorZip,
         };
       });
 

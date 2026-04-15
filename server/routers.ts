@@ -15,10 +15,10 @@ import {
   getVatPeriods, getCreditCardStatements, getDashboardStats,
   getDb,
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
-  autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument,
+  autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { qrBillRouter } from "./qrBillRouter";
@@ -485,7 +485,87 @@ const bankImportRouter = router({
         }
       }
 
-      return { imported, duplicates, skipped, batchId };
+      // ─── Auto-match imported transactions against known invoices ──────────
+      // After importing, check if any newly imported transactions match documents
+      // that were included in a pain.001 export (matchStatus = 'pain001') or unmatched invoices
+      let autoMatched = 0;
+      if (db && imported > 0) {
+        try {
+          // Get newly imported pending transactions from this batch
+          const newTxns = await db.select().from(bankTransactions)
+            .where(and(
+              eq(bankTransactions.importBatchId, batchId),
+              eq(bankTransactions.status, 'pending'),
+            ));
+
+          // Get documents that are invoices (have aiMetadata with totalAmount)
+          // Focus on pain001 status (exported but not yet confirmed) and unmatched
+          const invoiceDocs = await db.select().from(documents)
+            .where(and(
+              sql`${documents.aiMetadata} IS NOT NULL`,
+              sql`${documents.matchStatus} IN ('pain001', 'unmatched')`,
+            ));
+
+          for (const txn of newTxns) {
+            // Only match debit transactions (outgoing payments)
+            const txnAmount = parseFloat(txn.amount);
+            if (txnAmount >= 0) continue; // Skip credits/incoming
+
+            let bestMatch: { docId: number; score: number } | null = null;
+
+            for (const doc of invoiceDocs) {
+              let meta: any;
+              try { meta = JSON.parse(doc.aiMetadata || '{}'); } catch { continue; }
+              if (!meta.totalAmount) continue;
+
+              const score = calculateMatchScore(
+                {
+                  totalAmount: meta.totalAmount,
+                  counterparty: meta.counterparty,
+                  documentDate: meta.documentDate,
+                  counterpartyIban: meta.counterpartyIban,
+                  referenceNumber: meta.referenceNumber,
+                },
+                {
+                  amount: txn.amount,
+                  counterparty: txn.counterparty,
+                  transactionDate: txn.transactionDate,
+                  counterpartyIban: txn.counterpartyIban,
+                  reference: txn.reference,
+                }
+              );
+
+              // Higher threshold for auto-matching (60+)
+              if (score >= 60 && (!bestMatch || score > bestMatch.score)) {
+                bestMatch = { docId: doc.id, score };
+              }
+            }
+
+            if (bestMatch) {
+              // Apply match: link document to transaction
+              await db.update(documents).set({
+                bankTransactionId: txn.id,
+                matchStatus: 'matched',
+                matchScore: bestMatch.score,
+              }).where(eq(documents.id, bestMatch.docId));
+
+              await db.update(bankTransactions).set({
+                matchedDocumentId: bestMatch.docId,
+                matchScore: bestMatch.score,
+              }).where(eq(bankTransactions.id, txn.id));
+
+              autoMatched++;
+              // Remove matched doc from candidates
+              const idx = invoiceDocs.findIndex(d => d.id === bestMatch!.docId);
+              if (idx >= 0) invoiceDocs.splice(idx, 1);
+            }
+          }
+        } catch (e) {
+          console.error("Auto-match after import failed:", e);
+        }
+      }
+
+      return { imported, duplicates, skipped, batchId, autoMatched };
     }),
 
   getImportHistory: protectedProcedure

@@ -1,0 +1,1 @@
+ALTER TABLE `documents` MODIFY COLUMN `matchStatus` enum('unmatched','matched','manual','pain001') NOT NULL DEFAULT 'unmatched';

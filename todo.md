@@ -628,3 +628,31 @@
 - [x] Fix: Bei regulärem IBAN wird jetzt korrekte SCOR-Referenz (ISO 11649, RF-Format) generiert statt QR-Referenz
 - [x] Fix: Professionelle Rechnung (generateInvoiceWithQr) und einfacher QR-Einzahlungsschein (generateQrBill) beide korrigiert
 - [x] Beide Endpunkte erfolgreich getestet mit IBAN CH3700778010355583209
+
+## Feature: Navigation Umstrukturierung – Zahlungen (Debitoren/Kreditoren)
+
+- [x] Navigation: Neuer Bereich "Zahlungen" in der Sidebar unter Dashboard
+- [x] Navigation: Untermenü "Debitoren" unter Zahlungen (bisherige QR-Rechnung-Seite)
+- [x] Navigation: Untermenü "Kreditoren" unter Zahlungen (ISO 20022 Rechnungszahlung, bisher unter Bankimport)
+- [x] Kreditoren-Seite: Eigenständige Seite für Kreditorenzahlungen (ISO 20022 pain.001) statt Dialog im Bankimport
+- [x] Kreditoren-Seite: Bankkonto-Auswahl (welches Konto soll belastet werden) als Dropdown
+- [x] QR-Rechnung aus Sidebar entfernen (wird zu Debitoren)
+- [x] ISO 20022 Button aus Bankimport entfernen (wird zu Kreditoren)
+
+## Bugfix: PensExpert fälschlicherweise als bezahlt markiert
+
+- [x] Fix: Rechnungen nur als "bezahlt" markieren wenn tatsächlich eine passende Transaktion im Bankimport vorhanden ist
+- [x] Fix: PensExpert-Rechnung muss als "offen" erscheinen da noch nicht im Bankimport
+
+## Feature: Pain.001 Pflichtfelder Ort und Land
+
+- [x] Pain.001 XML: Ort (Twnm) als Pflichtfeld für Begünstigten einbauen
+- [x] Pain.001 XML: Land (Ctry) als Pflichtfeld für Begünstigten einbauen
+- [x] Frontend: Ort und Land Felder in der Kreditoren-Zahlungsansicht anzeigen und editierbar machen
+- [x] Dokumente/AI-Extraktion: Ort und Land des Lieferanten wenn möglich aus Rechnungen extrahieren
+
+## Feature: Korrekter Zahlungsworkflow (Kreditoren)
+
+- [x] Rechnungen erst als "bezahlt" markieren wenn pain.001 tatsächlich heruntergeladen wird (nicht beim Öffnen der Seite)
+- [x] Manuelles Zurücksetzen auf "offen" ermöglichen (Button "Als unbezahlt markieren")
+- [x] Automatischer Match beim Bankimport: Wenn Banktransaktion zu bekannter Rechnung passt (Betrag, Kreditor, Referenz), automatisch Match erstellen und Rechnung als bezahlt markieren

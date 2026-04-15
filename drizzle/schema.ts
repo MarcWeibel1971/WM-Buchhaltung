@@ -393,7 +393,7 @@ export const documents = mysqlTable("documents", {
   // Notes
   notes: text("notes"),
   // Match status: unmatched, matched, manual
-  matchStatus: mysqlEnum("matchStatus", ["unmatched", "matched", "manual"]).default("unmatched").notNull(),
+  matchStatus: mysqlEnum("matchStatus", ["unmatched", "matched", "manual", "pain001"]).default("unmatched").notNull(),
   // Match confidence score (0-100)
   matchScore: int("matchScore"),
   // Fiscal year this document belongs to

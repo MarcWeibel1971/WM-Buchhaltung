@@ -22,6 +22,7 @@ import Documents from "./pages/Documents";
 import Settings from "./pages/Settings";
 import YearEnd from "./pages/YearEnd";
 import QrBillGenerator from "./pages/QrBillGenerator";
+import Kreditoren from "./pages/Kreditoren";
 import Layout from "./components/Layout";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -80,7 +81,10 @@ function Router() {
       <Route path="/documents" component={Documents} />
       <Route path="/settings" component={Settings} />
       <Route path="/year-end" component={YearEnd} />
-      <Route path="/qr-rechnung" component={QrBillGenerator} />
+      <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
+      <Route path="/zahlungen/kreditoren" component={Kreditoren} />
+      <Route path="/zahlungen">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
+      <Route path="/qr-rechnung">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

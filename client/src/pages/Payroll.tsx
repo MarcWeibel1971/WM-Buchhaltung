@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useState } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { Plus, Check, FileText, Users, CalendarDays, Award, RefreshCw, Calculator, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Check, FileText, Users, CalendarDays, Award, RefreshCw, Calculator, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -637,8 +637,9 @@ export default function Payroll() {
         {/* Monthly payroll list */}
         <TabsContent value="monthly">
           <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-border">
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
               <h3 className="font-semibold">Lohnabrechnungen {year}</h3>
+              <Pain001ExportButton year={year} />
             </div>
             <div className="overflow-x-auto">
               <table className="accounting-table">
@@ -1140,5 +1141,88 @@ function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }:
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+// ─── ISO 20022 pain.001 Export Button ─────────────────────────────────────────
+
+function Pain001ExportButton({ year }: { year: number }) {
+  const [showDialog, setShowDialog] = useState(false);
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+
+  const pain001Mut = trpc.qrBill.generatePain001.useMutation({
+    onSuccess: (result) => {
+      // Download XML file
+      const blob = new Blob([result.xml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Zahlungsdatei erstellt: ${result.summary.nbOfTxs} Zahlungen, CHF ${result.summary.ctrlSum.toLocaleString("de-CH", { minimumFractionDigits: 2 })}`);
+      setShowDialog(false);
+    },
+    onError: (e: any) => toast.error(`Fehler: ${e.message}`),
+  });
+
+  const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+  return (
+    <>
+      <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowDialog(true)}>
+        <Download className="h-4 w-4" /> ISO 20022 Export
+      </Button>
+
+      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Zahlungsdatei exportieren (ISO 20022 pain.001)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Erstellt eine ISO 20022 pain.001 Zahlungsdatei für die Sammellohnzahlung.
+              Diese Datei kann direkt ins E-Banking hochgeladen werden.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium">Jahr</label>
+                <Input value={year} disabled className="bg-muted" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Monat</label>
+                <Select value={String(month)} onValueChange={v => setMonth(parseInt(v))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {MONTHS.map((m, i) => (
+                      <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3 text-sm">
+              <p className="font-medium text-blue-800 dark:text-blue-200">Schweizer ISO 20022 Standard</p>
+              <p className="text-blue-700 dark:text-blue-300 mt-1">
+                Format: pain.001.001.09 gemäss SIX Swiss Implementation Guidelines.
+                Kompatibel mit allen Schweizer Banken.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDialog(false)}>Abbrechen</Button>
+            <Button
+              onClick={() => pain001Mut.mutate({ paymentType: "salary", year, month })}
+              disabled={pain001Mut.isPending}
+              className="gap-2"
+            >
+              {pain001Mut.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Zahlungsdatei erstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

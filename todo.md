@@ -568,3 +568,26 @@
 ## Feature: Lohnausweis PDF – Originalformular als Hintergrund
 
 - [x] Lohnausweis PDF: Originales Formular 11 als AcroForm-Vorlage verwenden und Felder pixelgenau über Formularfelder befüllen (pdf-lib getForm/getTextField/setText/flatten)
+
+## Feature: QR-Rechnung (Swiss QR-Bill)
+
+- [x] Backend: swissqrbill Paket installieren und QR-Rechnung-Generierung implementieren
+- [x] Backend: tRPC-Endpunkt generateQrBill – erzeugt PDF mit QR-Zahlungsteil (Creditor=WM Weibel Mueller AG, IBAN, Betrag, Referenz)
+- [x] Frontend: QR-Rechnung-Seite (Sidebar) – generiert QR-Rechnung mit Debtor-Formular
+- [x] Frontend: QR-Rechnung-Einstellungen (IBAN, Referenztyp, Währung) unter Einstellungen
+
+## Feature: ISO 20022 – Zahlungsdatei-Export (pain.001)
+
+- [x] Backend: ISO 20022 pain.001 XML-Generator implementieren (Schweizer Format pain.001.001.09)
+- [x] Backend: tRPC-Endpunkt generatePain001 – erzeugt pain.001 XML für Lohnzahlungen
+- [x] Frontend: Zahlungsdatei-Export-Button in Lohnbuchhaltung (Sammellohnzahlung als pain.001)
+- [ ] Frontend: Zahlungsdatei-Export im Bankimport/Journal für offene Kreditorenrechnungen (noch offen)
+
+## Feature: DSG-Konformität (Schweizer Datenschutzgesetz)
+
+- [x] Backend: Audit-Log-Tabelle (wer hat wann welche Daten geändert/gelesen)
+- [x] Backend: Datenexport-Endpunkt (Auskunftsrecht Art. 25 DSG) – alle personenbezogenen Daten als JSON/CSV
+- [x] Backend: Datenlöschung-Endpunkt (Löschungsrecht) – Anonymisierung von Mitarbeiterdaten
+- [x] Frontend: Datenschutzerklärung-Seite mit Schweizer DSG-konformem Inhalt (8 Abschnitte)
+- [x] Frontend: Audit-Log-Ansicht unter Einstellungen (wer hat wann was geändert)
+- [x] Frontend: Datenexport- und Löschungs-Buttons unter Einstellungen

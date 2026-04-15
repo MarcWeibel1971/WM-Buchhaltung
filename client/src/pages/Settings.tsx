@@ -22,9 +22,10 @@ import {
   Building2, Users, Shield, Landmark, BookOpen, Scale, ListTree,
   Pencil, Trash2, Plus, Check, X, AlertTriangle, TrendingDown, Loader2,
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
+  QrCode, ShieldCheck, FileText, Download, UserX, ClipboardList,
 } from "lucide-react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { useMemo } from "react";
+import { useMemo, useState as useReactState } from "react";
 import { toast } from "sonner";
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
@@ -38,6 +39,8 @@ const TABS = [
   { id: "rules", label: "Buchungsregeln", icon: BookOpen },
   { id: "opening", label: "Eröffnungssalden", icon: Scale },
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
+  { id: "qrBill", label: "QR-Rechnung", icon: QrCode },
+  { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -100,6 +103,8 @@ export default function Settings() {
         {activeTab === "rules" && <BookingRulesTab />}
         {activeTab === "opening" && <OpeningBalancesTab />}
         {activeTab === "depreciation" && <DepreciationTab />}
+        {activeTab === "qrBill" && <QrBillTab />}
+        {activeTab === "dsg" && <DsgTab />}
       </main>
     </div>
   );
@@ -2026,6 +2031,510 @@ function ChartOfAccountsTab() {
           {searchTerm ? "Keine Konten gefunden für diese Suche." : "Noch keine Konten vorhanden."}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ─── QR-Rechnung Tab ─────────────────────────────────────────────────────────
+
+function QrBillTab() {
+  const { data: qrData, isLoading } = trpc.qrBill.getQrSettings.useQuery();
+  const saveMut = trpc.qrBill.saveQrSettings.useMutation({
+    onSuccess: () => { toast.success("QR-Rechnungs-Einstellungen gespeichert"); utils.qrBill.getQrSettings.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const utils = trpc.useUtils();
+
+  const [iban, setIban] = useReactState("");
+  const [refType, setRefType] = useReactState<"QRR" | "SCOR" | "NON">("QRR");
+  const [currency, setCurrency] = useReactState<"CHF" | "EUR">("CHF");
+  const [additionalInfo, setAdditionalInfo] = useReactState("");
+  const [initialized, setInitialized] = useReactState(false);
+
+  // Initialize form from loaded data
+  if (qrData && !initialized) {
+    setIban(qrData.iban ?? "");
+    setRefType(qrData.referenceType as "QRR" | "SCOR" | "NON");
+    setCurrency(qrData.currency as "CHF" | "EUR");
+    setAdditionalInfo(qrData.additionalInfo ?? "");
+    setInitialized(true);
+  }
+
+  const handleSave = () => {
+    if (!iban.trim()) { toast.error("IBAN ist erforderlich"); return; }
+    saveMut.mutate({ iban: iban.trim(), referenceType: refType, currency, additionalInfo: additionalInfo || undefined });
+  };
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold">QR-Rechnung Einstellungen</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Konfigurieren Sie die IBAN und Referenzart für die Generierung von Swiss QR-Rechnungen (Formular mit QR-Zahlungsteil).
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Zahlungsempfänger (Creditor)</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <Label>IBAN *</Label>
+              <Input
+                value={iban}
+                onChange={e => setIban(e.target.value)}
+                placeholder="CH44 3199 9123 0008 8901 2"
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Für QR-Referenz (QRR) wird eine QR-IBAN benötigt. Für SCOR oder ohne Referenz eine normale IBAN.
+              </p>
+            </div>
+            <div>
+              <Label>Referenztyp</Label>
+              <Select value={refType} onValueChange={(v) => setRefType(v as any)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="QRR">QR-Referenz (QRR)</SelectItem>
+                  <SelectItem value="SCOR">Structured Creditor Reference (SCOR)</SelectItem>
+                  <SelectItem value="NON">Ohne Referenz</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Währung</Label>
+              <Select value={currency} onValueChange={(v) => setCurrency(v as any)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CHF">CHF</SelectItem>
+                  <SelectItem value="EUR">EUR</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="col-span-2">
+              <Label>Zusätzliche Informationen (optional)</Label>
+              <Input
+                value={additionalInfo}
+                onChange={e => setAdditionalInfo(e.target.value)}
+                placeholder="z.B. Rechnungsnummer oder Mitteilung"
+                maxLength={140}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end pt-2">
+            <Button onClick={handleSave} disabled={saveMut.isPending}>
+              {saveMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Speichern
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Hinweise</CardTitle></CardHeader>
+        <CardContent className="text-sm text-muted-foreground space-y-2">
+          <p>
+            Die QR-Rechnung ist seit dem 1. Oktober 2022 der offizielle Zahlungsstandard in der Schweiz.
+            Sie ersetzt die alten Einzahlungsscheine (ESR/ES).
+          </p>
+          <p>
+            <strong>QR-IBAN:</strong> Beginnt mit CH oder LI, die Bankenclearing-Nummer (Position 5–9) liegt im Bereich 30000–31999.
+            Fragen Sie Ihre Bank nach Ihrer QR-IBAN.
+          </p>
+          <p>
+            <strong>Referenztypen:</strong> QRR (26+1 Stellen, automatisch generiert), SCOR (ISO 11649), oder ohne Referenz.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── DSG (Datenschutz) Tab ───────────────────────────────────────────────────
+
+function DsgTab() {
+  const [activeSection, setActiveSection] = useReactState<"audit" | "export" | "privacy">("audit");
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold">Datenschutz (DSG-Konformität)</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Funktionen zur Einhaltung des Schweizer Datenschutzgesetzes (DSG, in Kraft seit 1. September 2023).
+        </p>
+      </div>
+
+      <div className="flex gap-2 border-b pb-2">
+        {[
+          { id: "audit" as const, label: "Audit-Log", icon: ClipboardList },
+          { id: "export" as const, label: "Datenexport / Löschung", icon: Download },
+          { id: "privacy" as const, label: "Datenschutzerklärung", icon: FileText },
+        ].map(s => (
+          <button
+            key={s.id}
+            onClick={() => setActiveSection(s.id)}
+            className={`flex items-center gap-2 px-3 py-2 text-sm rounded-t-lg transition-colors ${
+              activeSection === s.id
+                ? "bg-primary/10 text-primary font-medium border-b-2 border-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <s.icon className="h-4 w-4" />
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {activeSection === "audit" && <AuditLogSection />}
+      {activeSection === "export" && <DataExportSection />}
+      {activeSection === "privacy" && <PrivacySection />}
+    </div>
+  );
+}
+
+// ─── Audit Log Section ───────────────────────────────────────────────────────
+
+function AuditLogSection() {
+  const [page, setPage] = useReactState(1);
+  const [actionFilter, setActionFilter] = useReactState<string>("");
+  const [entityFilter, setEntityFilter] = useReactState("");
+
+  const { data, isLoading } = trpc.dsg.auditLog.useQuery({
+    page,
+    pageSize: 30,
+    action: actionFilter ? actionFilter as any : undefined,
+    entityType: entityFilter || undefined,
+  });
+
+  const actionLabels: Record<string, string> = {
+    create: "Erstellt",
+    read: "Gelesen",
+    update: "Geändert",
+    delete: "Gelöscht",
+    export: "Exportiert",
+    login: "Anmeldung",
+    logout: "Abmeldung",
+  };
+
+  const actionColors: Record<string, string> = {
+    create: "bg-green-100 text-green-800",
+    read: "bg-blue-100 text-blue-800",
+    update: "bg-yellow-100 text-yellow-800",
+    delete: "bg-red-100 text-red-800",
+    export: "bg-purple-100 text-purple-800",
+    login: "bg-cyan-100 text-cyan-800",
+    logout: "bg-gray-100 text-gray-800",
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Audit-Log</CardTitle>
+          <CardDescription>Protokoll aller datenschutzrelevanten Aktionen (Art. 7 DSG: Datensicherheit)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-3 mb-4">
+            <Select value={actionFilter} onValueChange={setActionFilter}>
+              <SelectTrigger className="w-[180px]"><SelectValue placeholder="Alle Aktionen" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle Aktionen</SelectItem>
+                <SelectItem value="create">Erstellt</SelectItem>
+                <SelectItem value="read">Gelesen</SelectItem>
+                <SelectItem value="update">Geändert</SelectItem>
+                <SelectItem value="delete">Gelöscht</SelectItem>
+                <SelectItem value="export">Exportiert</SelectItem>
+                <SelectItem value="login">Anmeldung</SelectItem>
+                <SelectItem value="logout">Abmeldung</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              value={entityFilter}
+              onChange={e => setEntityFilter(e.target.value)}
+              placeholder="Entitätstyp filtern..."
+              className="w-[200px]"
+            />
+          </div>
+
+          {isLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+          ) : (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Zeitpunkt</TableHead>
+                    <TableHead>Benutzer</TableHead>
+                    <TableHead>Aktion</TableHead>
+                    <TableHead>Entität</TableHead>
+                    <TableHead>Details</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data?.entries?.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                        Noch keine Audit-Log-Einträge vorhanden.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {data?.entries?.map(entry => (
+                    <TableRow key={entry.id}>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {new Date(entry.createdAt).toLocaleString("de-CH")}
+                      </TableCell>
+                      <TableCell className="text-sm">{entry.userName ?? entry.userId}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className={actionColors[entry.action] ?? ""}>
+                          {actionLabels[entry.action] ?? entry.action}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">{entry.entityType}{entry.entityId ? ` #${entry.entityId}` : ""}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground max-w-[300px] truncate">{entry.details}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {data && data.total > 30 && (
+                <div className="flex items-center justify-between mt-4">
+                  <span className="text-sm text-muted-foreground">
+                    Seite {data.page} von {Math.ceil(data.total / data.pageSize)}
+                    {" "}({data.total} Einträge)
+                  </span>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Zurück</Button>
+                    <Button variant="outline" size="sm" disabled={page * 30 >= data.total} onClick={() => setPage(p => p + 1)}>Weiter</Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Data Export / Anonymization Section ─────────────────────────────────────
+
+function DataExportSection() {
+  const { data: emps } = trpc.payroll.getEmployees.useQuery();
+  const [selectedEmp, setSelectedEmp] = useReactState<string>("");
+  const [exportFormat, setExportFormat] = useReactState<"json" | "csv">("json");
+  const [confirmName, setConfirmName] = useReactState("");
+  const [showAnonymize, setShowAnonymize] = useReactState(false);
+
+  const exportMut = trpc.dsg.exportPersonalData.useMutation({
+    onSuccess: (result) => {
+      // Download the file
+      const blob = new Blob([result.data], { type: result.contentType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Datenexport erstellt");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const anonymizeMut = trpc.dsg.anonymizeEmployee.useMutation({
+    onSuccess: (result) => {
+      toast.success(result.message);
+      setShowAnonymize(false);
+      setConfirmName("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const selectedEmployee = emps?.find(e => String(e.id) === selectedEmp);
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Datenexport (Art. 25 DSG – Auskunftsrecht)</CardTitle>
+          <CardDescription>
+            Exportieren Sie alle personenbezogenen Daten eines Mitarbeiters. Dies umfasst Stammdaten, Lohnabrechnungen und Audit-Protokoll.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <Label>Mitarbeiter</Label>
+              <Select value={selectedEmp} onValueChange={setSelectedEmp}>
+                <SelectTrigger><SelectValue placeholder="Mitarbeiter wählen" /></SelectTrigger>
+                <SelectContent>
+                  {emps?.map(e => (
+                    <SelectItem key={e.id} value={String(e.id)}>{e.firstName} {e.lastName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Format</Label>
+              <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as any)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="json">JSON</SelectItem>
+                  <SelectItem value="csv">CSV</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-end">
+              <Button
+                onClick={() => {
+                  if (!selectedEmp) { toast.error("Bitte Mitarbeiter wählen"); return; }
+                  exportMut.mutate({ employeeId: parseInt(selectedEmp), format: exportFormat });
+                }}
+                disabled={!selectedEmp || exportMut.isPending}
+              >
+                {exportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                Exportieren
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <UserX className="h-5 w-5 text-destructive" />
+            Datenanonymisierung (Löschungsrecht)
+          </CardTitle>
+          <CardDescription>
+            Anonymisieren Sie personenbezogene Daten eines ehemaligen Mitarbeiters. Die Buchhaltungsdaten bleiben erhalten,
+            aber alle personenbezogenen Informationen (Name, AHV-Nr., Adresse, Geburtsdatum) werden unwiderruflich entfernt.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 text-sm">
+            <p className="font-medium text-destructive">Achtung: Diese Aktion kann nicht rückgängig gemacht werden!</p>
+            <p className="text-muted-foreground mt-1">
+              Mitarbeiter mit Lohnabrechnungen im aktuellen Jahr können nicht anonymisiert werden.
+              Gesetzliche Aufbewahrungsfristen (10 Jahre) müssen beachtet werden.
+            </p>
+          </div>
+
+          {selectedEmployee && (
+            <div className="space-y-3">
+              <p className="text-sm">
+                Ausgewählter Mitarbeiter: <strong>{selectedEmployee.firstName} {selectedEmployee.lastName}</strong>
+              </p>
+              {!showAnonymize ? (
+                <Button variant="destructive" size="sm" onClick={() => setShowAnonymize(true)}>
+                  <UserX className="h-4 w-4 mr-2" />
+                  Anonymisierung starten
+                </Button>
+              ) : (
+                <div className="space-y-3 border rounded-lg p-4">
+                  <Label>Zur Bestätigung den vollen Namen eingeben:</Label>
+                  <Input
+                    value={confirmName}
+                    onChange={e => setConfirmName(e.target.value)}
+                    placeholder={`${selectedEmployee.firstName} ${selectedEmployee.lastName}`}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={confirmName !== `${selectedEmployee.firstName} ${selectedEmployee.lastName}` || anonymizeMut.isPending}
+                      onClick={() => anonymizeMut.mutate({ employeeId: parseInt(selectedEmp), confirmName })}
+                    >
+                      {anonymizeMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      Unwiderruflich anonymisieren
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => { setShowAnonymize(false); setConfirmName(""); }}>
+                      Abbrechen
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {!selectedEmployee && (
+            <p className="text-sm text-muted-foreground">Bitte wählen Sie oben einen Mitarbeiter aus.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Privacy Policy Section ──────────────────────────────────────────────────
+
+function PrivacySection() {
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Datenschutzerklärung</CardTitle>
+          <CardDescription>Gemäss dem Schweizer Datenschutzgesetz (DSG), in Kraft seit 1. September 2023</CardDescription>
+        </CardHeader>
+        <CardContent className="prose prose-sm max-w-none text-foreground">
+          <h3 className="text-base font-semibold mt-0">1. Verantwortliche Stelle</h3>
+          <p>
+            WM Weibel Mueller AG ist verantwortlich für die Bearbeitung der Personendaten in dieser Anwendung.
+            Bei Fragen zum Datenschutz wenden Sie sich bitte an die Geschäftsleitung.
+          </p>
+
+          <h3 className="text-base font-semibold">2. Erhobene Daten</h3>
+          <p>Im Rahmen der Buchhaltung werden folgende personenbezogene Daten bearbeitet:</p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Mitarbeiterdaten: Name, Adresse, AHV-Nummer, Geburtsdatum, Anstellungsdaten</li>
+            <li>Lohndaten: Bruttolohn, Abzüge, Nettolohn, Sozialversicherungsbeiträge</li>
+            <li>Bankdaten: IBAN-Nummern für Zahlungsverkehr</li>
+            <li>Nutzungsdaten: Anmeldezeitpunkte, durchgeführte Aktionen (Audit-Log)</li>
+          </ul>
+
+          <h3 className="text-base font-semibold">3. Zweck der Datenbearbeitung</h3>
+          <p>
+            Die Daten werden ausschliesslich für die Führung der Buchhaltung, Lohnbuchhaltung,
+            den Zahlungsverkehr und die Erfüllung gesetzlicher Pflichten (MWST, Sozialversicherungen,
+            Steuern) bearbeitet.
+          </p>
+
+          <h3 className="text-base font-semibold">4. Datensicherheit (Art. 8 DSG)</h3>
+          <p>
+            Die Anwendung setzt technische und organisatorische Massnahmen zum Schutz der Daten ein:
+            verschlüsselte Übertragung (HTTPS/TLS), Zugriffskontrolle durch Authentifizierung,
+            Audit-Logging aller datenschutzrelevanten Aktionen, und regelmässige Datensicherung.
+          </p>
+
+          <h3 className="text-base font-semibold">5. Auskunftsrecht (Art. 25 DSG)</h3>
+          <p>
+            Betroffene Personen haben das Recht, Auskunft über die zu ihrer Person bearbeiteten Daten
+            zu verlangen. Der Datenexport kann unter «Datenexport / Löschung» durchgeführt werden.
+          </p>
+
+          <h3 className="text-base font-semibold">6. Recht auf Löschung (Art. 32 DSG)</h3>
+          <p>
+            Betroffene Personen können die Löschung (Anonymisierung) ihrer Daten verlangen, sofern
+            keine gesetzlichen Aufbewahrungspflichten entgegenstehen. Die Anonymisierung kann unter
+            «Datenexport / Löschung» durchgeführt werden.
+          </p>
+
+          <h3 className="text-base font-semibold">7. Aufbewahrungsfristen</h3>
+          <p>
+            Buchhaltungsunterlagen werden gemäss Art. 958f OR während 10 Jahren aufbewahrt.
+            Lohnausweise und Sozialversicherungsabrechnungen unterliegen ebenfalls gesetzlichen
+            Aufbewahrungsfristen. Nach Ablauf der Fristen werden die Daten gelöscht oder anonymisiert.
+          </p>
+
+          <h3 className="text-base font-semibold">8. Datenübermittlung</h3>
+          <p>
+            Personendaten werden nicht an Dritte weitergegeben, ausser zur Erfüllung gesetzlicher
+            Pflichten (Steuerbehörden, Sozialversicherungen) oder mit ausdrücklicher Einwilligung
+            der betroffenen Person.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

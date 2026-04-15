@@ -528,3 +528,33 @@ export const importHistory = mysqlTable("import_history", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type ImportHistoryEntry = typeof importHistory.$inferSelect;
+
+// ─── Audit Log (DSG-Konformität) ─────────────────────────────────────────────
+export const auditLog = mysqlTable("audit_log", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: varchar("userId", { length: 64 }).notNull(),
+  userName: varchar("userName", { length: 200 }),
+  action: mysqlEnum("action", ["create", "read", "update", "delete", "export", "login", "logout"]).notNull(),
+  entityType: varchar("entityType", { length: 100 }).notNull(), // e.g. "journal_entry", "employee", "bank_transaction"
+  entityId: varchar("entityId", { length: 100 }), // ID of the affected record
+  details: text("details"), // JSON with changed fields / additional info
+  ipAddress: varchar("ipAddress", { length: 45 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AuditLogEntry = typeof auditLog.$inferSelect;
+
+// ─── QR-Rechnung Einstellungen ───────────────────────────────────────────────
+export const qrSettings = mysqlTable("qr_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  // Creditor IBAN (QR-IBAN for QR-Referenz or normal IBAN for SCOR)
+  iban: varchar("iban", { length: 34 }).notNull(),
+  // Reference type: QRR (QR-Referenz), SCOR (Structured Creditor Reference), NON (none)
+  referenceType: mysqlEnum("referenceType", ["QRR", "SCOR", "NON"]).default("QRR").notNull(),
+  // Default currency
+  currency: mysqlEnum("currency", ["CHF", "EUR"]).default("CHF").notNull(),
+  // Additional info on payment slip
+  additionalInfo: varchar("additionalInfo", { length: 140 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type QrSettings = typeof qrSettings.$inferSelect;

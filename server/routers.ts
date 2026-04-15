@@ -21,6 +21,8 @@ import {
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
+import { qrBillRouter } from "./qrBillRouter";
+import { dsgRouter } from "./dsgRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -2856,6 +2858,8 @@ export const appRouter = router({
   documents: documentsRouter,
   settings: settingsRouter,
   yearEnd: yearEndRouter,
+  qrBill: qrBillRouter,
+  dsg: dsgRouter,
 });
 
 export type AppRouter = typeof appRouter;

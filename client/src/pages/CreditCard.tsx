@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef } from "react";
-import { Upload, Check, FileText, CreditCard as CreditCardIcon, Trash2, Undo2 } from "lucide-react";
+import { Upload, Check, FileText, CreditCard as CreditCardIcon, Trash2, Undo2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -14,6 +14,7 @@ function formatCHF(val: string | number) {
 export default function CreditCard() {
   const [approveDialog, setApproveDialog] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: statements, refetch } = trpc.creditCard.list.useQuery();
@@ -58,18 +59,15 @@ export default function CreditCard() {
       return;
     }
     setUploading(true);
-    // Read file as base64 for LLM processing
     const reader = new FileReader();
     reader.onload = async (e) => {
       const base64 = (e.target?.result as string).split(",")[1];
       try {
-        // Use LLM to extract credit card statement data
         const response = await fetch("/api/trpc/creditCard.parseStatement", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ json: { fileBase64: base64, filename: file.name } }),
         });
-        // Fallback: create statement with manual total
         const totalStr = prompt("Gesamtbetrag der Kreditkartenabrechnung (CHF):", "0.00");
         if (!totalStr) { setUploading(false); return; }
         uploadMutation.mutate({
@@ -84,6 +82,10 @@ export default function CreditCard() {
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const toggleExpand = (id: number) => {
+    setExpandedId(prev => prev === id ? null : id);
   };
 
   return (
@@ -127,9 +129,11 @@ export default function CreditCard() {
           <table className="accounting-table">
             <thead>
               <tr>
+                <th className="w-8"></th>
                 <th>Datum</th>
                 <th>Inhaber</th>
                 <th className="text-right">Gesamtbetrag CHF</th>
+                <th className="text-center">Positionen</th>
                 <th>Status</th>
                 <th className="text-right">Aktionen</th>
               </tr>
@@ -137,65 +141,41 @@ export default function CreditCard() {
             <tbody>
               {!statements?.length ? (
                 <tr>
-                  <td colSpan={5} className="text-center py-12 text-muted-foreground">
+                  <td colSpan={7} className="text-center py-12 text-muted-foreground">
                     <CreditCardIcon className="h-8 w-8 mx-auto mb-2 opacity-30" />
                     Noch keine Abrechnungen hochgeladen
                   </td>
                 </tr>
-              ) : statements.map(stmt => (
-                <tr key={stmt.id}>
-                  <td className="text-sm">
-                    {new Date(stmt.statementDate as any).toLocaleDateString("de-CH")}
-                  </td>
-                  <td className="text-sm font-medium">{stmt.owner?.toUpperCase() ?? "mw"}</td>
-                  <td className="text-right font-mono text-sm amount-negative">
-                    {formatCHF(stmt.totalAmount as string)}
-                  </td>
-                  <td>
-                    {stmt.status === "pending"
-                      ? <span className="badge-pending">Ausstehend</span>
-                      : <span className="badge-approved">Verbucht</span>}
-                  </td>
-                  <td className="text-right">
-                    <div className="flex gap-1 justify-end">
-                      {stmt.status === "pending" && (
-                        <>
-                          <Button size="sm" variant="default" className="h-7 text-xs gap-1"
-                            onClick={() => setApproveDialog(stmt)}>
-                            <Check className="h-3 w-3" /> Verbuchen
-                          </Button>
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600" title="Löschen"
-                            disabled={deleteMutation.isPending}
-                            onClick={() => {
-                              if (confirm("KK-Abrechnung wirklich löschen?")) {
-                                deleteMutation.mutate({ statementId: stmt.id });
-                              }
-                            }}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </>
-                      )}
-                      {stmt.status === "approved" && (
-                        <>
-                          <span className="text-xs text-green-600 font-medium flex items-center gap-1">
-                            <Check className="h-3 w-3" /> Verbucht
-                          </span>
-                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1 border-orange-300 text-orange-700 hover:bg-orange-50"
-                            disabled={unapproveMutation.isPending}
-                            onClick={() => {
-                              if (confirm("Verbuchung rückgängig machen? Der Journal-Eintrag wird gelöscht.")) {
-                                unapproveMutation.mutate({ statementId: stmt.id });
-                              }
-                            }}>
-                            <Undo2 className="h-3 w-3" />
-                            Rückgängig
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              ) : statements.map(stmt => {
+                const items = (stmt.parsedItems as any[] | null) ?? [];
+                const isExpanded = expandedId === stmt.id;
+                const hasItems = items.length > 0;
+
+                return (
+                  <StatementRow
+                    key={stmt.id}
+                    stmt={stmt}
+                    items={items}
+                    isExpanded={isExpanded}
+                    hasItems={hasItems}
+                    accounts={accounts ?? []}
+                    onToggle={() => toggleExpand(stmt.id)}
+                    onApprove={() => setApproveDialog(stmt)}
+                    onDelete={() => {
+                      if (confirm("KK-Abrechnung wirklich löschen?")) {
+                        deleteMutation.mutate({ statementId: stmt.id });
+                      }
+                    }}
+                    onUnapprove={() => {
+                      if (confirm("Verbuchung rückgängig machen? Der Journal-Eintrag wird gelöscht.")) {
+                        unapproveMutation.mutate({ statementId: stmt.id });
+                      }
+                    }}
+                    deleteIsPending={deleteMutation.isPending}
+                    unapproveIsPending={unapproveMutation.isPending}
+                  />
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -221,6 +201,153 @@ export default function CreditCard() {
         </Dialog>
       )}
     </div>
+  );
+}
+
+/* ── Statement Row with expandable detail ──────────────────────────── */
+function StatementRow({ stmt, items, isExpanded, hasItems, accounts, onToggle, onApprove, onDelete, onUnapprove, deleteIsPending, unapproveIsPending }: {
+  stmt: any;
+  items: any[];
+  isExpanded: boolean;
+  hasItems: boolean;
+  accounts: any[];
+  onToggle: () => void;
+  onApprove: () => void;
+  onDelete: () => void;
+  onUnapprove: () => void;
+  deleteIsPending: boolean;
+  unapproveIsPending: boolean;
+}) {
+  return (
+    <>
+      <tr
+        className={`${hasItems ? "cursor-pointer hover:bg-muted/50" : ""} ${isExpanded ? "bg-muted/30" : ""}`}
+        onClick={hasItems ? onToggle : undefined}
+      >
+        <td className="text-center w-8 px-2">
+          {hasItems ? (
+            isExpanded
+              ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              : <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          ) : null}
+        </td>
+        <td className="text-sm">
+          {new Date(stmt.statementDate as any).toLocaleDateString("de-CH")}
+        </td>
+        <td className="text-sm font-medium">{stmt.owner?.toUpperCase() ?? "MW"}</td>
+        <td className="text-right font-mono text-sm amount-negative">
+          {formatCHF(stmt.totalAmount as string)}
+        </td>
+        <td className="text-center text-sm text-muted-foreground">
+          {hasItems ? (
+            <span className="inline-flex items-center gap-1">
+              <FileText className="h-3 w-3" />
+              {items.length}
+            </span>
+          ) : (
+            <span className="text-xs">–</span>
+          )}
+        </td>
+        <td>
+          {stmt.status === "pending"
+            ? <span className="badge-pending">Ausstehend</span>
+            : <span className="badge-approved">Verbucht</span>}
+        </td>
+        <td className="text-right" onClick={e => e.stopPropagation()}>
+          <div className="flex gap-1 justify-end">
+            {stmt.status === "pending" && (
+              <>
+                <Button size="sm" variant="default" className="h-7 text-xs gap-1"
+                  onClick={onApprove}>
+                  <Check className="h-3 w-3" /> Verbuchen
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600" title="Löschen"
+                  disabled={deleteIsPending}
+                  onClick={onDelete}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
+            {stmt.status === "approved" && (
+              <>
+                <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+                  <Check className="h-3 w-3" /> Verbucht
+                </span>
+                <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1 border-orange-300 text-orange-700 hover:bg-orange-50"
+                  disabled={unapproveIsPending}
+                  onClick={onUnapprove}>
+                  <Undo2 className="h-3 w-3" />
+                  Rückgängig
+                </Button>
+              </>
+            )}
+          </div>
+        </td>
+      </tr>
+
+      {/* Expanded detail rows */}
+      {isExpanded && hasItems && (
+        <tr>
+          <td colSpan={7} className="p-0">
+            <div className="bg-muted/20 border-t border-b border-border">
+              <div className="px-6 py-3">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                  Einzelpositionen ({items.length})
+                </h4>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b border-border/50">
+                      <th className="text-left py-1.5 pr-4 font-medium">Datum</th>
+                      <th className="text-left py-1.5 pr-4 font-medium">Beschreibung</th>
+                      <th className="text-left py-1.5 pr-4 font-medium">Konto</th>
+                      <th className="text-right py-1.5 font-medium">Betrag CHF</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item: any, idx: number) => {
+                      // Try to find the account from the item's category or suggestedAccountId
+                      const accountId = item.suggestedAccountId || item.accountId;
+                      const account = accountId ? accounts.find((a: any) => a.id === accountId) : null;
+                      const accountLabel = account
+                        ? `${account.number} ${account.name}`
+                        : (item.category || "–");
+                      const amount = parseFloat(item.amount || "0");
+
+                      return (
+                        <tr key={idx} className="border-b border-border/30 last:border-0">
+                          <td className="py-1.5 pr-4 text-xs whitespace-nowrap">
+                            {item.date || "–"}
+                          </td>
+                          <td className="py-1.5 pr-4 text-xs max-w-xs">
+                            <span className="truncate block" title={item.description}>
+                              {item.description || "–"}
+                            </span>
+                          </td>
+                          <td className="py-1.5 pr-4 text-xs">
+                            <span className="font-mono text-muted-foreground">{accountLabel}</span>
+                          </td>
+                          <td className={`py-1.5 text-right font-mono text-xs tabular-nums ${amount < 0 ? "text-red-600" : ""}`}>
+                            {amount < 0 ? "-" : ""}{formatCHF(Math.abs(amount))}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-border font-medium">
+                      <td colSpan={3} className="py-2 text-xs text-right pr-4">Total</td>
+                      <td className="py-2 text-right font-mono text-xs tabular-nums text-red-600">
+                        {formatCHF(items.reduce((sum: number, item: any) => sum + Math.abs(parseFloat(item.amount || "0")), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

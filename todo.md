@@ -603,3 +603,8 @@
 - [x] Backend: Abgleich Rechnungen vs. Bankimport – prüfen ob Rechnung bereits als Banktransaktion importiert wurde (= bezahlt)
 - [x] Frontend: ISO 20022 Vorschau zeigt unbezahlte Rechnungen mit automatischem Zahlungsdatum (Rechnungsdatum + 30 Tage Zahlungsfrist)
 - [x] Frontend: Checkbox in ISO 20022 Vorschau ob Rechnung bereits manuell bezahlt wurde + "Als unbezahlt markieren" Button
+
+## Feature: Kreditkartenabrechnungen Vorschau
+
+- [x] Frontend: Expandierbare Zeilen in der KK-Abrechnungstabelle – Klick auf eine Abrechnung zeigt die Einzelpositionen (Datum, Beschreibung, Betrag, Konto)
+- [x] Frontend: Vorschau der Einzelpositionen mit Kontierung (gelerntes Konto aus Booking Rules)

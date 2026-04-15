@@ -10,6 +10,7 @@ import {
   date,
   json,
   primaryKey,
+  unique,
 } from "drizzle-orm/mysql-core";
 
 // ─── Users (Auth) ────────────────────────────────────────────────────────────
@@ -90,58 +91,72 @@ export type UserOrganization = typeof userOrganizations.$inferSelect;
 export type InsertUserOrganization = typeof userOrganizations.$inferInsert;
 
 // ─── Accounts (Kontenplan) ────────────────────────────────────────────────────
-export const accounts = mysqlTable("accounts", {
-  id: int("id").autoincrement().primaryKey(),
-  // Phase 1 Multi-Tenancy: Kontenplan ist pro Organisation.
-  organizationId: int("organizationId"),
-  number: varchar("number", { length: 10 }).notNull(),
-  name: varchar("name", { length: 200 }).notNull(),
-  // Account type for balance sheet / P&L classification
-  accountType: mysqlEnum("accountType", [
-    "asset",        // Aktiven (1xxx)
-    "liability",    // Passiven (2xxx)
-    "expense",      // Aufwand (3xxx, 4xxx)
-    "revenue",      // Ertrag (6xxx)
-    "equity",       // Eigenkapital (2200, 2220, 2290)
-  ]).notNull(),
-  // Normal balance side
-  normalBalance: mysqlEnum("normalBalance", ["debit", "credit"]).notNull(),
-  // Category for grouping in reports
-  category: varchar("category", { length: 100 }),
-  // Sub-category for grouping
-  subCategory: varchar("subCategory", { length: 100 }),
-  // Is this a bank account?
-  isBankAccount: boolean("isBankAccount").default(false),
-  // Is MWST relevant?
-  isVatRelevant: boolean("isVatRelevant").default(false),
-  // Default VAT rate (8.1, 2.6, 3.8, 0)
-  defaultVatRate: decimal("defaultVatRate", { precision: 5, scale: 2 }),
-  isActive: boolean("isActive").default(true).notNull(),
-  sortOrder: int("sortOrder").default(0),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+export const accounts = mysqlTable(
+  "accounts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    // Phase 1 Multi-Tenancy: Kontenplan ist pro Organisation.
+    organizationId: int("organizationId").notNull(),
+    number: varchar("number", { length: 10 }).notNull(),
+    name: varchar("name", { length: 200 }).notNull(),
+    // Account type for balance sheet / P&L classification
+    accountType: mysqlEnum("accountType", [
+      "asset",        // Aktiven (1xxx)
+      "liability",    // Passiven (2xxx)
+      "expense",      // Aufwand (3xxx, 4xxx)
+      "revenue",      // Ertrag (6xxx)
+      "equity",       // Eigenkapital (2200, 2220, 2290)
+    ]).notNull(),
+    // Normal balance side
+    normalBalance: mysqlEnum("normalBalance", ["debit", "credit"]).notNull(),
+    // Category for grouping in reports
+    category: varchar("category", { length: 100 }),
+    // Sub-category for grouping
+    subCategory: varchar("subCategory", { length: 100 }),
+    // Is this a bank account?
+    isBankAccount: boolean("isBankAccount").default(false),
+    // Is MWST relevant?
+    isVatRelevant: boolean("isVatRelevant").default(false),
+    // Default VAT rate (8.1, 2.6, 3.8, 0)
+    defaultVatRate: decimal("defaultVatRate", { precision: 5, scale: 2 }),
+    isActive: boolean("isActive").default(true).notNull(),
+    sortOrder: int("sortOrder").default(0),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    // Kontonummer ist pro Organisation eindeutig (nicht mehr global)
+    orgNumberUnique: unique("accounts_org_number_unique").on(table.organizationId, table.number),
+  }),
+);
 export type Account = typeof accounts.$inferSelect;
 
 // ─── Fiscal Years ─────────────────────────────────────────────────────────────
-export const fiscalYears = mysqlTable("fiscal_years", {
-  id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
-  year: int("year").notNull(),
-  startDate: date("startDate", { mode: 'string' }).notNull(),
-  endDate: date("endDate", { mode: 'string' }).notNull(),
-  // Status: open = aktiv, closing = Abschluss läuft, closed = abgeschlossen
-  status: mysqlEnum("status", ["open", "closing", "closed"]).default("open").notNull(),
-  isClosed: boolean("isClosed").default(false).notNull(),
-  // Saldovortrag completed?
-  balanceCarriedForward: boolean("balanceCarriedForward").default(false).notNull(),
-  closedAt: timestamp("closedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+export const fiscalYears = mysqlTable(
+  "fiscal_years",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organizationId").notNull(),
+    year: int("year").notNull(),
+    startDate: date("startDate", { mode: 'string' }).notNull(),
+    endDate: date("endDate", { mode: 'string' }).notNull(),
+    // Status: open = aktiv, closing = Abschluss läuft, closed = abgeschlossen
+    status: mysqlEnum("status", ["open", "closing", "closed"]).default("open").notNull(),
+    isClosed: boolean("isClosed").default(false).notNull(),
+    // Saldovortrag completed?
+    balanceCarriedForward: boolean("balanceCarriedForward").default(false).notNull(),
+    closedAt: timestamp("closedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    // Geschäftsjahr ist pro Organisation eindeutig
+    orgYearUnique: unique("fiscal_years_org_year_unique").on(table.organizationId, table.year),
+  }),
+);
 
 // ─── Depreciation Settings (Abschreibungssätze) ─────────────────────────────
 export const depreciationSettings = mysqlTable("depreciation_settings", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Linked asset account (e.g., 1500 Mobiliar, 1510 Fahrzeuge)
   accountId: int("accountId").notNull(),
   // Depreciation rate in percent (e.g., 25.00 for 25%)
@@ -163,7 +178,7 @@ export type DepreciationSetting = typeof depreciationSettings.$inferSelect;
 // ─── Year-End Bookings (Jahresabschluss-Buchungen) ──────────────────────────
 export const yearEndBookings = mysqlTable("year_end_bookings", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Fiscal year being closed
   fiscalYear: int("fiscalYear").notNull(),
   // Type of year-end booking
@@ -201,42 +216,53 @@ export const yearEndBookings = mysqlTable("year_end_bookings", {
 export type YearEndBooking = typeof yearEndBookings.$inferSelect;
 
 // ─── Journal Entries (Buchungssätze) ─────────────────────────────────────────
-export const journalEntries = mysqlTable("journal_entries", {
-  id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
-  // Entry number (Belegnummer)
-  entryNumber: varchar("entryNumber", { length: 20 }),
-  // Booking date
-  bookingDate: date("bookingDate", { mode: 'string' }).notNull(),
-  // Value date
-  valueDate: date("valueDate", { mode: 'string' }),
-  // Description
-  description: text("description").notNull(),
-  // Status: pending = Vorschlag, approved = freigegeben, rejected = abgelehnt
-  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
-  // Source of the entry
-  source: mysqlEnum("source", [
-    "manual",       // Manuelle Eingabe
-    "bank_import",  // Bankimport
-    "credit_card",  // Kreditkartenimport
-    "payroll",      // Lohnbuchhaltung
-    "vat",          // MWST
-    "system",       // System (Abschluss etc.)
-  ]).default("manual").notNull(),
-  // Reference to source document
-  sourceRef: varchar("sourceRef", { length: 100 }),
-  // AI confidence score (0-100)
-  aiConfidence: int("aiConfidence"),
-  // AI reasoning
-  aiReasoning: text("aiReasoning"),
-  // Fiscal year
-  fiscalYear: int("fiscalYear"),
-  // Who approved
-  approvedBy: int("approvedBy"),
-  approvedAt: timestamp("approvedAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+export const journalEntries = mysqlTable(
+  "journal_entries",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organizationId").notNull(),
+    // Entry number (Belegnummer) – pro Organisation eindeutig; NULL bei drafts
+    entryNumber: varchar("entryNumber", { length: 20 }),
+    // Booking date
+    bookingDate: date("bookingDate", { mode: 'string' }).notNull(),
+    // Value date
+    valueDate: date("valueDate", { mode: 'string' }),
+    // Description
+    description: text("description").notNull(),
+    // Status: pending = Vorschlag, approved = freigegeben, rejected = abgelehnt
+    status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+    // Source of the entry
+    source: mysqlEnum("source", [
+      "manual",       // Manuelle Eingabe
+      "bank_import",  // Bankimport
+      "credit_card",  // Kreditkartenimport
+      "payroll",      // Lohnbuchhaltung
+      "vat",          // MWST
+      "system",       // System (Abschluss etc.)
+    ]).default("manual").notNull(),
+    // Reference to source document
+    sourceRef: varchar("sourceRef", { length: 100 }),
+    // AI confidence score (0-100)
+    aiConfidence: int("aiConfidence"),
+    // AI reasoning
+    aiReasoning: text("aiReasoning"),
+    // Fiscal year
+    fiscalYear: int("fiscalYear"),
+    // Who approved
+    approvedBy: int("approvedBy"),
+    approvedAt: timestamp("approvedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    // Belegnummer ist pro Organisation eindeutig. NULL wird in MySQL
+    // mehrfach erlaubt → pending/rejected Drafts ohne Nummer sind ok.
+    orgEntryNumberUnique: unique("journal_entries_org_entryNumber_unique").on(
+      table.organizationId,
+      table.entryNumber,
+    ),
+  }),
+);
 export type JournalEntry = typeof journalEntries.$inferSelect;
 export type InsertJournalEntry = typeof journalEntries.$inferInsert;
 
@@ -279,7 +305,7 @@ export type JournalEntrySequence = typeof journalEntrySequences.$inferSelect;
 // ─── Bank Accounts ────────────────────────────────────────────────────────────
 export const bankAccounts = mysqlTable("bank_accounts", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Linked account in chart of accounts
   accountId: int("accountId").notNull(),
   name: varchar("name", { length: 100 }).notNull(),
@@ -295,7 +321,7 @@ export const bankAccounts = mysqlTable("bank_accounts", {
 // ─── Bank Transactions (Rohdaten aus Import) ──────────────────────────────────
 export const bankTransactions = mysqlTable("bank_transactions", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   bankAccountId: int("bankAccountId").notNull(),
   // Transaction date
   transactionDate: date("transactionDate", { mode: 'string' }).notNull(),
@@ -343,7 +369,7 @@ export type BankTransaction = typeof bankTransactions.$inferSelect;
 // ─── Credit Card Statements ───────────────────────────────────────────────────
 export const creditCardStatements = mysqlTable("credit_card_statements", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Statement period
   statementDate: date("statementDate", { mode: 'string' }).notNull(),
   // Total amount
@@ -363,42 +389,49 @@ export const creditCardStatements = mysqlTable("credit_card_statements", {
 });
 
 // ─── Employees (Lohnbezüger) ──────────────────────────────────────────────────
-export const employees = mysqlTable("employees", {
-  id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
-  // Short code (pro Organisation eindeutig, z.B. "mw", "jm", "max")
-  code: varchar("code", { length: 10 }).notNull(),
-  firstName: varchar("firstName", { length: 100 }).notNull(),
-  lastName: varchar("lastName", { length: 100 }).notNull(),
-  // AHV number
-  ahvNumber: varchar("ahvNumber", { length: 20 }),
-  // Address (legacy single field)
-  address: text("address"),
-  // Structured address fields for official documents
-  street: varchar("street", { length: 200 }),
-  zipCode: varchar("zipCode", { length: 10 }),
-  city: varchar("city", { length: 100 }),
-  // Date of birth
-  dateOfBirth: date("dateOfBirth", { mode: 'string' }),
-  // Employment start
-  employmentStart: date("employmentStart", { mode: 'string' }),
-  // Employment end (for partial year)
-  employmentEnd: date("employmentEnd", { mode: 'string' }),
-  // Linked salary account (Kontokorrent)
-  salaryAccountId: int("salaryAccountId"),
-  // Linked gross salary account
-  grossSalaryAccountId: int("grossSalaryAccountId"),
-  // Lohnausweis Ziffer 15: Bemerkungen
-  lohnausweisRemarks: text("lohnausweisRemarks"),
-  isActive: boolean("isActive").default(true).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+export const employees = mysqlTable(
+  "employees",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organizationId").notNull(),
+    // Short code (pro Organisation eindeutig, z.B. "mw", "jm", "max")
+    code: varchar("code", { length: 10 }).notNull(),
+    firstName: varchar("firstName", { length: 100 }).notNull(),
+    lastName: varchar("lastName", { length: 100 }).notNull(),
+    // AHV number
+    ahvNumber: varchar("ahvNumber", { length: 20 }),
+    // Address (legacy single field)
+    address: text("address"),
+    // Structured address fields for official documents
+    street: varchar("street", { length: 200 }),
+    zipCode: varchar("zipCode", { length: 10 }),
+    city: varchar("city", { length: 100 }),
+    // Date of birth
+    dateOfBirth: date("dateOfBirth", { mode: 'string' }),
+    // Employment start
+    employmentStart: date("employmentStart", { mode: 'string' }),
+    // Employment end (for partial year)
+    employmentEnd: date("employmentEnd", { mode: 'string' }),
+    // Linked salary account (Kontokorrent)
+    salaryAccountId: int("salaryAccountId"),
+    // Linked gross salary account
+    grossSalaryAccountId: int("grossSalaryAccountId"),
+    // Lohnausweis Ziffer 15: Bemerkungen
+    lohnausweisRemarks: text("lohnausweisRemarks"),
+    isActive: boolean("isActive").default(true).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    // Employee-Code ist pro Organisation eindeutig
+    orgCodeUnique: unique("employees_org_code_unique").on(table.organizationId, table.code),
+  }),
+);
 export type Employee = typeof employees.$inferSelect;
 
 // ─── Payroll (Lohnabrechnung) ─────────────────────────────────────────────────
 export const payrollEntries = mysqlTable("payroll_entries", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   employeeId: int("employeeId").notNull(),
   // Pay period
   year: int("year").notNull(),
@@ -430,7 +463,7 @@ export type PayrollEntry = typeof payrollEntries.$inferSelect;
 // ─── VAT Periods (MWST-Perioden) ──────────────────────────────────────────────
 export const vatPeriods = mysqlTable("vat_periods", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   year: int("year").notNull(),
   // Period: Q1, Q2, Q3, Q4, S1, S2
   period: varchar("period", { length: 5 }).notNull(),
@@ -456,7 +489,7 @@ export const vatPeriods = mysqlTable("vat_periods", {
 // ─── Opening Balances (Eröffnungssalden) ──────────────────────────────────────
 export const openingBalances = mysqlTable("opening_balances", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   accountId: int("accountId").notNull(),
   fiscalYear: int("fiscalYear").notNull(),
   balance: decimal("balance", { precision: 15, scale: 2 }).notNull(),
@@ -466,7 +499,7 @@ export const openingBalances = mysqlTable("opening_balances", {
 // ─── Documents (Belege / Rechnungen) ──────────────────────────────────────────
 export const documents = mysqlTable("documents", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Original filename
   filename: varchar("filename", { length: 255 }).notNull(),
   // S3 storage key
@@ -509,7 +542,7 @@ export type InsertDocument = typeof documents.$inferInsert;
 // that maps counterparty patterns to booking text templates and account assignments.
 export const bookingRules = mysqlTable("booking_rules", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Pattern to match counterparty name (case-insensitive substring match)
   counterpartyPattern: varchar("counterpartyPattern", { length: 300 }).notNull(),
   // Optional: pattern to match description text
@@ -541,7 +574,7 @@ export type InsertBookingRule = typeof bookingRules.$inferInsert;
 // organizationId wird in der Migration auf die passende Org-Zeile gemappt.
 export const companySettings = mysqlTable("company_settings", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Company name
   companyName: varchar("companyName", { length: 200 }).notNull().default("Meine Firma"),
   // Legal form
@@ -582,7 +615,7 @@ export type CompanySettings = typeof companySettings.$inferSelect;
 // ─── Insurance Settings (Versicherungsparameter) ─────────────────────────────
 export const insuranceSettings = mysqlTable("insurance_settings", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Insurance type: uvg, ktg, bvg, ahv
   insuranceType: mysqlEnum("insuranceType", ["uvg", "ktg", "bvg", "ahv", "fak"]).notNull(),
   // Insurance company name
@@ -619,7 +652,7 @@ export type InsertYearEndBooking = typeof yearEndBookings.$inferInsert;
 // ─── Import History ──────────────────────────────────────────────────────────
 export const importHistory = mysqlTable("import_history", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   bankAccountId: int("bankAccountId").notNull(),
   filename: varchar("filename", { length: 500 }).notNull(),
   fileType: varchar("fileType", { length: 50 }).notNull(), // camt, mt940, csv, pdf
@@ -640,7 +673,7 @@ export type ImportHistoryEntry = typeof importHistory.$inferSelect;
 // ─── Audit Log (DSG-Konformität) ─────────────────────────────────────────────
 export const auditLog = mysqlTable("audit_log", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   userId: varchar("userId", { length: 64 }).notNull(),
   userName: varchar("userName", { length: 200 }),
   action: mysqlEnum("action", ["create", "read", "update", "delete", "export", "login", "logout"]).notNull(),
@@ -655,7 +688,7 @@ export type AuditLogEntry = typeof auditLog.$inferSelect;
 // ─── QR-Rechnung Einstellungen ───────────────────────────────────────────────
 export const qrSettings = mysqlTable("qr_settings", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Creditor IBAN (QR-IBAN for QR-Referenz or normal IBAN for SCOR)
   iban: varchar("iban", { length: 34 }).notNull(),
   // Reference type: QRR (QR-Referenz), SCOR (Structured Creditor Reference), NON (none)
@@ -672,7 +705,7 @@ export type QrSettings = typeof qrSettings.$inferSelect;
 // ─── Suppliers (Lieferanten-Stammdaten) ──────────────────────────────────────
 export const suppliers = mysqlTable("suppliers", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   name: varchar("name", { length: 200 }).notNull(),
   street: varchar("street", { length: 200 }),
   zipCode: varchar("zipCode", { length: 10 }),
@@ -700,7 +733,7 @@ export type InsertSupplier = typeof suppliers.$inferInsert;
 // ─── Customers (Kunden-Stammdaten / CRM) ────────────────────────────────────
 export const customers = mysqlTable("customers", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Customer number from legacy system
   customerNumber: varchar("customerNumber", { length: 20 }),
   // Name (kept for backward compat / display name / company name)
@@ -737,7 +770,7 @@ export type InsertCustomer = typeof customers.$inferInsert;
 // ─── Customer Services (Dienstleistungen pro Kunde mit Ertragskonto) ────────
 export const customerServices = mysqlTable("customer_services", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   customerId: int("customerId").notNull(),
   // Description of the service
   description: varchar("description", { length: 300 }).notNull(),
@@ -755,7 +788,7 @@ export type CustomerService = typeof customerServices.$inferSelect;
 // ─── Services (Dienstleistungs-Kategorien für Zeiterfassung) ────────────────
 export const services = mysqlTable("services", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   name: varchar("name", { length: 200 }).notNull(),
   description: text("description"),
   // Default hourly rate
@@ -773,7 +806,7 @@ export type InsertService = typeof services.$inferInsert;
 // ─── Time Entries (Zeiterfassung) ───────────────────────────────────────────
 export const timeEntries = mysqlTable("time_entries", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Customer
   customerId: int("customerId").notNull(),
   // Service category
@@ -803,7 +836,7 @@ export type InsertTimeEntry = typeof timeEntries.$inferInsert;
 // ─── Pain.001 Exports (für CAMT.054 Abgleich) ──────────────────────────────
 export const pain001Exports = mysqlTable("pain001_exports", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   // Filename of the exported pain.001 file
   filename: varchar("filename", { length: 255 }).notNull(),
   // Message ID from the pain.001 XML
@@ -826,7 +859,7 @@ export type Pain001Export = typeof pain001Exports.$inferSelect;
 // ─── Pain.001 Payment Items (Einzelzahlungen in pain.001) ───────────────────
 export const pain001Payments = mysqlTable("pain001_payments", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   exportId: int("exportId").notNull(),
   // End-to-end ID for matching with CAMT.054
   endToEndId: varchar("endToEndId", { length: 100 }).notNull(),
@@ -852,7 +885,7 @@ export type Pain001Payment = typeof pain001Payments.$inferSelect;
 // ─── Templates (Vorlagen für Rechnungen etc.) ───────────────────────────────
 export const templates = mysqlTable("templates", {
   id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId"),
+  organizationId: int("organizationId").notNull(),
   name: varchar("name", { length: 200 }).notNull(),
   // Template type
   templateType: mysqlEnum("templateType", ["invoice", "letter", "contract", "other"]).default("invoice").notNull(),

@@ -53,8 +53,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
   const { data: companyData } = trpc.settings.getCompanySettings.useQuery();
+  const { data: myOrgs } = trpc.organizations.listMine.useQuery();
+  const utils = trpc.useUtils();
+  const switchOrg = trpc.organizations.setCurrent.useMutation({
+    onSuccess: async () => {
+      // Nach Org-Wechsel komplette App neu laden, damit alle Queries frisch sind.
+      await utils.invalidate();
+      window.location.href = "/";
+    },
+  });
 
   const pendingCount = (stats?.pendingEntries ?? 0) + (stats?.pendingBankTransactions ?? 0);
+  const currentOrgName = myOrgs?.find(o => o.isCurrent)?.name ?? companyData?.companyName ?? 'Meine Firma';
+  const hasMultipleOrgs = (myOrgs?.length ?? 0) > 1;
 
   const toggleSection = (href: string) => {
     setExpandedSections(prev => {
@@ -207,20 +218,45 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )} style={{ backgroundColor: "oklch(0.18 0.03 240)", borderRight: "1px solid oklch(0.28 0.04 240)" }}>
 
-        {/* Logo */}
+        {/* Logo + Org-Switcher */}
         <div className="flex items-center justify-between px-5 py-5 border-b" style={{ borderColor: "oklch(0.28 0.04 240)" }}>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             {companyData?.logoUrl && (
-              <img src={companyData.logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
+              <img src={companyData.logoUrl} alt="Logo" className="h-8 w-auto object-contain flex-shrink-0" />
             )}
-            <div>
-              <div className="text-sm font-bold" style={{ color: "oklch(0.95 0.01 240)" }}>{companyData?.companyName || 'Meine Firma'}</div>
+            <div className="min-w-0 flex-1">
+              {hasMultipleOrgs ? (
+                <Select
+                  value={String(myOrgs?.find(o => o.isCurrent)?.id ?? "")}
+                  onValueChange={(v) => switchOrg.mutate({ organizationId: parseInt(v) })}
+                >
+                  <SelectTrigger
+                    className="h-auto min-h-0 px-0 py-0 border-0 bg-transparent hover:opacity-80 shadow-none focus:ring-0"
+                    style={{ color: "oklch(0.95 0.01 240)" }}
+                  >
+                    <SelectValue>
+                      <span className="text-sm font-bold truncate block">{currentOrgName}</span>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {myOrgs?.map(org => (
+                      <SelectItem key={org.id} value={String(org.id)}>
+                        {org.name} {org.role !== "viewer" ? `(${org.role})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="text-sm font-bold truncate" style={{ color: "oklch(0.95 0.01 240)" }}>
+                  {currentOrgName}
+                </div>
+              )}
               <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>Buchhaltung</div>
             </div>
           </div>
           <button
             onClick={() => setMobileOpen(false)}
-            className="lg:hidden p-1 rounded"
+            className="lg:hidden p-1 rounded flex-shrink-0"
             style={{ color: "oklch(0.55 0.02 240)" }}
           >
             <X className="h-4 w-4" />

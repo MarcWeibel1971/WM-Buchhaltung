@@ -148,6 +148,13 @@
       "when": 1776262650347,
       "tag": "0020_sturdy_kingpin",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1776263921042,
+      "tag": "0021_not_null_and_composite_uniques",
+      "breakpoints": true
     }
   ]
 }

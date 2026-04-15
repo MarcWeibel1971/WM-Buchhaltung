@@ -26,6 +26,7 @@ import { dsgRouter } from "./dsgRouter";
 import { suppliersRouter } from "./suppliersRouter";
 import { timeTrackingRouter } from "./timeTrackingRouter";
 import { customersRouter } from "./customersRouter";
+import { organizationsRouter } from "./organizationsRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -769,6 +770,7 @@ const bankImportRouter = router({
           .update(`${input.bankAccountId}-${transactionDate}-${tx.amount}-${tx.description}`)
           .digest("hex");
         const saved = await saveBankTransaction({
+          organizationId: ctx.organizationId,
           bankAccountId: input.bankAccountId,
           transactionDate,
           valueDate,
@@ -791,6 +793,7 @@ const bankImportRouter = router({
       if (db && input.filename) {
         try {
           await db.insert(importHistory).values({
+            organizationId: ctx.organizationId,
             bankAccountId: input.bankAccountId,
             filename: input.filename,
             fileType: input.fileType ?? "unknown",
@@ -936,13 +939,35 @@ const bankImportRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-          const allAccounts = await getAllAccounts(ctx.organizationId);
+      const allAccounts = await getAllAccounts(ctx.organizationId);
       const accountList = allAccounts.map(a => `${a.number}: ${a.name} (${a.accountType})`).join("\n");
+
+      // Load booking rules for this org and build a "learned rules" context for
+      // the LLM – this replaces the old hardcoded business logic (Gewerbe-Treuhand,
+      // LUKB mw, etc.) that only applied to one specific tenant. Now each org
+      // provides its own rules through normal usage.
+      const orgRules = await getAllBookingRules(ctx.organizationId);
+      const accountByIdMap = new Map(allAccounts.map(a => [a.id, a]));
+      const rulesContext = orgRules
+        .slice(0, 40) // cap for prompt length
+        .map(r => {
+          const debit = r.debitAccountId ? accountByIdMap.get(r.debitAccountId) : null;
+          const credit = r.creditAccountId ? accountByIdMap.get(r.creditAccountId) : null;
+          const debitLabel = debit ? `${debit.number} ${debit.name}` : "?";
+          const creditLabel = credit ? `${credit.number} ${credit.name}` : "?";
+          return `- "${r.counterpartyPattern}" → Soll ${debitLabel} / Haben ${creditLabel}${r.bookingTextTemplate ? ` (Text: "${r.bookingTextTemplate}")` : ""}`;
+        })
+        .join("\n");
+
       const transactions = await db.select().from(bankTransactions)
-        .where(inArray(bankTransactions.id, input.transactionIds));
-      // Load bank accounts for IBAN-based account mapping
+        .where(and(
+          eq(bankTransactions.organizationId, ctx.organizationId),
+          inArray(bankTransactions.id, input.transactionIds),
+        ));
+      // Load bank accounts for IBAN-based account mapping (org-scoped)
       const allBankAccounts = await db.select({ id: bankAccounts.id, accountId: bankAccounts.accountId, name: bankAccounts.name, iban: bankAccounts.iban })
-        .from(bankAccounts);
+        .from(bankAccounts)
+        .where(eq(bankAccounts.organizationId, ctx.organizationId));
       const bankAccountMap = new Map(allBankAccounts.map(ba => [ba.id, ba]));
       const results = [];
       for (const tx of transactions) {
@@ -950,34 +975,41 @@ const bankImportRouter = router({
           // Determine the correct bank account number for this transaction
           const ownBankAccount = bankAccountMap.get(tx.bankAccountId);
           const ownAccountObj = ownBankAccount ? allAccounts.find(a => a.id === ownBankAccount.accountId) : null;
-          const ownAccountNumber = ownAccountObj?.number ?? "1032";
-          const ownAccountName = ownAccountObj?.name ?? "LUKB mw";
-          const prompt = `Du bist ein Schweizer Buchhalter für die ${companyName}.
+          const ownAccountNumber = ownAccountObj?.number ?? "";
+          const ownAccountName = ownAccountObj?.name ?? ownBankAccount?.name ?? "Bankkonto";
+          const prompt = `Du bist ein Schweizer Buchhalter für ${companyName}.
 Analysiere diese Banktransaktion und schlage die passenden Buchungskonten vor.
+
 Transaktion:
 - Datum: ${tx.transactionDate}
 - Betrag: CHF ${tx.amount} (positiv = Eingang, negativ = Ausgang)
 - Beschreibung: ${tx.description}
 - Gegenpartei: ${tx.counterparty ?? "unbekannt"}
 - Bankkonto (IBAN): ${ownBankAccount?.iban ?? "unbekannt"} = Konto ${ownAccountNumber} (${ownAccountName})
+
 Kontenplan (Auszug):
 ${accountList}
+${rulesContext ? `
+Bereits gelernte Buchungsregeln dieser Firma (HÖCHSTE Priorität – verwende diese
+wann immer die Gegenpartei zu einem Muster passt):
+${rulesContext}
+` : ""}
 Antworte NUR mit JSON:
 {
   "debitAccountNumber": "XXXX",
-  "creditAccountNumber": "XXXX", 
+  "creditAccountNumber": "XXXX",
   "confidence": 0-100,
   "reasoning": "kurze Begründung auf Deutsch"
 }
+
 Regeln:
-- WICHTIG: Das Bankkonto dieser Transaktion ist IMMER ${ownAccountNumber} (${ownAccountName}), NICHT ein anderes Bankkonto!
-- Eingang (positiv): Kreditkonto = Ertragskonto (6xxx) oder Aktivkonto, Debitkonto = ${ownAccountNumber}
-- Ausgang (negativ): Debitkonto = Aufwandskonto (3xxx-4xxx), Kreditkonto = ${ownAccountNumber}
-- Lohn: Debit 4000/4001, Credit ${ownAccountNumber}
-- Miete: Debit 4100, Credit ${ownAccountNumber}
-- Zinsen: Debit 4220, Credit ${ownAccountNumber}
-- Gewerbe-Treuhand AG: Debit 3000 (Fremdhonorar), NICHT 4740 – dies sind Fremdhonorare für ausgelagerte Buchhaltungsmandate
-- Gewerbe-Treuhand AG Buchungstext: 'Gewerbe-Treuhand [Kundenname]' (Kundenname aus Beschreibung/Referenz, KEIN 'Fremdhonorar' im Text, KEINE Periode)`;
+- WICHTIG: Das Bankkonto dieser Transaktion ist IMMER ${ownAccountNumber} (${ownAccountName}).
+- Eingang (positiv): Kreditkonto = Ertragskonto (3xxx/6xxx) oder Aktivkonto, Debitkonto = ${ownAccountNumber}.
+- Ausgang (negativ): Debitkonto = Aufwandskonto (4xxx-6xxx), Kreditkonto = ${ownAccountNumber}.
+- Typische KMU-Zuordnungen: Löhne → 5000, Miete → 6000, Zinsaufwand → 6900,
+  Materialaufwand → 4000, Werbeaufwand → 6600, MWST-Abrechnung → 2200/1170.
+- Bei Unsicherheit confidence < 60 und die sinnvollste generische Kategorie wählen.
+- Wenn eine gelernte Regel passt, übernehme sie und setze confidence ≥ 85.`;
 
           const response = await invokeLLM({
             messages: [{ role: "user", content: prompt }],
@@ -1322,11 +1354,10 @@ Transaktion:
 Regeln:
 - Maximal 60 Zeichen
 - Lieferantenname + Zeitraum (Monat oder Quartal + Jahr)
-- Beispiele: "Sunrise 1. Quartal 2026", "SBB GA Januar 2026", "Miete Büro April 2026", "Lohn mw März 2026"
+- Beispiele: "Sunrise 1. Quartal ${year}", "SBB GA ${month} ${year}", "Miete Büro ${month} ${year}"
 - Aktueller Monat: ${month} ${year}, Quartal: ${quarter} ${year}
-- Bei Lohnzahlungen: "Lohn [Kürzel] [Monat] [Jahr]"
+- Bei Lohnzahlungen: "Lohn [Mitarbeitername/Kürzel] [Monat] [Jahr]"
 - Bei Daueraufträgen/Abos: Lieferant + Periode
-- Bei Gewerbe-Treuhand AG: "Gewerbe-Treuhand [Kundenname]" (Kundenname aus Beschreibung/Referenz extrahieren, KEIN 'Fremdhonorar', KEINE Periode)
 - Kein "CHF", keine Beträge im Text
 
 Antworte NUR mit dem Buchungstext, nichts anderes.`
@@ -1442,32 +1473,44 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
           // Also handle quarter patterns
           text = text.replace(/\d+\.\s*Quartal\s+\d{4}/g, `${quarter} ${year}`);
 
-          // ── Special handling for Gewerbe-Treuhand: extract customer name from matched document ──
-          const cpLower = (tx.counterparty ?? "").toLowerCase();
-          if (cpLower.includes("gewerbe-treuhand") || cpLower.includes("gewerbe treuhand")) {
+          // Generic placeholder substitution: rules can use {month}, {year}, {quarter},
+          // {counterparty} and {customer} as tokens. This replaces the previous
+          // hardcoded Gewerbe-Treuhand special case and works for any tenant that
+          // trains its own booking rules.
+          text = text
+            .replace(/\{month\}/g, month)
+            .replace(/\{year\}/g, String(year))
+            .replace(/\{quarter\}/g, quarter)
+            .replace(/\{counterparty\}/g, tx.counterparty ?? "");
+
+          // {customer} token: extract customer name from the matched document (filename
+          // or AI metadata description). Useful for trustee/agency workflows where the
+          // bank text is generic but the document identifies the end customer.
+          if (text.includes("{customer}") && tx.matchedDocumentId) {
             let customerName = "";
-            // Try to extract customer name from matched document
-            if (tx.matchedDocumentId) {
-              try {
-                const { documents: docsTbl } = await import("../drizzle/schema");
-                const [matchedDoc] = await db.select().from(docsTbl).where(eq(docsTbl.id, tx.matchedDocumentId)).limit(1);
-                if (matchedDoc) {
-                  // Try from filename: "Gewerbe-Treuhand RG722597 Manser Urs.pdf" -> "Manser Urs"
-                  const fnMatch = matchedDoc.filename.match(/Gewerbe[\-\s]?Treuhand\s+\S+\s+(.+?)\.(pdf|jpg|png)/i);
-                  if (fnMatch) customerName = fnMatch[1].trim();
-                  // Also try from AI metadata description
-                  if (!customerName && matchedDoc.aiMetadata) {
-                    try {
-                      const meta = JSON.parse(matchedDoc.aiMetadata);
-                      // e.g. "Finanzbuchhaltung 2024 und 2025 f\u00fcr Urs Manser"
-                      const descMatch = (meta.description ?? "").match(/f\u00fcr\s+(.+)/i);
-                      if (descMatch) customerName = descMatch[1].trim();
-                    } catch {}
-                  }
+            try {
+              const { documents: docsTbl } = await import("../drizzle/schema");
+              const [matchedDoc] = await db.select().from(docsTbl)
+                .where(and(
+                  eq(docsTbl.organizationId, ctx.organizationId),
+                  eq(docsTbl.id, tx.matchedDocumentId),
+                ))
+                .limit(1);
+              if (matchedDoc) {
+                // Try from filename: "<anything> <ref> <Customer Name>.pdf" -> "Customer Name"
+                // (ASCII + German umlauts; avoids the /u flag that requires es2018+)
+                const fnMatch = matchedDoc.filename.match(/\s([A-Za-z\u00c0-\u024f]+\s[A-Za-z\u00c0-\u024f]+)\.(pdf|jpg|png)$/i);
+                if (fnMatch) customerName = fnMatch[1].trim();
+                if (!customerName && matchedDoc.aiMetadata) {
+                  try {
+                    const meta = JSON.parse(matchedDoc.aiMetadata);
+                    const descMatch = (meta.description ?? "").match(/f\u00fcr\s+(.+)/i);
+                    if (descMatch) customerName = descMatch[1].trim();
+                  } catch {}
                 }
-              } catch {}
-            }
-            text = customerName ? `Gewerbe-Treuhand ${customerName}` : "Gewerbe-Treuhand";
+              }
+            } catch {}
+            text = text.replace(/\{customer\}/g, customerName);
           }
 
           updateData.description = text;
@@ -1797,6 +1840,7 @@ const creditCardRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       const [result] = await db.insert(creditCardStatements).values({
+        organizationId: ctx.organizationId,
         statementDate: toDateStr(input.statementDate) as string,
         totalAmount: input.totalAmount,
         owner: "mw",
@@ -1885,34 +1929,34 @@ const creditCardRouter = router({
         .map(a => `${a.number} ${a.name}`)
         .join("\n");
 
-      const prompt = `Du bist Buchhalter der ${companyName} in der Schweiz.
+      const prompt = `Du bist Buchhalter für ${companyName} in der Schweiz.
 Analysiere diese Kreditkartenabrechnung und extrahiere ALLE Einzelpositionen/Transaktionen.
 
 WICHTIG:
-- Jede Zeile in der Abrechnung ist eine separate Transaktion
-- Extrahiere ALLE Transaktionen, überspringe keine
-- Das Datum steht links (Format DD.MM.YYYY), dann der Beschreibungstext, dann der Betrag rechts
-- Beträge sind in CHF, verwende den Absolutwert (ohne Minus)
-- Ignoriere Zeilen wie "Saldo Vormonat", "Zahlung", "Neuer Saldo", "Total" – nur echte Einkäufe/Transaktionen
-- Die Beschreibung soll den Vendor/Händler-Namen enthalten, NICHT die ganze Zeile kopieren
+- Jede Zeile in der Abrechnung ist eine separate Transaktion.
+- Extrahiere ALLE Transaktionen, überspringe keine.
+- Das Datum steht links (Format DD.MM.YYYY), dann der Beschreibungstext, dann der Betrag rechts.
+- Beträge sind in CHF (oder der angegebenen Fremdwährung), verwende den Absolutwert (ohne Minus).
+- Ignoriere Zeilen wie "Saldo Vormonat", "Zahlung", "Neuer Saldo", "Total" – nur echte Einkäufe/Transaktionen.
+- Die Beschreibung soll den Vendor/Händler-Namen enthalten, NICHT die ganze Zeile kopieren.
 
-GELERNTE KONTENZUORDNUNGEN (verwende diese als Priorität!):
-${rulesContext}
+GELERNTE KONTENZUORDNUNGEN DIESER FIRMA (höchste Priorität – verwende diese wenn ein Vendor passt):
+${rulesContext || "(keine gelernten Regeln vorhanden)"}
 
-VOLLSTÄNDIGER KONTENPLAN (falls kein gelernter Match):
+VOLLSTÄNDIGER KONTENPLAN DIESER FIRMA (falls kein gelernter Match passt):
 ${accountList}
 
-FALLBACK-REGELN:
-- Software/SaaS/Cloud → 4305 Software & ITBeratung mw
-- Restaurant/Essen auswärts (geschäftlich) → 4891 Repräsentationsspesen mw
-- Restaurant/Essen (privat) → 1081 Kontokorrent mw
-- Reisen/Transport/SBB/Taxi/Uber/Parkhaus → 4821 Reisespesen mw
-- Bücher/Zeitungen/Medien → 4711 Fachliteratur mw
-- Lebensmittel/Migros/Coop/Aldi → 4792 Übriger Betriebs- und Verwaltungsaufwand jm
-- Kleidung/Shopping (privat) → 1081 Kontokorrent mw
-- Bankgebühren/Kartengebühren → 4222 Bankspesen mw
-- Zinsen → 4220 Zinsen
-- Unbekannt → 4799 Diverser Aufwand
+GENERISCHE KATEGORIEN (nur wenn weder gelernte Regel noch passender Kontoname gefunden):
+- Software/SaaS/Cloud: Aufwandskonto „Informatik" oder „Software"
+- Restaurant/Bewirtung (geschäftlich): Aufwandskonto „Repräsentation" oder „Verpflegung"
+- Reisen/Transport (SBB, Taxi, Uber, Parkhaus): Aufwandskonto „Reisespesen"
+- Bücher/Zeitungen/Fachliteratur: Aufwandskonto „Fachliteratur" oder „Weiterbildung"
+- Bank-/Kartengebühren: Aufwandskonto „Bankspesen"
+- Zinsen: Aufwandskonto „Zinsaufwand"
+- Unbekannt/nicht kategorisierbar: Aufwandskonto „Diverser Aufwand"
+
+Wähle bei generischen Kategorien das Konto aus dem obigen Kontenplan, dessen Name
+am besten passt. Erfinde keine Kontonummern.
 
 Antwort NUR als JSON-Array, keine Erklärung:
 [{"date": "YYYY-MM-DD", "description": "Vendor/Händler Kurzbeschreibung", "amount": "123.45", "suggestedAccount": "4xxx Kontoname"}]`;
@@ -2008,6 +2052,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
 
       // Save as credit card statement
       await db.insert(creditCardStatements).values({
+        organizationId: ctx.organizationId,
         statementDate: dateStr,
         totalAmount: totalAmount.toFixed(2),
         owner: "mw",
@@ -2107,6 +2152,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
           .where(eq(creditCardStatements.id, input.statementId));
       } else {
         await db.insert(creditCardStatements).values({
+          organizationId: ctx.organizationId,
           statementDate: dateStr as string,
           totalAmount: itemsTotal.toFixed(2),
           owner: "mw",
@@ -2196,6 +2242,7 @@ const payrollRouter = router({
       const totalEmployerCost = gross + ahvEmpr + bvgEmpr + ktgEmpr;
 
       const [result] = await db.insert(payrollEntries).values({
+        organizationId: ctx.organizationId,
         employeeId: input.employeeId,
         year: input.year,
         month: input.month,
@@ -2551,6 +2598,7 @@ const payrollRouter = router({
           updated++;
         } else {
           await db.insert(payrollEntries).values({
+            organizationId: ctx.organizationId,
             employeeId: emp.id,
             year: g.year,
             month: g.month,
@@ -2930,18 +2978,20 @@ const vatRouter = router({
       const startDate = toDateStr(input.startDate) as string;
       const endDate = toDateStr(input.endDate) as string;
 
-      // Get company settings to determine VAT method
-      const [settings] = await db.select().from(companySettings).limit(1);
+      // Get company settings to determine VAT method (scoped to this org)
+      const [settings] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
       const vatMethod = settings?.vatMethod ?? "effective";
       const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
 
-      // Calculate turnover from approved journal entries in the period
-      // Get all approved journal entries in the date range
+      // Calculate turnover from approved journal entries in the period (scoped)
       const entries = await db.select({
         entryId: journalEntries.id,
         bookingDate: journalEntries.bookingDate,
       }).from(journalEntries)
         .where(and(
+          eq(journalEntries.organizationId, ctx.organizationId),
           eq(journalEntries.status, "approved"),
           gte(journalEntries.bookingDate, startDate),
           lte(journalEntries.bookingDate, endDate),
@@ -2950,6 +3000,7 @@ const vatRouter = router({
       if (entries.length === 0) {
         // No entries – insert with zeros
         const [result] = await db.insert(vatPeriods).values({
+          organizationId: ctx.organizationId,
           year: input.year,
           period: input.period,
           startDate,
@@ -3063,6 +3114,7 @@ const vatRouter = router({
       const netVatPayable = (vatDue81 + vatDue26 + vatDue38) - inputTax;
 
       const [result] = await db.insert(vatPeriods).values({
+        organizationId: ctx.organizationId,
         year: input.year,
         period: input.period,
         startDate,
@@ -3459,6 +3511,7 @@ export const appRouter = router({
   suppliers: suppliersRouter,
   timeTracking: timeTrackingRouter,
   customers: customersRouter,
+  organizations: organizationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

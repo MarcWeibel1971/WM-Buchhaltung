@@ -28,9 +28,15 @@ export const yearEndRouter = router({
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const existing = await db.select().from(fiscalYears).where(eq(fiscalYears.year, input.year)).limit(1);
+      const existing = await db.select().from(fiscalYears)
+        .where(and(
+          eq(fiscalYears.organizationId, ctx.organizationId),
+          eq(fiscalYears.year, input.year),
+        ))
+        .limit(1);
       if (existing.length > 0) throw new Error(`Geschäftsjahr ${input.year} existiert bereits`);
       await db.insert(fiscalYears).values({
+        organizationId: ctx.organizationId,
         year: input.year, startDate: `${input.year}-01-01`, endDate: `${input.year}-12-31`,
         status: "open", isClosed: false, balanceCarriedForward: false,
       });
@@ -42,7 +48,11 @@ export const yearEndRouter = router({
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      await db.update(fiscalYears).set({ status: "closing" }).where(eq(fiscalYears.year, input.year));
+      await db.update(fiscalYears).set({ status: "closing" })
+        .where(and(
+          eq(fiscalYears.organizationId, ctx.organizationId),
+          eq(fiscalYears.year, input.year),
+        ));
       return { success: true };
     }),
 
@@ -258,7 +268,9 @@ export const yearEndRouter = router({
 
       // Insert all suggestions
       if (suggestions.length > 0) {
-        await db.insert(yearEndBookings).values(suggestions.map(s => ({ ...s, status: "suggested" as const })));
+        await db.insert(yearEndBookings).values(
+          suggestions.map(s => ({ ...s, organizationId: ctx.organizationId, status: "suggested" as const }))
+        );
       }
 
       return { count: suggestions.length, suggestions: suggestions.map(s => ({ ...s, status: "suggested" })) };
@@ -267,7 +279,7 @@ export const yearEndRouter = router({
   // List year-end bookings
   listBookings: orgProcedure
     .input(z.object({ year: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const bookings = await db.select({
@@ -275,7 +287,10 @@ export const yearEndRouter = router({
         debitAccount: { number: accounts.number, name: accounts.name },
       }).from(yearEndBookings)
         .leftJoin(accounts, eq(yearEndBookings.debitAccountId, accounts.id))
-        .where(eq(yearEndBookings.fiscalYear, input.year))
+        .where(and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.fiscalYear, input.year),
+        ))
         .orderBy(asc(yearEndBookings.bookingType), asc(yearEndBookings.id));
 
       const result = [];
@@ -299,12 +314,18 @@ export const yearEndRouter = router({
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const [booking] = await db.select().from(yearEndBookings).where(eq(yearEndBookings.id, input.bookingId)).limit(1);
+      const [booking] = await db.select().from(yearEndBookings)
+        .where(and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.id, input.bookingId),
+        ))
+        .limit(1);
       if (!booking) throw new Error("Buchung nicht gefunden");
       if (booking.status !== "suggested") throw new Error("Buchung bereits verarbeitet");
 
       const entryNumber = await allocateEntryNumber(ctx.organizationId, booking.fiscalYear);
       const [entry] = await db.insert(journalEntries).values({
+        organizationId: ctx.organizationId,
         entryNumber,
         bookingDate: `${booking.fiscalYear}-12-31`,
         description: booking.description,
@@ -321,7 +342,10 @@ export const yearEndRouter = router({
 
       await db.update(yearEndBookings)
         .set({ status: "approved", journalEntryId: entry.id })
-        .where(eq(yearEndBookings.id, input.bookingId));
+        .where(and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.id, input.bookingId),
+        ));
 
       return { success: true, journalEntryId: entry.id };
     }),
@@ -332,7 +356,11 @@ export const yearEndRouter = router({
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      await db.update(yearEndBookings).set({ status: "rejected" }).where(eq(yearEndBookings.id, input.bookingId));
+      await db.update(yearEndBookings).set({ status: "rejected" })
+        .where(and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.id, input.bookingId),
+        ));
       return { success: true };
     }),
 
@@ -343,13 +371,18 @@ export const yearEndRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const pending = await db.select().from(yearEndBookings).where(
-        and(eq(yearEndBookings.fiscalYear, input.year), eq(yearEndBookings.status, "suggested"))
+        and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.fiscalYear, input.year),
+          eq(yearEndBookings.status, "suggested"),
+        )
       );
 
       let approved = 0;
       for (const booking of pending) {
         const entryNumber = await allocateEntryNumber(ctx.organizationId, input.year);
         const [entry] = await db.insert(journalEntries).values({
+          organizationId: ctx.organizationId,
           entryNumber,
           bookingDate: `${input.year}-12-31`,
           description: booking.description, status: "approved", source: "system",
@@ -364,7 +397,10 @@ export const yearEndRouter = router({
 
         await db.update(yearEndBookings)
           .set({ status: "approved", journalEntryId: entry.id })
-          .where(eq(yearEndBookings.id, booking.id));
+          .where(and(
+            eq(yearEndBookings.organizationId, ctx.organizationId),
+            eq(yearEndBookings.id, booking.id),
+          ));
         approved++;
       }
       return { approved };
@@ -382,6 +418,7 @@ export const yearEndRouter = router({
 
       const approvedBookings = await db.select().from(yearEndBookings).where(
         and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
           eq(yearEndBookings.fiscalYear, closingYear),
           eq(yearEndBookings.status, "approved"),
           or(
@@ -396,6 +433,7 @@ export const yearEndRouter = router({
       for (const booking of approvedBookings) {
         const entryNumber = await allocateEntryNumber(ctx.organizationId, nextYear);
         const [entry] = await db.insert(journalEntries).values({
+          organizationId: ctx.organizationId,
           entryNumber,
           bookingDate: `${nextYear}-01-01`,
           description: `Rückbuchung: ${booking.description}`,
@@ -411,6 +449,7 @@ export const yearEndRouter = router({
         ]);
 
         await db.insert(yearEndBookings).values({
+          organizationId: ctx.organizationId,
           fiscalYear: closingYear, bookingType: "rueckbuchung",
           description: `Rückbuchung: ${booking.description}`,
           amount: booking.amount,
@@ -422,7 +461,10 @@ export const yearEndRouter = router({
 
         await db.update(yearEndBookings)
           .set({ reversalEntryId: entry.id })
-          .where(eq(yearEndBookings.id, booking.id));
+          .where(and(
+            eq(yearEndBookings.organizationId, ctx.organizationId),
+            eq(yearEndBookings.id, booking.id),
+          ));
         reversed++;
       }
       return { reversed };
@@ -440,25 +482,43 @@ export const yearEndRouter = router({
       const closingStart = `${closingYear}-01-01`;
       const closingEnd = `${closingYear}-12-31`;
 
-      // Ensure next fiscal year exists
-      const [existingNext] = await db.select().from(fiscalYears).where(eq(fiscalYears.year, nextYear)).limit(1);
+      // Ensure next fiscal year exists (scoped to this org)
+      const [existingNext] = await db.select().from(fiscalYears)
+        .where(and(
+          eq(fiscalYears.organizationId, ctx.organizationId),
+          eq(fiscalYears.year, nextYear),
+        ))
+        .limit(1);
       if (!existingNext) {
         await db.insert(fiscalYears).values({
+          organizationId: ctx.organizationId,
           year: nextYear, startDate: `${nextYear}-01-01`, endDate: `${nextYear}-12-31`,
           status: "open", isClosed: false, balanceCarriedForward: false,
         });
       }
 
-      // Delete existing opening balances for next year
-      await db.delete(openingBalances).where(eq(openingBalances.fiscalYear, nextYear));
+      // Delete existing opening balances for next year (scoped)
+      await db.delete(openingBalances)
+        .where(and(
+          eq(openingBalances.organizationId, ctx.organizationId),
+          eq(openingBalances.fiscalYear, nextYear),
+        ));
 
-      const allAccounts = await db.select().from(accounts).where(eq(accounts.isActive, true));
-      const newBalances: Array<{ accountId: number; fiscalYear: number; balance: string }> = [];
+      const allAccounts = await db.select().from(accounts)
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          eq(accounts.isActive, true),
+        ));
+      const newBalances: Array<{ organizationId: number; accountId: number; fiscalYear: number; balance: string }> = [];
       let totalRevenue = 0, totalExpense = 0;
 
       for (const acc of allAccounts) {
         const [ob] = await db.select().from(openingBalances).where(
-          and(eq(openingBalances.accountId, acc.id), eq(openingBalances.fiscalYear, closingYear))
+          and(
+            eq(openingBalances.organizationId, ctx.organizationId),
+            eq(openingBalances.accountId, acc.id),
+            eq(openingBalances.fiscalYear, closingYear),
+          )
         ).limit(1);
         const openingBal = Number(ob?.balance || 0);
 
@@ -468,6 +528,7 @@ export const yearEndRouter = router({
         }).from(journalLines)
           .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
           .where(and(
+            eq(journalEntries.organizationId, ctx.organizationId),
             eq(journalLines.accountId, acc.id),
             gte(journalEntries.bookingDate, closingStart),
             lte(journalEntries.bookingDate, closingEnd),
@@ -499,14 +560,17 @@ export const yearEndRouter = router({
         }
 
         if (Math.abs(closingBalance) >= 0.01) {
-          newBalances.push({ accountId: acc.id, fiscalYear: nextYear, balance: closingBalance.toFixed(2) });
+          newBalances.push({ organizationId: ctx.organizationId, accountId: acc.id, fiscalYear: nextYear, balance: closingBalance.toFixed(2) });
         }
       }
 
-      // Net result → Gewinnvortrag
+      // Net result → Gewinnvortrag (scoped)
       const netResult = totalRevenue - totalExpense;
       const gewinnvortragAcc = await db.select().from(accounts).where(
-        or(eq(accounts.number, "2990"), eq(accounts.number, "2290"), eq(accounts.number, "2200"))
+        and(
+          eq(accounts.organizationId, ctx.organizationId),
+          or(eq(accounts.number, "2990"), eq(accounts.number, "2290"), eq(accounts.number, "2200")),
+        )
       ).limit(1);
 
       if (gewinnvortragAcc.length > 0) {
@@ -514,7 +578,7 @@ export const yearEndRouter = router({
         if (existing) {
           existing.balance = (Number(existing.balance) + netResult).toFixed(2);
         } else {
-          newBalances.push({ accountId: gewinnvortragAcc[0].id, fiscalYear: nextYear, balance: netResult.toFixed(2) });
+          newBalances.push({ organizationId: ctx.organizationId, accountId: gewinnvortragAcc[0].id, fiscalYear: nextYear, balance: netResult.toFixed(2) });
         }
       }
 
@@ -522,7 +586,11 @@ export const yearEndRouter = router({
         await db.insert(openingBalances).values(newBalances);
       }
 
-      await db.update(fiscalYears).set({ balanceCarriedForward: true }).where(eq(fiscalYears.year, closingYear));
+      await db.update(fiscalYears).set({ balanceCarriedForward: true })
+        .where(and(
+          eq(fiscalYears.organizationId, ctx.organizationId),
+          eq(fiscalYears.year, closingYear),
+        ));
 
       return {
         accountsCarriedForward: newBalances.length,
@@ -540,22 +608,34 @@ export const yearEndRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       const pending = await db.select().from(yearEndBookings).where(
-        and(eq(yearEndBookings.fiscalYear, input.year), eq(yearEndBookings.status, "suggested"))
+        and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.fiscalYear, input.year),
+          eq(yearEndBookings.status, "suggested"),
+        )
       );
       if (pending.length > 0) throw new Error(`Es gibt noch ${pending.length} offene Buchungsvorschläge.`);
 
-      const [fy] = await db.select().from(fiscalYears).where(eq(fiscalYears.year, input.year)).limit(1);
+      const [fy] = await db.select().from(fiscalYears)
+        .where(and(
+          eq(fiscalYears.organizationId, ctx.organizationId),
+          eq(fiscalYears.year, input.year),
+        ))
+        .limit(1);
       if (!fy?.balanceCarriedForward) throw new Error("Saldovortrag wurde noch nicht durchgeführt.");
 
       await db.update(fiscalYears)
         .set({ status: "closed", isClosed: true, closedAt: new Date() })
-        .where(eq(fiscalYears.year, input.year));
+        .where(and(
+          eq(fiscalYears.organizationId, ctx.organizationId),
+          eq(fiscalYears.year, input.year),
+        ));
       return { success: true };
     }),
 
   // ─── Depreciation Settings ───────────────────────────────────────────────────
 
-  listDepreciationSettings: orgProcedure.query(async () => {
+  listDepreciationSettings: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
       if (!db) throw new Error("Database not available");
     const settings = await db.select({
@@ -564,6 +644,7 @@ export const yearEndRouter = router({
       accountName: accounts.name,
     }).from(depreciationSettings)
       .leftJoin(accounts, eq(depreciationSettings.accountId, accounts.id))
+      .where(eq(depreciationSettings.organizationId, ctx.organizationId))
       .orderBy(asc(depreciationSettings.accountId));
 
     const result = [];
@@ -571,7 +652,12 @@ export const yearEndRouter = router({
       let expenseAccountInfo = null;
       if (row.setting.depreciationExpenseAccountId) {
         const [expAcc] = await db.select({ number: accounts.number, name: accounts.name })
-          .from(accounts).where(eq(accounts.id, row.setting.depreciationExpenseAccountId)).limit(1);
+          .from(accounts)
+          .where(and(
+            eq(accounts.organizationId, ctx.organizationId),
+            eq(accounts.id, row.setting.depreciationExpenseAccountId),
+          ))
+          .limit(1);
         expenseAccountInfo = expAcc || null;
       }
       result.push({
@@ -597,6 +683,7 @@ export const yearEndRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
       await db.insert(depreciationSettings).values({
+        organizationId: ctx.organizationId,
         accountId: input.accountId, depreciationRate: input.depreciationRate,
         method: input.method, usefulLifeYears: input.usefulLifeYears,
         depreciationExpenseAccountId: input.depreciationExpenseAccountId,

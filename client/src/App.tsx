@@ -144,6 +144,31 @@ function AppRouter() {
 }
 
 /**
+ * RootRedirect: Leitet nicht eingeloggte Benutzer zur Landing Page,
+ * eingeloggte Benutzer zum Dashboard.
+ */
+function RootRedirect() {
+  const { loading, isAuthenticated } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Wird geladen...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Redirect to="/landing" />;
+  }
+
+  return <Redirect to="/dashboard" />;
+}
+
+/**
  * ProtectedApp: Wraps the app routes with AuthGuard + OrgGuard + Layout
  */
 function ProtectedApp() {
@@ -167,6 +192,9 @@ function App() {
         <TooltipProvider>
           <Toaster position="top-right" richColors />
           <Switch>
+            {/* Root: Weiterleitung je nach Auth-Status */}
+            <Route path="/" component={RootRedirect} />
+
             {/* Public routes – no auth required */}
             <Route path="/landing" component={LandingPage} />
             <Route path="/login" component={Login} />

@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 
-describe("Email Service - Resend API Key Validation", () => {
+/**
+ * Integration-Tests für die Resend-Anbindung. Benötigen RESEND_API_KEY +
+ * RESEND_FROM_EMAIL als ENV-Vars und einen Live-Call zur Resend-API.
+ * Werden in Unit-Test-Runs ohne Secrets automatisch übersprungen.
+ */
+const hasResendEnv = !!process.env.RESEND_API_KEY && !!process.env.RESEND_FROM_EMAIL;
+const describeIntegration = hasResendEnv ? describe : describe.skip;
+
+describeIntegration("Email Service - Resend API Key Validation", () => {
   it("should have RESEND_API_KEY configured", () => {
     const apiKey = process.env.RESEND_API_KEY;
     expect(apiKey).toBeDefined();

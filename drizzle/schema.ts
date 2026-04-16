@@ -1045,3 +1045,51 @@ export const invoiceSequences = mysqlTable(
   }),
 );
 export type InvoiceSequence = typeof invoiceSequences.$inferSelect;
+
+// ─── Invoice Reminders (Zahlungserinnerungen + Mahnungen) ───────────────────
+// Drei-stufiges Mahnwesen pro Rechnung:
+//   Level 1: Zahlungserinnerung (freundlich, ohne Gebühr)
+//   Level 2: 1. Mahnung (mit Mahngebühr)
+//   Level 3: 2. Mahnung / letzte Mahnung (Hinweis auf Inkasso)
+// Pro Invoice darf jedes Level nur einmal vergeben werden – verhindert
+// Duplikat-Mahnungen bei versehentlichem Doppelklick.
+export const invoiceReminders = mysqlTable(
+  "invoice_reminders",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    organizationId: int("organizationId").notNull(),
+    invoiceId: int("invoiceId").notNull(),
+    // 1 = Zahlungserinnerung, 2 = 1. Mahnung, 3 = 2./letzte Mahnung
+    level: int("level").notNull(),
+    // Datum der Mahnung (= sentAt wenn bereits raus)
+    reminderDate: date("reminderDate", { mode: "string" }).notNull(),
+    // Neues Fälligkeitsdatum (typisch reminderDate + 10/14 Tage)
+    newDueDate: date("newDueDate", { mode: "string" }).notNull(),
+    // Mahngebühr (CHF). Wird nur bei Zahlung mitberücksichtigt wenn der
+    // Kunde sie anerkennt – im Journal ist sie separat zu buchen.
+    feeAmount: decimal("feeAmount", { precision: 15, scale: 2 }).default("0").notNull(),
+    // Freitexte für das PDF
+    subject: varchar("subject", { length: 200 }),
+    introText: text("introText"),
+    footerText: text("footerText"),
+    // PDF-Cache (generateReminderPdf)
+    pdfS3Key: varchar("pdfS3Key", { length: 500 }),
+    pdfS3Url: text("pdfS3Url"),
+    // Versand-Zeitstempel (null = noch nicht versandt)
+    sentAt: timestamp("sentAt"),
+    // Wer hat die Mahnung ausgelöst
+    createdBy: int("createdBy"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    // Pro Rechnung darf jedes Mahn-Level nur einmal existieren.
+    orgInvoiceLevelUnique: unique("invoice_reminders_org_invoice_level_unique").on(
+      table.organizationId,
+      table.invoiceId,
+      table.level,
+    ),
+  }),
+);
+export type InvoiceReminder = typeof invoiceReminders.$inferSelect;
+export type InsertInvoiceReminder = typeof invoiceReminders.$inferInsert;

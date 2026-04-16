@@ -39,9 +39,18 @@ const TEST_EMAIL = `vitest-${Date.now()}@test-auth.example.com`;
 const TEST_PASSWORD = "SecurePass123";
 const TEST_NAME = "Vitest Benutzer";
 
+/**
+ * Diese Suite benötigt eine erreichbare MySQL-Instanz (DATABASE_URL) und eine
+ * konfigurierte Resend-API (RESEND_API_KEY). In CI/Unit-Runs ohne DB werden
+ * die Tests übersprungen – sie laufen nur in der dedizierten Integration-
+ * Stage mit docker-compose (siehe DEPLOYMENT.md).
+ */
+const hasIntegrationEnv = !!process.env.DATABASE_URL && !!process.env.RESEND_API_KEY;
+const describeIntegration = hasIntegrationEnv ? describe : describe.skip;
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe("auth.register", () => {
+describeIntegration("auth.register", () => {
   it("registers a new user successfully", async () => {
     const { ctx } = createPublicContext();
     const caller = appRouter.createCaller(ctx);
@@ -129,7 +138,7 @@ describe("auth.register", () => {
   });
 });
 
-describe("auth.login", () => {
+describeIntegration("auth.login", () => {
   it("rejects login for non-existent user", async () => {
     const { ctx } = createPublicContext();
     const caller = appRouter.createCaller(ctx);
@@ -167,7 +176,7 @@ describe("auth.login", () => {
   });
 });
 
-describe("auth.verifyEmail", () => {
+describeIntegration("auth.verifyEmail", () => {
   it("rejects invalid token", async () => {
     const { ctx } = createPublicContext();
     const caller = appRouter.createCaller(ctx);
@@ -178,7 +187,7 @@ describe("auth.verifyEmail", () => {
   });
 });
 
-describe("auth.forgotPassword", () => {
+describeIntegration("auth.forgotPassword", () => {
   it("returns success even for non-existent email (prevents enumeration)", async () => {
     const { ctx } = createPublicContext();
     const caller = appRouter.createCaller(ctx);
@@ -206,7 +215,7 @@ describe("auth.forgotPassword", () => {
   });
 });
 
-describe("auth.resetPassword", () => {
+describeIntegration("auth.resetPassword", () => {
   it("rejects invalid token", async () => {
     const { ctx } = createPublicContext();
     const caller = appRouter.createCaller(ctx);
@@ -232,7 +241,7 @@ describe("auth.resetPassword", () => {
   });
 });
 
-describe("auth.resendVerification", () => {
+describeIntegration("auth.resendVerification", () => {
   it("returns success for non-existent email (prevents enumeration)", async () => {
     const { ctx } = createPublicContext();
     const caller = appRouter.createCaller(ctx);
@@ -259,7 +268,7 @@ describe("auth.resendVerification", () => {
   });
 });
 
-describe("auth.login (full flow with verification)", () => {
+describeIntegration("auth.login (full flow with verification)", () => {
   const FLOW_EMAIL = `flow-${Date.now()}@test.example.com`;
 
   it("completes full register → verify → login flow", async () => {

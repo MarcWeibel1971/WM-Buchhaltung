@@ -29,6 +29,7 @@ import { customersRouter } from "./customersRouter";
 import { organizationsRouter } from "./organizationsRouter";
 import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
+import { remindersRouter } from "./remindersRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -3508,6 +3509,7 @@ export const appRouter = router({
   customers: customersRouter,
   organizations: organizationsRouter,
   invoices: invoicesRouter,
+  reminders: remindersRouter,
 });
 
 export type AppRouter = typeof appRouter;

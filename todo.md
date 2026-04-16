@@ -936,8 +936,8 @@
 - [x] Bug: Bankimport GJ-Filter zeigt bei GJ 2024 auch Transaktionen von 2025 – fiscalYear-Filter in Query implementiert
 
 ## Batch Re-Analyse bestehender Dokumente
-- [ ] Backend: Endpunkt zum Neu-Analysieren aller bestehenden Dokumente (Dokumenttyp, Konto-Vorschlag aktualisieren)
-- [ ] Frontend: Button "Alle neu analysieren" in Dokumente-Seite
+- [x] Backend: Endpunkt zum Neu-Analysieren aller bestehenden Dokumente (batchReanalyze mit credit_card_statement Erkennung)
+- [x] Frontend: Button "Alle neu analysieren" in Dokumente-Seite
 
 ## Bug 6: Automatische Kategorie-Zuordnung beim Kontoplan-Import
 - [x] Backend/Frontend: Beim Import eines individuellen Kontenplans Konten automatisch einer Kategorie zuordnen (Aktiven, Passiven, Aufwand, Ertrag)

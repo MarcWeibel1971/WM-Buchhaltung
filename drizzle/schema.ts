@@ -74,6 +74,20 @@ export const organizations = mysqlTable("organizations", {
   email: varchar("email", { length: 200 }),
   website: varchar("website", { length: 200 }),
   logoUrl: text("logoUrl"),
+  // ─── Mahn-Policy (3-stufig) ───────────────────────────────────────────────
+  // Pro Org konfigurierbare Policy für Zahlungserinnerung / 1. Mahnung / 2. Mahnung.
+  // minDaysOverdue = Anzahl Tage nach Fälligkeit, ab der die Stufe ausgelöst werden darf.
+  // feeAmount      = Mahngebühr in CHF (0 für Stufe 1 üblich).
+  // gracePeriodDays= Neue Zahlungsfrist in Tagen ab Mahndatum.
+  reminderLevel1Days: int("reminderLevel1Days").default(15).notNull(),
+  reminderLevel1Fee: decimal("reminderLevel1Fee", { precision: 15, scale: 2 }).default("0").notNull(),
+  reminderLevel1Grace: int("reminderLevel1Grace").default(10).notNull(),
+  reminderLevel2Days: int("reminderLevel2Days").default(30).notNull(),
+  reminderLevel2Fee: decimal("reminderLevel2Fee", { precision: 15, scale: 2 }).default("20").notNull(),
+  reminderLevel2Grace: int("reminderLevel2Grace").default(10).notNull(),
+  reminderLevel3Days: int("reminderLevel3Days").default(60).notNull(),
+  reminderLevel3Fee: decimal("reminderLevel3Fee", { precision: 15, scale: 2 }).default("40").notNull(),
+  reminderLevel3Grace: int("reminderLevel3Grace").default(7).notNull(),
   // Status
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

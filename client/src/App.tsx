@@ -26,6 +26,7 @@ import QrBillGenerator from "./pages/QrBillGenerator";
 import Kreditoren from "./pages/Kreditoren";
 import TimeTracking from "./pages/TimeTracking";
 import Onboarding from "./pages/Onboarding";
+import Invoices from "./pages/Invoices";
 import Layout from "./components/Layout";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -145,6 +146,7 @@ function Router() {
       <Route path="/year-end" component={YearEnd} />
       <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
       <Route path="/zahlungen/kreditoren" component={Kreditoren} />
+      <Route path="/rechnungen" component={Invoices} />
       <Route path="/time-tracking" component={TimeTracking} />
       <Route path="/zahlungen">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
       <Route path="/qr-rechnung">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>

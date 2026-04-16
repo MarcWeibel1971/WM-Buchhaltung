@@ -13,9 +13,174 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { orgProcedure, router } from "./_core/trpc";
-import { invoices, invoiceReminders, customers } from "../drizzle/schema";
+import {
+  invoices, invoiceReminders, customers, companySettings, documents,
+} from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
+import PDFDocument from "pdfkit";
+import { storagePut } from "./storage";
+import { sendEmail } from "./emailService";
 import { getDb } from "./db";
+
+function formatCHF(n: number): string {
+  const [int, dec] = n.toFixed(2).split(".");
+  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, "'")}.${dec}`;
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/** Rendert ein Mahn-PDF: Briefkopf, Empfänger, Mahn-Text, Rechnungsdetails,
+ *  Mahngebühr, neuer Total inkl. Frist. Kein QR-Slip (Referenz bleibt die
+ *  Original-Rechnungs-QR, das Original-PDF liegt dem Mahnbrief idealerweise
+ *  beim Versand als zweiter Anhang bei – wird vom Sender-Flow abgedeckt). */
+async function renderReminderPdf(params: {
+  org: typeof companySettings.$inferSelect;
+  invoice: typeof invoices.$inferSelect;
+  customer: typeof customers.$inferSelect;
+  reminder: typeof invoiceReminders.$inferSelect;
+}): Promise<Buffer> {
+  const { org, invoice, customer, reminder } = params;
+
+  const levelLabels: Record<number, string> = {
+    1: "Zahlungserinnerung",
+    2: "1. Mahnung",
+    3: "2. Mahnung",
+  };
+  const levelLabel = levelLabels[reminder.level] ?? `Mahnung Stufe ${reminder.level}`;
+
+  const pdfDoc = new PDFDocument({
+    size: "A4", autoFirstPage: true,
+    margins: { top: 40, bottom: 40, left: 55, right: 55 },
+  });
+  const chunks: Buffer[] = [];
+  pdfDoc.on("data", (c: Buffer) => chunks.push(c));
+
+  const pageW = 595.28;
+  const leftM = 55;
+  const contentW = pageW - leftM - 55;
+
+  const invoiceTotal = parseFloat(invoice.total as string);
+  const invoicePaid = parseFloat(invoice.paidAmount as string);
+  const invoiceOpen = Math.round((invoiceTotal - invoicePaid) * 100) / 100;
+  const fee = parseFloat(reminder.feeAmount as string);
+  const grandTotal = Math.round((invoiceOpen + fee) * 100) / 100;
+
+  // Briefkopf
+  pdfDoc.fontSize(11).font("Helvetica-Bold");
+  pdfDoc.text(org.companyName, leftM, 45);
+  pdfDoc.fontSize(8.5).font("Helvetica").fillColor("#444444");
+  if (org.street) pdfDoc.text(org.street);
+  if (org.zipCode || org.city) pdfDoc.text(`${org.zipCode ?? ""} ${org.city ?? ""}`.trim());
+  if (org.phone) pdfDoc.text(`Tel: ${org.phone}`);
+  if (org.email) pdfDoc.text(org.email);
+  if (org.vatNumber) pdfDoc.text(`MWST-Nr. ${org.vatNumber}`);
+
+  // Empfänger
+  pdfDoc.fillColor("#000000");
+  const addrX = 350;
+  let addrY = 120;
+  const custDisplay = customer.company || customer.name;
+  const custLine2 = customer.company && customer.name ? customer.name : null;
+  pdfDoc.fontSize(10).font("Helvetica-Bold").text(custDisplay, addrX, addrY); addrY += 14;
+  if (custLine2) { pdfDoc.fontSize(9).font("Helvetica").text(custLine2, addrX, addrY); addrY += 14; }
+  pdfDoc.fontSize(9).font("Helvetica");
+  if (customer.street) { pdfDoc.text(customer.street, addrX, addrY); addrY += 14; }
+  if (customer.zipCode || customer.city) {
+    pdfDoc.text(`${customer.zipCode ?? ""} ${customer.city ?? ""}`.trim(), addrX, addrY); addrY += 14;
+  }
+
+  // Datum + Mahn-Titel
+  let yPos = 210;
+  pdfDoc.fontSize(9).font("Helvetica").fillColor("#666666");
+  pdfDoc.text(`${org.city ?? ""}, ${formatDate(reminder.reminderDate)}`.replace(/^, /, ""),
+    leftM, yPos, { width: contentW, align: "right" });
+  yPos += 26;
+
+  pdfDoc.fillColor("#000000").fontSize(16).font("Helvetica-Bold");
+  pdfDoc.text(reminder.subject ?? `${levelLabel} – Rechnung ${invoice.invoiceNumber ?? ""}`,
+    leftM, yPos, { width: contentW });
+  yPos = pdfDoc.y + 18;
+
+  // Anrede
+  pdfDoc.fontSize(10).font("Helvetica");
+  if (customer.salutation) {
+    pdfDoc.text(customer.salutation, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 10;
+  }
+
+  // Einleitungstext
+  if (reminder.introText) {
+    pdfDoc.text(reminder.introText, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 18;
+  }
+
+  // Rechnungs-Detail-Box
+  pdfDoc.moveTo(leftM, yPos).lineTo(leftM + contentW, yPos)
+    .lineWidth(0.5).strokeColor("#cccccc").stroke();
+  yPos += 10;
+  pdfDoc.fontSize(9.5).font("Helvetica").fillColor("#000000");
+
+  const labelW = 200;
+  const drawRow = (label: string, value: string, bold = false) => {
+    pdfDoc.font(bold ? "Helvetica-Bold" : "Helvetica");
+    pdfDoc.text(label, leftM, yPos, { width: labelW });
+    pdfDoc.text(value, leftM + labelW, yPos, { width: contentW - labelW, align: "right" });
+    yPos += 16;
+  };
+
+  drawRow("Rechnungsnummer", invoice.invoiceNumber ?? `#${invoice.id}`);
+  drawRow("Rechnungsdatum", formatDate(invoice.invoiceDate));
+  drawRow("Ursprüngliche Fälligkeit", formatDate(invoice.dueDate));
+  if (invoice.subject) drawRow("Betreff", invoice.subject);
+  yPos += 4;
+
+  drawRow("Rechnungsbetrag", `${invoice.currency} ${formatCHF(invoiceTotal)}`);
+  if (invoicePaid > 0.01) {
+    drawRow("Bereits bezahlt", `${invoice.currency} ${formatCHF(invoicePaid)}`);
+  }
+  drawRow("Offener Betrag", `${invoice.currency} ${formatCHF(invoiceOpen)}`, true);
+
+  if (fee > 0) {
+    yPos += 4;
+    drawRow(`Mahngebühr (${levelLabel})`, `${invoice.currency} ${formatCHF(fee)}`);
+  }
+
+  yPos += 4;
+  pdfDoc.moveTo(leftM, yPos).lineTo(leftM + contentW, yPos)
+    .lineWidth(1).strokeColor("#000000").stroke();
+  yPos += 8;
+  pdfDoc.fontSize(12).font("Helvetica-Bold");
+  drawRow("Gesamtforderung", `${invoice.currency} ${formatCHF(grandTotal)}`, true);
+  yPos += 4;
+
+  // Neue Frist
+  pdfDoc.fontSize(10).font("Helvetica").fillColor("#b00020");
+  pdfDoc.text(
+    `Wir bitten Sie, den Gesamtbetrag bis spätestens ${formatDate(reminder.newDueDate)} zu begleichen.`,
+    leftM, yPos, { width: contentW },
+  );
+  yPos = pdfDoc.y + 18;
+
+  // Fusszeile
+  if (reminder.footerText) {
+    pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
+    pdfDoc.text(reminder.footerText, leftM, yPos, { width: contentW });
+  } else {
+    pdfDoc.fillColor("#444444").fontSize(9).font("Helvetica");
+    pdfDoc.text(
+      "Bitte beachten Sie: Sollte Ihre Zahlung bereits erfolgt sein, betrachten Sie dieses Schreiben als gegenstandslos.",
+      leftM, yPos, { width: contentW },
+    );
+  }
+
+  const pdfPromise = new Promise<Buffer>((resolve) => {
+    pdfDoc.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+  pdfDoc.end();
+  return pdfPromise;
+}
 
 // ─── Mahn-Policy (Default) ────────────────────────────────────────────────
 export const REMINDER_POLICY = {
@@ -321,5 +486,214 @@ export const remindersRouter = router({
           eq(invoiceReminders.id, input.id),
         ));
       return { success: true };
+    }),
+
+  /**
+   * Rendert das Mahn-PDF, lädt es nach S3 und gibt die URL zurück.
+   * Cached über pdfS3Key/Url im invoice_reminders-Record. Legt ausserdem
+   * einen documents-Eintrag an (GeBüV-konforme Archivierung der Korrespondenz).
+   */
+  generatePdf: orgProcedure
+    .input(z.object({
+      id: z.number(),
+      regenerate: z.boolean().default(false),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [reminder] = await db.select().from(invoiceReminders)
+        .where(and(
+          eq(invoiceReminders.organizationId, ctx.organizationId),
+          eq(invoiceReminders.id, input.id),
+        ))
+        .limit(1);
+      if (!reminder) throw new TRPCError({ code: "NOT_FOUND", message: "Mahnung nicht gefunden" });
+
+      if (!input.regenerate && reminder.pdfS3Key && reminder.pdfS3Url) {
+        return {
+          url: reminder.pdfS3Url,
+          s3Key: reminder.pdfS3Key,
+          cached: true,
+          filename: `Mahnung_${reminder.level}_${reminder.id}.pdf`,
+        };
+      }
+
+      const [invoice] = await db.select().from(invoices)
+        .where(and(
+          eq(invoices.organizationId, ctx.organizationId),
+          eq(invoices.id, reminder.invoiceId),
+        ))
+        .limit(1);
+      if (!invoice) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung nicht gefunden" });
+
+      const [customer] = await db.select().from(customers)
+        .where(and(
+          eq(customers.organizationId, ctx.organizationId),
+          eq(customers.id, invoice.customerId),
+        ))
+        .limit(1);
+      if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
+
+      const [org] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
+      if (!org) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen" });
+
+      const pdfBuffer = await renderReminderPdf({ org, invoice, customer, reminder });
+
+      const timestamp = Date.now();
+      const cleanInvoiceNum = (invoice.invoiceNumber ?? `${invoice.id}`).replace(/[^a-zA-Z0-9_-]/g, "-");
+      const levelTag = reminder.level === 1 ? "Erinnerung" : `Mahnung${reminder.level - 1}`;
+      const filename = `${levelTag}_${cleanInvoiceNum}.pdf`;
+      const s3Key = `reminders/${ctx.organizationId}/${cleanInvoiceNum}-${levelTag}-${timestamp}.pdf`;
+      const { url } = await storagePut(s3Key, pdfBuffer, "application/pdf");
+
+      await db.update(invoiceReminders).set({ pdfS3Key: s3Key, pdfS3Url: url })
+        .where(and(
+          eq(invoiceReminders.organizationId, ctx.organizationId),
+          eq(invoiceReminders.id, reminder.id),
+        ));
+
+      try {
+        await db.insert(documents).values({
+          organizationId: ctx.organizationId,
+          filename,
+          s3Key,
+          s3Url: url,
+          mimeType: "application/pdf",
+          fileSize: pdfBuffer.byteLength,
+          documentType: "invoice_out",
+          fiscalYear: invoice.fiscalYear ?? null,
+          uploadedBy: ctx.user.id,
+          matchStatus: "matched",
+          notes: `Auto-generiert: ${levelTag} für Rechnung ${invoice.invoiceNumber ?? `#${invoice.id}`}`,
+        });
+      } catch (e) {
+        console.warn("[reminders.generatePdf] document insert failed:", e);
+      }
+
+      return { url, s3Key, cached: false, filename };
+    }),
+
+  /**
+   * Sendet die Mahnung per E-Mail mit Mahn-PDF + Original-Rechnungs-PDF als
+   * zwei Anhängen. Nach erfolgreichem Versand wird sentAt gesetzt.
+   */
+  sendEmail: orgProcedure
+    .input(z.object({
+      id: z.number(),
+      to: z.string().email().optional(),
+      cc: z.array(z.string().email()).optional(),
+      subject: z.string().optional(),
+      bodyText: z.string().optional(),
+      includeInvoicePdf: z.boolean().default(true),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [reminder] = await db.select().from(invoiceReminders)
+        .where(and(
+          eq(invoiceReminders.organizationId, ctx.organizationId),
+          eq(invoiceReminders.id, input.id),
+        ))
+        .limit(1);
+      if (!reminder) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const [invoice] = await db.select().from(invoices)
+        .where(and(
+          eq(invoices.organizationId, ctx.organizationId),
+          eq(invoices.id, reminder.invoiceId),
+        ))
+        .limit(1);
+      if (!invoice) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung nicht gefunden" });
+
+      const [customer] = await db.select().from(customers)
+        .where(and(
+          eq(customers.organizationId, ctx.organizationId),
+          eq(customers.id, invoice.customerId),
+        ))
+        .limit(1);
+      if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
+
+      const recipient = input.to ?? customer.email;
+      if (!recipient) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Keine E-Mail-Adresse: Bitte Empfänger angeben oder Kunden-E-Mail hinterlegen.",
+        });
+      }
+
+      const [org] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
+      if (!org) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen" });
+
+      // Mahn-PDF rendern
+      const reminderPdf = await renderReminderPdf({ org, invoice, customer, reminder });
+      const cleanInvoiceNum = (invoice.invoiceNumber ?? `${invoice.id}`).replace(/[^a-zA-Z0-9_-]/g, "-");
+      const levelTag = reminder.level === 1 ? "Erinnerung" : `Mahnung${reminder.level - 1}`;
+      const attachments = [{
+        filename: `${levelTag}_${cleanInvoiceNum}.pdf`,
+        content: reminderPdf.toString("base64"),
+        contentType: "application/pdf",
+      }];
+
+      // Optional: Original-Rechnungs-PDF mitsenden (damit der Kunde es sicher hat)
+      if (input.includeInvoicePdf && invoice.pdfS3Url) {
+        try {
+          const resp = await fetch(invoice.pdfS3Url);
+          if (resp.ok) {
+            const buf = Buffer.from(await resp.arrayBuffer());
+            attachments.push({
+              filename: `Rechnung_${cleanInvoiceNum}.pdf`,
+              content: buf.toString("base64"),
+              contentType: "application/pdf",
+            });
+          }
+        } catch (e) {
+          console.warn("[reminders.sendEmail] invoice PDF fetch failed:", e);
+        }
+      }
+
+      const levelLabels: Record<number, string> = {
+        1: "Zahlungserinnerung",
+        2: "1. Mahnung",
+        3: "2. Mahnung",
+      };
+      const subject = input.subject
+        ?? `${levelLabels[reminder.level] ?? "Mahnung"} – Rechnung ${invoice.invoiceNumber ?? ""}`;
+      const greeting = customer.salutation ?? "Sehr geehrte Damen und Herren";
+      const bodyText = input.bodyText
+        ?? `${greeting}
+
+anbei erhalten Sie die ${levelLabels[reminder.level] ?? "Mahnung"} zur Rechnung ${invoice.invoiceNumber ?? ""}.
+Die Gesamtforderung (inkl. Mahngebühr) ist bis ${new Date(reminder.newDueDate).toLocaleDateString("de-CH")} zu begleichen.
+
+Sollte Ihre Zahlung zwischenzeitlich erfolgt sein, betrachten Sie dieses Schreiben bitte als gegenstandslos.
+
+Freundliche Grüsse
+${org.companyName}`;
+
+      const html = `<div style="font-family: Helvetica, Arial, sans-serif; font-size: 14px; color: #222; line-height: 1.5;">${bodyText
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>")}</div>`;
+
+      const messageId = await sendEmail({
+        to: recipient,
+        cc: input.cc,
+        subject,
+        html,
+        text: bodyText,
+        replyTo: org.email ?? undefined,
+        attachments,
+      });
+
+      await db.update(invoiceReminders).set({ sentAt: new Date() })
+        .where(and(
+          eq(invoiceReminders.organizationId, ctx.organizationId),
+          eq(invoiceReminders.id, reminder.id),
+        ));
+
+      return { success: true, messageId, to: recipient };
     }),
 });

@@ -3,7 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
   AlertTriangle, Bell, CheckCircle2, Clock, FileText, Loader2, Send,
-  Mail, Trash2,
+  Mail, Trash2, FileDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -88,6 +88,22 @@ export default function OpenPositions() {
     onSuccess: () => {
       toast.success("Mahnung gelöscht");
       utils.reminders.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const pdfMut = trpc.reminders.generatePdf.useMutation({
+    onSuccess: (r) => {
+      toast.success(r.cached ? "PDF bereit" : "PDF generiert");
+      window.open(r.url, "_blank", "noopener,noreferrer");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const [emailFor, setEmailFor] = useState<{ id: number; invoiceNumber: string | null; customerEmail: string | null; level: number } | null>(null);
+  const emailMut = trpc.reminders.sendEmail.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Mahnung an ${r.to} versandt`);
+      utils.reminders.invalidate();
+      setEmailFor(null);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -322,8 +338,26 @@ export default function OpenPositions() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
+                        <Button
+                          size="sm" variant="ghost" title="PDF öffnen"
+                          disabled={pdfMut.isPending}
+                          onClick={() => pdfMut.mutate({ id: r.id, regenerate: false })}
+                        >
+                          <FileDown className="h-4 w-4" />
+                        </Button>
                         {!r.sentAt && (
                           <>
+                            <Button
+                              size="sm" variant="ghost" title="Per E-Mail senden"
+                              onClick={() => setEmailFor({
+                                id: r.id,
+                                invoiceNumber: r.invoiceNumber ?? null,
+                                customerEmail: null, // wird im Dialog aus input gesetzt
+                                level: r.level,
+                              })}
+                            >
+                              <Mail className="h-4 w-4 text-blue-600" />
+                            </Button>
                             <Button
                               size="sm" variant="ghost"
                               onClick={() => markSent.mutate({ id: r.id })}
@@ -378,7 +412,109 @@ export default function OpenPositions() {
           isPending={createReminder.isPending}
         />
       )}
+
+      {/* Email-Dialog */}
+      {emailFor && (
+        <SendReminderEmailDialog
+          open={!!emailFor}
+          onOpenChange={(o) => !o && setEmailFor(null)}
+          data={emailFor}
+          isPending={emailMut.isPending}
+          onSend={(data) => emailMut.mutate({ id: emailFor.id, ...data })}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── SendReminderEmailDialog ────────────────────────────────────────────────
+
+function SendReminderEmailDialog(props: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  data: { id: number; invoiceNumber: string | null; customerEmail: string | null; level: number };
+  isPending: boolean;
+  onSend: (data: {
+    to: string;
+    cc?: string[];
+    subject?: string;
+    bodyText?: string;
+    includeInvoicePdf?: boolean;
+  }) => void;
+}) {
+  const levelLabels: Record<number, string> = {
+    1: "Zahlungserinnerung",
+    2: "1. Mahnung",
+    3: "2. Mahnung",
+  };
+  const [to, setTo] = useState(props.data.customerEmail ?? "");
+  const [cc, setCc] = useState("");
+  const [subject, setSubject] = useState(
+    `${levelLabels[props.data.level] ?? "Mahnung"} – Rechnung ${props.data.invoiceNumber ?? ""}`.trim(),
+  );
+  const [bodyText, setBodyText] = useState("");
+  const [includeInvoice, setIncludeInvoice] = useState(true);
+
+  return (
+    <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
+      <AlertDialogContent className="max-w-xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{levelLabels[props.data.level] ?? "Mahnung"} per E-Mail senden</AlertDialogTitle>
+          <AlertDialogDescription>
+            Die Mahnung wird als PDF-Anhang an den Empfänger gesandt
+            (optional zusammen mit der Original-Rechnung).
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <Label>An *</Label>
+            <Input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="kunde@example.ch" />
+          </div>
+          <div>
+            <Label>CC (kommasepariert)</Label>
+            <Input value={cc} onChange={(e) => setCc(e.target.value)} />
+          </div>
+          <div>
+            <Label>Betreff</Label>
+            <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+          </div>
+          <div>
+            <Label>Nachricht (leer = Default)</Label>
+            <textarea
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[100px]"
+              value={bodyText}
+              onChange={(e) => setBodyText(e.target.value)}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeInvoice}
+              onChange={(e) => setIncludeInvoice(e.target.checked)}
+            />
+            Original-Rechnungs-PDF mitsenden
+          </label>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={!to || props.isPending}
+            onClick={() => {
+              const ccList = cc.split(",").map(s => s.trim()).filter(Boolean);
+              props.onSend({
+                to,
+                cc: ccList.length > 0 ? ccList : undefined,
+                subject: subject || undefined,
+                bodyText: bodyText || undefined,
+                includeInvoicePdf: includeInvoice,
+              });
+            }}
+          >
+            {props.isPending ? "Sende…" : "Senden"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

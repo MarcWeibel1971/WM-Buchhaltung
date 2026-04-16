@@ -27,6 +27,7 @@ import { suppliersRouter } from "./suppliersRouter";
 import { timeTrackingRouter } from "./timeTrackingRouter";
 import { customersRouter } from "./customersRouter";
 import { organizationsRouter } from "./organizationsRouter";
+import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
 import { remindersRouter } from "./remindersRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
@@ -3490,14 +3491,7 @@ const documentsRouter = router({
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
-  auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return { success: true } as const;
-    }),
-  }),
+  auth: authRouter,
   accounts: accountsRouter,
   journal: journalRouter,
   bankImport: bankImportRouter,

@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { FiscalYearProvider } from "./contexts/FiscalYearContext";
@@ -10,14 +10,21 @@ import { getLoginUrl } from "./const";
 import { Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
-// Pages
+// Pages – Auth (public)
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+import VerifyEmail from "./pages/VerifyEmail";
+import LandingPage from "./pages/LandingPage";
+
+// Pages – App (protected)
 import Dashboard from "./pages/Dashboard";
 import Journal from "./pages/Journal";
 import BankImport from "./pages/BankImport";
 import CreditCard from "./pages/CreditCard";
 import Payroll from "./pages/Payroll";
 import Reports from "./pages/Reports";
-// Accounts is now embedded in Reports
 import VatPage from "./pages/Vat";
 import Documents from "./pages/Documents";
 import Settings from "./pages/Settings";
@@ -30,8 +37,13 @@ import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
 import Layout from "./components/Layout";
 
+/**
+ * AuthGuard: Prüft ob der User eingeloggt ist.
+ * Falls nicht → Redirect zur Login-Seite (statt Manus OAuth).
+ */
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
+  const [, navigate] = useLocation();
 
   if (loading) {
     return (
@@ -45,28 +57,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center max-w-md px-6">
-          <div className="mb-6">
-            <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-foreground mb-2">WM-Buchhaltung</h1>
-            <p className="text-lg font-semibold text-primary mb-1">Schweizer KMU-Buchhaltung</p>
-            <p className="text-muted-foreground text-sm">Bitte melden Sie sich an, um fortzufahren.</p>
-          </div>
-          <a
-            href={getLoginUrl()}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors"
-          >
-            Anmelden
-          </a>
-        </div>
-      </div>
-    );
+    return <Redirect to="/landing" />;
   }
 
   return <>{children}</>;
@@ -76,11 +67,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
  * Phase 1c OrgGuard: Stellt sicher, dass der eingeloggte User eine aktive
  * Organisation hat. Falls nicht, wird die Onboarding-Seite angezeigt, auf der
  * der User eine neue Firma anlegen kann.
- *
- * Verhalten:
- * - User ohne Memberships      → Onboarding
- * - User mit Memberships, aber keine currentOrganizationId → erste Org aktivieren
- * - User mit aktiver Org       → Kinder rendern
  */
 function OrgGuard({ children }: { children: React.ReactNode }) {
   const utils = trpc.useUtils();
@@ -131,7 +117,10 @@ function OrgGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function Router() {
+/**
+ * Protected app routes – only accessible after login + org selection
+ */
+function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
@@ -158,21 +147,41 @@ function Router() {
   );
 }
 
+/**
+ * ProtectedApp: Wraps the app routes with AuthGuard + OrgGuard + Layout
+ */
+function ProtectedApp() {
+  return (
+    <AuthGuard>
+      <OrgGuard>
+        <FiscalYearProvider>
+          <Layout>
+            <AppRouter />
+          </Layout>
+        </FiscalYearProvider>
+      </OrgGuard>
+    </AuthGuard>
+  );
+}
+
 function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster position="top-right" richColors />
-          <AuthGuard>
-            <OrgGuard>
-              <FiscalYearProvider>
-                <Layout>
-                  <Router />
-                </Layout>
-              </FiscalYearProvider>
-            </OrgGuard>
-          </AuthGuard>
+          <Switch>
+            {/* Public routes – no auth required */}
+            <Route path="/landing" component={LandingPage} />
+            <Route path="/login" component={Login} />
+            <Route path="/register" component={Register} />
+            <Route path="/forgot-password" component={ForgotPassword} />
+            <Route path="/reset-password" component={ResetPassword} />
+            <Route path="/verify-email" component={VerifyEmail} />
+
+            {/* Protected routes – auth + org required */}
+            <Route component={ProtectedApp} />
+          </Switch>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

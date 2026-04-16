@@ -826,3 +826,60 @@
 - [x] Frontend: Kundenliste-Anzeige mit Vorname/Nachname anpassen
 - [x] Datenmigration: 157 bestehende Namen in firstName/lastName aufgeteilt
 - [x] QR-Rechnung: Kundenauswahl-Dropdown im Rechnungsformular (Empfänger automatisch ausfüllen)
+
+## Branding: Max (maximal einfache Buchhaltung)
+- [ ] Logo-Entwürfe generieren (freundlich/verspielt, aber nicht zu fest)
+- [ ] App-Titel auf "Max" ändern (VITE_APP_TITLE)
+- [ ] Logo in der App einbinden (VITE_APP_LOGO)
+
+## Eigenes Auth-System (SaaS-fähig)
+- [ ] Eigenes Registrierungs-/Login-System (E-Mail + Passwort)
+- [ ] users-Tabelle erweitern (passwordHash, emailVerified) - Migration 0024+
+- [ ] Registrierungsseite mit E-Mail-Verifizierung
+- [ ] Login-Seite (eigenes Portal statt Manus OAuth)
+- [ ] Passwort vergessen / zurücksetzen
+- [ ] HINWEIS: currentOrganizationId NICHT anrühren (Claude Phase 1)
+- [ ] HINWEIS: Claude nutzt Migrationen 0022, 0023 - wir starten ab 0024+
+
+## Auth-System Implementierung (Detail)
+- [x] Schema: passwordHash, emailVerified, verificationToken, resetToken, resetTokenExpiry in users-Tabelle
+- [x] Backend: tRPC auth.register (E-Mail + Passwort, bcrypt)
+- [x] Backend: tRPC auth.login (E-Mail + Passwort, Session-Cookie)
+- [x] Backend: tRPC auth.forgotPassword (Reset-Token per E-Mail)
+- [x] Backend: tRPC auth.resetPassword (Neues Passwort setzen)
+- [x] Backend: tRPC auth.verifyEmail (Token verifizieren)
+- [x] Backend: E-Mail-Versand via Resend (Verifizierung + Passwort-Reset)
+- [x] Frontend: /login Seite
+- [x] Frontend: /register Seite
+- [x] Frontend: /forgot-password Seite
+- [x] Frontend: /reset-password Seite
+- [x] Frontend: /verify-email Seite
+- [x] Manus OAuth als zusätzliche Login-Option beibehalten
+
+## Öffentliche Landing Page
+- [x] Landing Page mit Produktbeschreibung (Hero, Features, Vorteile)
+- [x] Pricing-Sektion (Pläne/Preise)
+- [x] CTA "Jetzt registrieren"
+- [x] Responsive Design (Mobile + Desktop)
+
+## Tests: Auth-System
+- [x] Vitest: auth.register (6 Tests – Registrierung, Duplikate, schwache Passwörter, ungültige E-Mail, leerer Name)
+- [x] Vitest: auth.login (3 Tests – nicht existierender User, falsches Passwort, unverifizierte E-Mail)
+- [x] Vitest: auth.verifyEmail (1 Test – ungültiger Token)
+- [x] Vitest: auth.forgotPassword (2 Tests – nicht existierende E-Mail, existierende E-Mail)
+- [x] Vitest: auth.resetPassword (2 Tests – ungültiger Token, schwaches Passwort)
+- [x] Vitest: auth.resendVerification (2 Tests – nicht existierende E-Mail, existierender User)
+- [x] Vitest: Vollständiger Register→Verify→Login Flow (1 Test – End-to-End mit DB-Token)
+- [x] Vitest: E-Mail-Service (3 Tests – API-Key Validierung, Verifizierungs-E-Mail, Reset-E-Mail)
+
+## Branding: KLAX
+- [x] App-Titel (VITE_APP_TITLE) auf "KLAX" setzen
+- [x] Landing Page: Alle Texte auf KLAX-Branding aktualisieren (Hero, Features, Pricing, CTA)
+- [x] index.html: Seitentitel und Meta-Tags auf KLAX aktualisieren
+- [x] Login/Register/Auth-Seiten: Produktname auf KLAX aktualisieren
+- [x] DashboardLayout: Produktname auf KLAX aktualisieren
+
+## Bugfix: Landing Page und Logout
+- [x] Landing Page /landing muss auch für eingeloggte User erreichbar sein (kein Redirect zum Onboarding)
+- [x] Logout-Funktion muss auf der published Site funktionieren (nicht nur Manus OAuth)
+- [x] Nach Logout → Redirect auf Landing Page

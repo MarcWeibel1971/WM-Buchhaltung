@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
+import { useLocation } from "wouter";
 
 const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   invoice_in:  { label: "Eingangsrechnung",  icon: <ArrowDownToLine className="w-3.5 h-3.5" />, color: "text-red-600 bg-red-50" },
@@ -45,6 +46,7 @@ function formatCHF(n: number) {
 
 export default function Documents() {
   const { fiscalYear, fiscalYears } = useFiscalYear();
+  const [, navigate] = useLocation();
   const [filterType, setFilterType] = useState<string>("all");
   const [filterMatch, setFilterMatch] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -274,12 +276,16 @@ export default function Documents() {
               const isUnmatched = matchStatus === "unmatched" || !matchStatus;
 
               return (
-                <div key={doc.id} className="flex items-start gap-3 p-4 hover:bg-muted/30 transition-colors">
-                  {/* File icon */}
-                  <div className="mt-0.5 flex-shrink-0">
+                <div
+                  key={doc.id}
+                  className="flex items-start gap-3 p-4 hover:bg-muted/30 transition-colors cursor-pointer"
+                  onClick={() => navigate(`/documents/${doc.id}`)}
+                >
+                  {/* Thumbnail */}
+                  <div className="mt-0.5 flex-shrink-0 w-10 h-12 rounded border border-border overflow-hidden bg-muted/50 flex items-center justify-center">
                     {doc.mimeType.startsWith("image/")
-                      ? <Image className="w-8 h-8 text-blue-400" />
-                      : <FileText className="w-8 h-8 text-red-400" />
+                      ? <img src={doc.s3Url} alt="" className="w-full h-full object-cover" />
+                      : <FileText className="w-5 h-5 text-red-400" />
                     }
                   </div>
 
@@ -358,6 +364,7 @@ export default function Documents() {
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Öffnen"
+                      onClick={(e) => e.stopPropagation()}
                     >
                       <Button variant="ghost" size="icon" className="h-8 w-8">
                         <Eye className="w-4 h-4" />
@@ -369,7 +376,7 @@ export default function Documents() {
                         size="icon"
                         className="h-8 w-8 text-blue-600 hover:text-blue-700"
                         title="Manuell mit Banktransaktion verknüpfen"
-                        onClick={() => openMatchDialog(doc.id, doc.filename)}
+                        onClick={(e) => { e.stopPropagation(); openMatchDialog(doc.id, doc.filename); }}
                       >
                         <Paperclip className="w-4 h-4" />
                       </Button>
@@ -380,7 +387,7 @@ export default function Documents() {
                         size="icon"
                         className="h-8 w-8 text-amber-600 hover:text-amber-700"
                         title="Match aufheben"
-                        onClick={() => unmatchMutation.mutate({ documentId: doc.id })}
+                        onClick={(e) => { e.stopPropagation(); unmatchMutation.mutate({ documentId: doc.id }); }}
                       >
                         <Unlink className="w-4 h-4" />
                       </Button>
@@ -390,7 +397,7 @@ export default function Documents() {
                       size="icon"
                       className="h-8 w-8 text-destructive hover:text-destructive"
                       title="Löschen"
-                      onClick={() => handleDelete(doc.id, doc.filename)}
+                      onClick={(e) => { e.stopPropagation(); handleDelete(doc.id, doc.filename); }}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

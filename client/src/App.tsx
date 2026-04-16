@@ -27,6 +27,7 @@ import Payroll from "./pages/Payroll";
 import Reports from "./pages/Reports";
 import VatPage from "./pages/Vat";
 import Documents from "./pages/Documents";
+import DocumentDetail from "./pages/DocumentDetail";
 import Settings from "./pages/Settings";
 import YearEnd from "./pages/YearEnd";
 import QrBillGenerator from "./pages/QrBillGenerator";
@@ -131,6 +132,7 @@ function AppRouter() {
       <Route path="/reports" component={Reports} />
       <Route path="/accounts">{() => { window.location.replace("/reports"); return null; }}</Route>
       <Route path="/vat" component={VatPage} />
+      <Route path="/documents/:id" component={DocumentDetail} />
       <Route path="/documents" component={Documents} />
       <Route path="/settings" component={Settings} />
       <Route path="/year-end" component={YearEnd} />

@@ -909,3 +909,14 @@
 - [x] Frontend: Onboarding-Formular mit Autocomplete-Dropdown
 - [x] Autofill: Firmenname, Rechtsform, UID, Adresse, MWST-Nr. automatisch abfüllen
 - [x] Autofill: Kanton korrekt aus UID-Daten übernommen
+
+## Feature: Beleganalyse Detailansicht (Kontera-Style)
+- [x] Frontend: Beleg-Detailansicht mit PDF/Bild-Vorschau links und editierbaren Feldern rechts
+- [x] Frontend: Tabs/Schritte wie Kontera (Kontakt, Belegdetails, Kontierung, Zahlung)
+- [x] Frontend: Kontakt-Sektion: Firmenname, UID, MWST-Nr., Strasse, PLZ, Ort, Land (aus AI-Extraktion)
+- [x] Frontend: Belegdetails-Sektion: Belegnummer, Belegdatum, Fälligkeitsdatum, Beschreibung, Betrag, MWST
+- [x] Frontend: Kontierung-Sektion: Konto-Vorschlag (Auto-Learn hat Priorität, LLM als Fallback), Steuersatz, Brutto
+- [x] Frontend: Zahlungs-Sektion: IBAN, QR-Referenz, Zahlungsart, Betrag, Währung, Empfänger-Details
+- [x] Frontend: Beleg-Liste mit Thumbnail, Datum, Kontakt, Kontierung, Betrag (wie Kontera Übersicht)
+- [x] Backend: Erweiterte AI-Extraktion für alle Kontera-Felder (Fälligkeitsdatum, QR-Referenz, Zahlungsart etc.)
+- [x] Integration: Auto-Learn Kontierung bleibt bestehen, LLM-Vorschlag nur als Fallback

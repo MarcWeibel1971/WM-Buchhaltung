@@ -10,7 +10,7 @@ import {
   FileText, Image, Eye, Trash2, Search, Filter,
   Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
   Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2, Calendar,
-  Paperclip
+  Paperclip, ChevronRight, CreditCard
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
@@ -21,6 +21,7 @@ const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; co
   invoice_out: { label: "Ausgangsrechnung",  icon: <ArrowUpFromLine className="w-3.5 h-3.5" />, color: "text-green-600 bg-green-50" },
   receipt:     { label: "Quittung",           icon: <Receipt className="w-3.5 h-3.5" />,         color: "text-blue-600 bg-blue-50" },
   bank_statement: { label: "Kontoauszug",    icon: <Building2 className="w-3.5 h-3.5" />,        color: "text-purple-600 bg-purple-50" },
+  credit_card_statement: { label: "KK-Abrechnung", icon: <CreditCard className="w-3.5 h-3.5" />, color: "text-orange-600 bg-orange-50" },
   other:       { label: "Sonstiges",          icon: <StickyNote className="w-3.5 h-3.5" />,      color: "text-gray-600 bg-gray-50" },
 };
 
@@ -238,6 +239,7 @@ export default function Documents() {
             <SelectItem value="invoice_out">Ausgangsrechnungen</SelectItem>
             <SelectItem value="receipt">Quittungen</SelectItem>
             <SelectItem value="bank_statement">Kontoauszüge</SelectItem>
+            <SelectItem value="credit_card_statement">KK-Abrechnungen</SelectItem>
             <SelectItem value="other">Sonstiges</SelectItem>
           </SelectContent>
         </Select>
@@ -278,7 +280,7 @@ export default function Documents() {
               return (
                 <div
                   key={doc.id}
-                  className="flex items-start gap-3 p-4 hover:bg-muted/30 transition-colors cursor-pointer"
+                  className="group flex items-start gap-3 p-4 hover:bg-muted/40 transition-colors cursor-pointer border-l-2 border-l-transparent hover:border-l-primary"
                   onClick={() => navigate(`/documents/${doc.id}`)}
                 >
                   {/* Thumbnail */}
@@ -401,6 +403,11 @@ export default function Documents() {
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
+                  </div>
+
+                  {/* Click indicator */}
+                  <div className="flex-shrink-0 self-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
                   </div>
                 </div>
               );

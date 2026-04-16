@@ -479,7 +479,7 @@ export async function getPendingBankTransactions(orgId: number, bankAccountId?: 
     .orderBy(desc(bankTransactions.transactionDate));
 }
 
-export async function getBankTransactionsByStatus(orgId: number, status: "pending" | "matched" | "all", bankAccountId?: number) {
+export async function getBankTransactionsByStatus(orgId: number, status: "pending" | "matched" | "all", bankAccountId?: number, fiscalYear?: number) {
   const db = await getDb();
   if (!db) return [];
   const conditions: any[] = [eq(bankTransactions.organizationId, orgId)];
@@ -487,6 +487,15 @@ export async function getBankTransactionsByStatus(orgId: number, status: "pendin
   else if (status === "matched") conditions.push(eq(bankTransactions.status, "matched"));
   // "all" = no status filter
   if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
+  // Filter by fiscal year: only show transactions within the selected year
+  // transactionDate is mode:'string' so compare as strings (YYYY-MM-DD format)
+  if (fiscalYear) {
+    const yearStartStr = `${fiscalYear}-01-01`;
+    const yearEndStr = `${fiscalYear + 1}-01-01`;
+    const { gte, lt } = await import("drizzle-orm");
+    conditions.push(gte(bankTransactions.transactionDate, yearStartStr));
+    conditions.push(lt(bankTransactions.transactionDate, yearEndStr));
+  }
   return db.select().from(bankTransactions)
     .where(and(...conditions))
     .orderBy(desc(bankTransactions.transactionDate));

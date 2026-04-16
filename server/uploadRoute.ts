@@ -82,12 +82,14 @@ uploadRouter.post("/document", upload.single("file"), async (req, res) => {
   "referenceNumber": "Referenznummer oder null",
   "description": "Kurzbeschreibung des Belegs (max 100 Zeichen)",
   "documentType": Einer der folgenden Werte (WICHTIG – wähle den passendsten!):
-    - "invoice_in" = Eingangsrechnung (Rechnung von einem Lieferanten AN uns, z.B. Hostpoint, Gewerbe-Treuhand, Mobility, AXA, Velokurier etc.)
+    - "invoice_in" = Eingangsrechnung (Rechnung von einem Lieferanten AN uns, z.B. Hostpoint, Gewerbe-Treuhand, Mobility, AXA Versicherung, Velokurier etc.)
     - "invoice_out" = Ausgangsrechnung (Rechnung VON uns an einen Kunden)
     - "receipt" = Quittung/Kassenbeleg (Barbelege, Kassenbons)
-    - "bank_statement" = Kontoauszug/Kreditkartenabrechnung (VISA, Bankauszug, Kreditkartenabrechnung)
+    - "bank_statement" = Kontoauszug einer Bank (Bankauszug, Kontobewegungen)
+    - "credit_card_statement" = Kreditkartenabrechnung (VISA, Mastercard, Raiffeisen Kreditkarte, Viseca – enthält einzelne Kreditkarten-Positionen mit Datum/Betrag/Details = Sammelbuchung!)
     - "other" = nur wenn keiner der obigen Typen passt
-  Hinweis: Die meisten Belege in einer KMU-Buchhaltung sind Eingangsrechnungen ("invoice_in") oder Kreditkartenabrechnungen ("bank_statement").
+  WICHTIG: Kreditkartenabrechnungen (Viseca, VISA, Mastercard) sind KEINE Kontoauszüge! Sie enthalten einzelne Positionen und müssen als "credit_card_statement" klassifiziert werden.
+  Hinweis: Die meisten Belege in einer KMU-Buchhaltung sind Eingangsrechnungen ("invoice_in").
   "suggestedAccount": "Kontonummer aus Schweizer KMU-Kontenrahmen oder null",
   "rawText": "Vollständiger extrahierter Text des Belegs"
 }

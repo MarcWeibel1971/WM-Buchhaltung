@@ -926,3 +926,11 @@
 - [x] Feature: PDF-Kontoplan-Import als zusätzliche Option anbieten (LLM-basierte Extraktion)
 - [x] Frontend: Import-Dialog mit Excel/CSV und PDF/Bild Buttons, KI-Ladeindikator
 - [x] Tests: 20 Vitest-Tests für Kontoplan-Import-Logik (getCol, mapAccountType, parseRow, Borgas-Simulation)
+
+## Bugfixes Benutzer-Feedback (Runde 2)
+- [x] UX: Visueller Klick-Hinweis in Dokumentenliste (Hover-Effekt, Cursor-Pointer, Chevron-Icon)
+- [x] Bug: Manuelles Verknüpfen zeigt Transaktionen von WM statt vom aktuellen Mandanten (orgId-Filter hinzugefügt)
+- [x] Bug: Dokument-Detail (Split-Panel) zeigt kein Konto obwohl Bankimport das Konto erkannt hat – Konto-Vorschlag aus Matching + matched Txn übernommen
+- [x] Bug: Dateiname im Dokument-Detail und Bankimport unterschiedlich – abgleichen
+- [x] Bug: Kreditkartenabrechnung wird als "Kontoauszug" erkannt statt "Kreditkartenabrechnung" – credit_card_statement als neuer Typ
+- [x] Bug: Bankimport GJ-Filter zeigt bei GJ 2024 auch Transaktionen von 2025 – fiscalYear-Filter in Query implementiert

@@ -701,9 +701,9 @@ const bankImportRouter = router({
     .query(({ input, ctx }) => getPendingBankTransactions(ctx.organizationId, input.bankAccountId)),
 
   getTransactionsByStatus: orgProcedure
-    .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional() }))
+    .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional(), fiscalYear: z.number().optional() }))
     .query(async ({ input, ctx }) => {
-      const txs = await getBankTransactionsByStatus(ctx.organizationId, input.status, input.bankAccountId);
+      const txs = await getBankTransactionsByStatus(ctx.organizationId, input.status, input.bankAccountId, input.fiscalYear);
       // For transfer transactions, enrich with partner bank account name and accounting account IDs
       const db = await getDb();
       if (!db) return txs;
@@ -1684,12 +1684,13 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       search: z.string().optional(),
       limit: z.number().default(50),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { bankTransactions: txns, bankAccounts: ba, accounts: accts } = await import("../drizzle/schema");
       const { and, eq: eqOp, or, like, desc: descOp, isNull } = await import("drizzle-orm");
       const conditions: any[] = [
+        eqOp(txns.organizationId, ctx.organizationId),
         eqOp(txns.status, 'pending'),
         or(
           isNull(txns.matchedDocumentId),
@@ -3469,13 +3470,14 @@ const documentsRouter = router({
         const [s] = await db.select().from(suppliersTbl).where(eqOp(suppliersTbl.id, doc.supplierId));
         if (s) supplier = s;
       }
-      // Get booking suggestion: Auto-Learn rule has PRIORITY, LLM suggestion as fallback
+      // Get booking suggestion: Auto-Learn rule has PRIORITY, then matched Txn, then LLM suggestion
       let bookingSuggestion: { accountId: number | null; accountNumber: string | null; accountName: string | null; source: string; vatRate: number | null; bookingText: string | null } | null = null;
       const counterpartyName = metadata?.counterparty || supplier?.name;
+      
+      // 1. Try Auto-Learn rule (highest priority)
       if (counterpartyName) {
         const rule = await findMatchingRule(ctx.organizationId, counterpartyName);
         if (rule) {
-          // Auto-Learn rule found – use it with priority
           let acctName = null;
           let acctNumber = null;
           const acctId = rule.debitAccountId || rule.creditAccountId;
@@ -3491,20 +3493,67 @@ const documentsRouter = router({
             vatRate: rule.vatRate ? Number(rule.vatRate) : null,
             bookingText: rule.bookingTextTemplate || null,
           };
-        } else if (metadata?.suggestedAccount) {
-          // LLM suggestion as fallback
-          const acctNum = String(metadata.suggestedAccount);
-          const acct = await getAccountByNumber(ctx.organizationId, acctNum);
-          bookingSuggestion = {
-            accountId: acct?.id || null,
-            accountNumber: acctNum,
-            accountName: acct?.name || null,
-            source: 'llm',
-            vatRate: metadata.vatRate || null,
-            bookingText: metadata.description || null,
-          };
         }
       }
+      
+      // 2. Try matched bank transaction's account suggestion (if no auto-learn rule found)
+      if (!bookingSuggestion && doc.bankTransactionId) {
+        const { bankTransactions: txnsTbl } = await import("../drizzle/schema");
+        const [txn] = await db.select().from(txnsTbl).where(eqOp(txnsTbl.id, doc.bankTransactionId));
+        if (txn) {
+          const sugAcctId = txn.suggestedDebitAccountId || txn.suggestedCreditAccountId;
+          if (sugAcctId) {
+            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, sugAcctId));
+            if (acct) {
+              bookingSuggestion = {
+                accountId: acct.id,
+                accountNumber: acct.number,
+                accountName: acct.name,
+                source: 'bank_import',
+                vatRate: null,
+                bookingText: txn.suggestedBookingText || null,
+              };
+            }
+          }
+        }
+      }
+      
+      // 3. Also check via matchedDocumentId (reverse lookup: find txn that has this doc matched)
+      if (!bookingSuggestion) {
+        const { bankTransactions: txnsTbl } = await import("../drizzle/schema");
+        const [matchedTxn] = await db.select().from(txnsTbl).where(eqOp(txnsTbl.matchedDocumentId, doc.id));
+        if (matchedTxn) {
+          const sugAcctId = matchedTxn.suggestedDebitAccountId || matchedTxn.suggestedCreditAccountId;
+          if (sugAcctId) {
+            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, sugAcctId));
+            if (acct) {
+              bookingSuggestion = {
+                accountId: acct.id,
+                accountNumber: acct.number,
+                accountName: acct.name,
+                source: 'bank_import',
+                vatRate: null,
+                bookingText: matchedTxn.suggestedBookingText || null,
+              };
+            }
+          }
+        }
+      }
+      
+      // 4. LLM suggestion as final fallback
+      if (!bookingSuggestion && metadata?.suggestedAccount) {
+        const acctNum = String(metadata.suggestedAccount);
+        const acct = await getAccountByNumber(ctx.organizationId, acctNum);
+        bookingSuggestion = {
+          accountId: acct?.id || null,
+          accountNumber: acctNum,
+          accountName: acct?.name || null,
+          source: 'llm',
+          vatRate: metadata.vatRate || null,
+          bookingText: metadata.description || null,
+        };
+      }
+      
       return { document: doc, metadata, supplier, bookingSuggestion };
     }),
 

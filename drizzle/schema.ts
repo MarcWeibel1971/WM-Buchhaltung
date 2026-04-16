@@ -545,7 +545,7 @@ export const documents = mysqlTable("documents", {
   // File size in bytes
   fileSize: int("fileSize").notNull(),
   // Document type
-  documentType: mysqlEnum("documentType", ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"]).default("other").notNull(),
+  documentType: mysqlEnum("documentType", ["invoice_in", "invoice_out", "receipt", "bank_statement", "credit_card_statement", "other"]).default("other").notNull(),
   // Optional link to journal entry
   journalEntryId: int("journalEntryId"),
   // Optional link to bank transaction

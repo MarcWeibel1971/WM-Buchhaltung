@@ -47,6 +47,7 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   invoice_out: "Ausgangsrechnung",
   receipt: "Quittung",
   bank_statement: "Kontoauszug",
+  credit_card_statement: "KK-Abrechnung",
   other: "Sonstiges",
 };
 
@@ -115,7 +116,15 @@ export default function DocumentDetail() {
   // Initialize local state from server data
   useEffect(() => {
     if (data) {
-      setEditedMeta(data.metadata || {});
+      const meta = { ...(data.metadata || {}) };
+      // If bookingSuggestion has an account but metadata doesn't, pre-fill it
+      if (data.bookingSuggestion?.accountNumber && !meta.suggestedAccount) {
+        meta.suggestedAccount = data.bookingSuggestion.accountNumber;
+      }
+      if (data.bookingSuggestion?.vatRate != null && meta.vatRate == null) {
+        meta.vatRate = data.bookingSuggestion.vatRate;
+      }
+      setEditedMeta(meta);
       setEditedNotes(data.document.notes || "");
       setEditedDocType(data.document.documentType || "other");
       setIsDirty(false);
@@ -589,19 +598,27 @@ export default function DocumentDetail() {
                   <div className={`p-3 rounded-lg border ${
                     bookingSuggestion.source === 'auto_learn'
                       ? 'bg-blue-50 border-blue-200'
+                      : bookingSuggestion.source === 'bank_import'
+                      ? 'bg-green-50 border-green-200'
                       : 'bg-purple-50 border-purple-200'
                   }`}>
                     <div className="flex items-center gap-2 mb-1">
                       {bookingSuggestion.source === 'auto_learn' ? (
                         <GraduationCap className="w-4 h-4 text-blue-600" />
+                      ) : bookingSuggestion.source === 'bank_import' ? (
+                        <Banknote className="w-4 h-4 text-green-600" />
                       ) : (
                         <Sparkles className="w-4 h-4 text-purple-600" />
                       )}
                       <span className={`text-xs font-semibold ${
-                        bookingSuggestion.source === 'auto_learn' ? 'text-blue-700' : 'text-purple-700'
+                        bookingSuggestion.source === 'auto_learn' ? 'text-blue-700'
+                        : bookingSuggestion.source === 'bank_import' ? 'text-green-700'
+                        : 'text-purple-700'
                       }`}>
                         {bookingSuggestion.source === 'auto_learn'
                           ? 'Gelernte Buchungsregel (Priorität)'
+                          : bookingSuggestion.source === 'bank_import'
+                          ? 'Aus Bankimport übernommen'
                           : 'KI-Vorschlag'}
                       </span>
                     </div>

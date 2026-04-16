@@ -2035,6 +2035,8 @@ function ChartOfAccountsTab() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [isPdfParsing, setIsPdfParsing] = useState(false);
 
   // DnD sensors
   const sensors = useSensors(
@@ -2437,12 +2439,17 @@ function ChartOfAccountsTab() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Laden Sie eine Excel- oder CSV-Datei hoch. Die Datei muss mindestens die Spalten
-              "Nummer" (oder "Konto") und "Name" (oder "Bezeichnung") enthalten.
+              Laden Sie eine Excel-/CSV-Datei oder ein PDF mit dem Kontenplan hoch.
+              Bei Excel/CSV werden die Spalten "Nummer" und "Name" automatisch erkannt.
+              Bei PDF wird der Kontenplan per KI extrahiert.
             </p>
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-                <FileSpreadsheet className="h-4 w-4 mr-2" /> Datei wählen
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isPdfParsing}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" /> Excel/CSV
+              </Button>
+              <Button variant="outline" onClick={() => pdfInputRef.current?.click()} disabled={isPdfParsing}>
+                {isPdfParsing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+                {isPdfParsing ? "KI analysiert..." : "PDF/Bild"}
               </Button>
               <input
                 ref={fileInputRef}
@@ -2458,26 +2465,89 @@ function ChartOfAccountsTab() {
                     const wb = XLSX.read(data);
                     const ws = wb.Sheets[wb.SheetNames[0]];
                     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+                    // Helper: find column value by trying multiple header variants (with/without *)
+                    const getCol = (r: Record<string, any>, ...keys: string[]) => {
+                      for (const k of keys) {
+                        if (r[k] !== undefined && r[k] !== null) return String(r[k]).trim();
+                        if (r[k + "*"] !== undefined && r[k + "*"] !== null) return String(r[k + "*"]).trim();
+                      }
+                      return "";
+                    };
+                    // Map Kontoart from file to internal type
+                    const mapAccountType = (kontoart: string, num: number): string => {
+                      const lower = kontoart.toLowerCase();
+                      if (lower === "aktiv" || lower === "aktiva" || lower === "asset") return "asset";
+                      if (lower === "passiv" || lower === "passiva" || lower === "liability") return "liability";
+                      if (lower === "aufwand" || lower === "expense") return "expense";
+                      if (lower === "ertrag" || lower === "revenue" || lower === "income") return "revenue";
+                      if (lower === "komplett" || lower === "equity" || lower === "eigenkapital") return "equity";
+                      // Fallback: determine from account number
+                      if (num >= 1000 && num < 2000) return "asset";
+                      if (num >= 2000 && num < 2800) return "liability";
+                      if (num >= 2800 && num < 3000) return "equity";
+                      if (num >= 3000 && num < 4000) return "revenue";
+                      if (num >= 4000 && num < 9000) return "expense";
+                      if (num >= 9000) return "equity";
+                      return "expense";
+                    };
                     const parsed = rows.map((r: Record<string, any>) => {
-                      const num = String(r["Nummer"] ?? r["Konto"] ?? r["Nr"] ?? r["number"] ?? "").trim();
-                      const name = String(r["Name"] ?? r["Bezeichnung"] ?? r["Kontoname"] ?? r["name"] ?? "").trim();
-                      const cat = String(r["Kategorie"] ?? r["category"] ?? "").trim() || undefined;
-                      const sub = String(r["Unterkategorie"] ?? r["subCategory"] ?? "").trim() || undefined;
-                      // Determine account type from number
+                      const num = getCol(r, "Nummer", "Konto", "Nr", "number", "Account", "Kontonummer");
+                      const name = getCol(r, "Name", "Bezeichnung", "Kontoname", "name", "Description");
+                      const kontoart = getCol(r, "Kontoart", "Typ", "Type", "accountType", "Art");
+                      const gruppe = getCol(r, "Gruppe", "Group", "Kategorie", "category");
                       const n = parseInt(num);
-                      let accountType: string = "expense";
-                      if (n >= 1000 && n < 2000) accountType = "asset";
-                      else if (n >= 2000 && n < 2800) accountType = "liability";
-                      else if (n >= 2800 && n < 3000) accountType = "equity";
-                      else if (n >= 3000 && n < 4000) accountType = "revenue";
-                      else if (n >= 4000 && n < 9000) accountType = "expense";
-                      else if (n >= 9000) accountType = "equity";
+                      // Skip group/header rows (numbers < 1000 are typically group headers)
+                      if (isNaN(n) || n < 1000) return null;
+                      // Skip rows explicitly marked as "Gruppe"
+                      if (kontoart.toLowerCase() === "gruppe" || kontoart.toLowerCase() === "group") return null;
+                      const accountType = mapAccountType(kontoart, n);
+                      const cat = getCol(r, "Kategorie", "category") || undefined;
+                      const sub = getCol(r, "Unterkategorie", "subCategory") || undefined;
                       return { number: num, name, accountType, category: cat, subCategory: sub };
-                    }).filter((a: any) => a.number && a.name);
+                    }).filter((a): a is NonNullable<typeof a> => a !== null && !!a.number && !!a.name);
                     setImportPreview(parsed);
                     toast.success(`${parsed.length} Konten aus Datei gelesen`);
                   } catch (err) {
                     toast.error("Fehler beim Lesen der Datei");
+                  }
+                  e.target.value = "";
+                }}
+              />
+              <input
+                ref={pdfInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setIsPdfParsing(true);
+                  try {
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    const resp = await fetch("/api/upload/chart-of-accounts-pdf", {
+                      method: "POST",
+                      body: formData,
+                    });
+                    if (!resp.ok) {
+                      const err = await resp.json().catch(() => ({}));
+                      throw new Error(err.error || "Upload fehlgeschlagen");
+                    }
+                    const result = await resp.json();
+                    if (result.accounts && result.accounts.length > 0) {
+                      setImportPreview(result.accounts.map((a: any) => ({
+                        number: a.number,
+                        name: a.name,
+                        accountType: a.accountType,
+                      })));
+                      toast.success(`${result.accounts.length} Konten per KI aus PDF extrahiert`);
+                    } else {
+                      toast.error("Keine Konten im PDF gefunden");
+                    }
+                  } catch (err: any) {
+                    toast.error(err.message || "PDF-Analyse fehlgeschlagen");
+                  } finally {
+                    setIsPdfParsing(false);
                   }
                   e.target.value = "";
                 }}

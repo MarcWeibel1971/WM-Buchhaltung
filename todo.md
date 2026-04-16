@@ -920,3 +920,9 @@
 - [x] Frontend: Beleg-Liste mit Thumbnail, Datum, Kontakt, Kontierung, Betrag (wie Kontera Übersicht)
 - [x] Backend: Erweiterte AI-Extraktion für alle Kontera-Felder (Fälligkeitsdatum, QR-Referenz, Zahlungsart etc.)
 - [x] Integration: Auto-Learn Kontierung bleibt bestehen, LLM-Vorschlag nur als Fallback
+
+## Bugfix + Feature: Kontoplan-Import (Excel + PDF)
+- [x] Bugfix: Excel-Kontoplan-Import funktioniert nicht – Spalten mit Sternchen ("Nummer*", "Name*") werden jetzt erkannt, Gruppen-Zeilen gefiltert, Kontoart-Spalte wird genutzt
+- [x] Feature: PDF-Kontoplan-Import als zusätzliche Option anbieten (LLM-basierte Extraktion)
+- [x] Frontend: Import-Dialog mit Excel/CSV und PDF/Bild Buttons, KI-Ladeindikator
+- [x] Tests: 20 Vitest-Tests für Kontoplan-Import-Logik (getCol, mapAccountType, parseRow, Borgas-Simulation)

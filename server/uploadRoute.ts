@@ -385,3 +385,123 @@ Antworte NUR mit JSON: { "transactions": [...], "accountNumber": "IBAN", "statem
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
   }
 });
+
+// ─── PDF Chart of Accounts Import ──────────────────────────────────────────────
+const chartPdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Nur PDF- oder Bild-Dateien erlaubt"));
+  },
+});
+
+uploadRouter.post("/chart-of-accounts-pdf", chartPdfUpload.single("file"), async (req, res) => {
+  let user;
+  try {
+    user = await sdk.authenticateRequest(req as any);
+  } catch {
+    return res.status(401).json({ error: "Nicht authentifiziert" });
+  }
+
+  if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
+
+  try {
+    // Upload to S3 to get a URL for LLM processing
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "pdf";
+    const fileKey = `chart-of-accounts/${user.id}-${nanoid()}.${ext}`;
+    const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
+
+    const isPdf = req.file.mimetype === "application/pdf";
+    const isImage = req.file.mimetype.startsWith("image/");
+
+    // Extract chart of accounts via LLM
+    const extractResp = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `Du bist ein Schweizer Buchhalter und extrahierst einen Kontenplan aus einem Dokument.
+Extrahiere ALLE Konten (keine Gruppen/Überschriften, nur buchbare Konten mit 4-stelliger Nummer).
+Jedes Konto hat:
+- number: Kontonummer als String (z.B. "1000", "4000")
+- name: Kontobezeichnung (z.B. "Kasse", "Materialaufwand")
+- accountType: Einer von: "asset" (Aktiv, 1000-1999), "liability" (Passiv, 2000-2799), "equity" (Eigenkapital, 2800-2999 und 9000+), "revenue" (Ertrag, 3000-3999), "expense" (Aufwand, 4000-8999)
+
+Regeln:
+- Nur Konten mit mindestens 4-stelliger Nummer extrahieren (keine Gruppen wie 1, 10, 100)
+- Kontonummern müssen numerisch sein
+- Ignoriere Gruppenüberschriften, Summenzeilen und Leerzeilen
+- Wenn das Dokument Spalten wie "Soll" oder "Haben" mit Beträgen hat, ignoriere die Beträge
+
+Antworte NUR mit JSON: { "accounts": [...], "totalFound": number, "documentTitle": "string oder null" }`,
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text" as const, text: "Extrahiere alle Konten aus diesem Kontenplan:" },
+            isPdf
+              ? { type: "file_url" as const, file_url: { url: fileUrl, mime_type: "application/pdf" as const } }
+              : { type: "image_url" as const, image_url: { url: fileUrl, detail: "high" as const } },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "chart_of_accounts_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              accounts: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    number: { type: "string" },
+                    name: { type: "string" },
+                    accountType: { type: "string", enum: ["asset", "liability", "equity", "revenue", "expense"] },
+                  },
+                  required: ["number", "name", "accountType"],
+                  additionalProperties: false,
+                },
+              },
+              totalFound: { type: "number" },
+              documentTitle: { type: ["string", "null"] },
+            },
+            required: ["accounts", "totalFound", "documentTitle"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const msgContent = extractResp.choices[0]?.message?.content;
+    if (!msgContent) return res.status(500).json({ error: "KI-Extraktion fehlgeschlagen" });
+
+    const parsed = typeof msgContent === "string" ? JSON.parse(msgContent) : msgContent;
+
+    // Validate and clean accounts
+    const accounts = (parsed.accounts ?? [])
+      .filter((a: any) => {
+        const num = parseInt(a.number);
+        return !isNaN(num) && num >= 1000 && a.name && a.name.trim().length > 0;
+      })
+      .map((a: any) => ({
+        number: String(a.number).trim(),
+        name: String(a.name).trim(),
+        accountType: a.accountType || "expense",
+      }));
+
+    return res.json({
+      success: true,
+      accounts,
+      totalFound: accounts.length,
+      documentTitle: parsed.documentTitle ?? null,
+    });
+  } catch (err: any) {
+    console.error("[PDF Chart Import] Error:", err);
+    return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
+  }
+});

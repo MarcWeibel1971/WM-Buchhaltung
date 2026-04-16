@@ -900,3 +900,6 @@
 - [ ] Stripe Checkout: CHF als Währung fixieren (nicht EUR)
 - [ ] Stripe Webhook: Registrierung und Handler für Abo-Status-Updates
 - [ ] Stripe Dashboard: Firmennamen auf KLAX setzen
+
+## Bugfix: GitHub Actions CI
+- [x] CI: "Multiple versions of pnpm specified" – packageManager in package.json und PNPM_VERSION in ci.yml synchronisieren

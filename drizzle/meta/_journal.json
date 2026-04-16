@@ -176,6 +176,13 @@
       "when": 1776355685470,
       "tag": "0024_rare_sue_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1776356136497,
+      "tag": "0025_unknown_black_bolt",
+      "breakpoints": true
     }
   ]
 }

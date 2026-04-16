@@ -7,6 +7,7 @@ import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { uploadRouter } from "../uploadRoute";
+import { stripeWebhookRouter } from "../stripeWebhook";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -77,6 +78,10 @@ async function startServer() {
     standardHeaders: "draft-7",
     legacyHeaders: false,
   });
+
+  // Stripe webhook needs raw body for signature verification – MUST be
+  // registered BEFORE the JSON body parser.
+  app.use("/api/stripe/webhook", stripeWebhookRouter);
 
   // Body parser limits. Document uploads go through multer (separate size
   // limit in uploadRoute.ts), so the JSON body parser can be tight.

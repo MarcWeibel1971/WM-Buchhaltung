@@ -100,6 +100,30 @@ export const userOrganizations = mysqlTable("user_organizations", {
 export type UserOrganization = typeof userOrganizations.$inferSelect;
 export type InsertUserOrganization = typeof userOrganizations.$inferInsert;
 
+// ─── Subscriptions (Stripe Abo) ──────────────────────────────────────────────
+export const subscriptions = mysqlTable("subscriptions", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  userId: int("userId").notNull(),
+  // Stripe IDs
+  stripeCustomerId: varchar("stripeCustomerId", { length: 255 }).notNull(),
+  stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }),
+  // Plan: starter | professional | enterprise
+  plan: mysqlEnum("plan", ["starter", "professional", "enterprise"]).default("starter").notNull(),
+  // Status: trialing | active | past_due | canceled | unpaid
+  status: mysqlEnum("status", ["trialing", "active", "past_due", "canceled", "unpaid", "incomplete"]).default("trialing").notNull(),
+  // Billing period
+  currentPeriodStart: timestamp("currentPeriodStart"),
+  currentPeriodEnd: timestamp("currentPeriodEnd"),
+  cancelAtPeriodEnd: boolean("cancelAtPeriodEnd").default(false).notNull(),
+  // Trial
+  trialEnd: timestamp("trialEnd"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = typeof subscriptions.$inferInsert;
+
 // ─── Accounts (Kontenplan) ────────────────────────────────────────────────────
 export const accounts = mysqlTable(
   "accounts",

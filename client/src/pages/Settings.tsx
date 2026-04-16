@@ -24,6 +24,7 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
+  CreditCard, ExternalLink, CheckCircle, Crown,
 } from "lucide-react";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -52,6 +53,7 @@ const TABS = [
   { id: "customers", label: "Kunden", icon: UserCheck },
   { id: "templates", label: "Vorlagen", icon: FileStack },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
+  { id: "subscription", label: "Abonnement", icon: CreditCard },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -77,7 +79,14 @@ const INSURANCE_COLORS: Record<string, string> = {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<TabId>("company");
+  // Support ?tab=subscription for Stripe redirect
+  const initialTab = (() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab && TABS.some(t => t.id === tab)) return tab as TabId;
+    return "company" as TabId;
+  })();
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   return (
     <div className="flex h-full">
       {/* Sidebar */}
@@ -118,6 +127,7 @@ export default function Settings() {
         {activeTab === "customers" && <CustomersTab />}
         {activeTab === "templates" && <TemplatesTab />}
         {activeTab === "dsg" && <DsgTab />}
+        {activeTab === "subscription" && <SubscriptionTab />}
       </main>
     </div>
   );
@@ -4159,6 +4169,209 @@ function TemplatesTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+
+// ─── Subscription Tab ─────────────────────────────────────────────────────────
+
+const PLAN_INFO = {
+  starter: {
+    name: "Starter",
+    description: "Für Einzelunternehmen",
+    priceChf: 29,
+    features: ["1 Firma", "Doppelte Buchhaltung", "QR-Rechnungen", "Bankimport", "MWST-Abrechnung"],
+  },
+  professional: {
+    name: "Professional",
+    description: "Für wachsende KMU",
+    priceChf: 59,
+    features: ["Bis 3 Firmen", "Alles aus Starter", "Lohnbuchhaltung", "KI-Buchungsvorschläge", "Dokumenten-Scan", "Kreditoren-Verwaltung"],
+  },
+  enterprise: {
+    name: "Enterprise",
+    description: "Für Treuhandgesellschaften",
+    priceChf: 99,
+    features: ["Unbegrenzte Firmen", "Alles aus Professional", "Zeiterfassung", "Mandanten-Verwaltung", "Prioritäts-Support", "Individuelle Anpassungen"],
+  },
+} as const;
+
+const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  trialing: { label: "Testphase", color: "bg-blue-100 text-blue-800" },
+  active: { label: "Aktiv", color: "bg-green-100 text-green-800" },
+  past_due: { label: "Zahlung ausstehend", color: "bg-yellow-100 text-yellow-800" },
+  canceled: { label: "Gekündigt", color: "bg-red-100 text-red-800" },
+  unpaid: { label: "Unbezahlt", color: "bg-red-100 text-red-800" },
+  incomplete: { label: "Unvollständig", color: "bg-gray-100 text-gray-800" },
+  none: { label: "Kein Abo", color: "bg-gray-100 text-gray-800" },
+};
+
+function SubscriptionTab() {
+  const subQuery = trpc.stripe.getSubscription.useQuery();
+  const createCheckout = trpc.stripe.createCheckout.useMutation();
+  const createPortal = trpc.stripe.createPortal.useMutation();
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+
+  const sub = subQuery.data;
+
+  const handleSelectPlan = async (plan: "starter" | "professional" | "enterprise") => {
+    setLoadingPlan(plan);
+    try {
+      const { url } = await createCheckout.mutateAsync({
+        plan,
+        origin: window.location.origin,
+      });
+      if (url) window.location.href = url;
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Erstellen der Checkout-Session");
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    try {
+      const { url } = await createPortal.mutateAsync({
+        returnUrl: `${window.location.origin}/settings?tab=subscription`,
+      });
+      if (url) window.location.href = url;
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Öffnen des Kundenportals");
+    }
+  };
+
+  if (subQuery.isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const hasSubscription = sub && sub.status !== "none";
+  const statusInfo = STATUS_LABELS[sub?.status ?? "none"] ?? STATUS_LABELS.none;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold">Abonnement</h3>
+        <p className="text-sm text-muted-foreground">Verwalten Sie Ihren KLAX-Plan und Ihre Zahlungsinformationen.</p>
+      </div>
+
+      {/* Current subscription status */}
+      {hasSubscription && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Crown className="h-5 w-5 text-amber-500" />
+                <div>
+                  <CardTitle className="text-base">
+                    {PLAN_INFO[sub.plan as keyof typeof PLAN_INFO]?.name ?? sub.plan} Plan
+                  </CardTitle>
+                  <CardDescription>
+                    CHF {PLAN_INFO[sub.plan as keyof typeof PLAN_INFO]?.priceChf ?? "?"}/Monat
+                  </CardDescription>
+                </div>
+              </div>
+              <Badge className={statusInfo.color}>{statusInfo.label}</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {sub.trialEnd && sub.status === "trialing" && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                Testphase endet am {new Date(sub.trialEnd).toLocaleDateString("de-CH")}
+              </div>
+            )}
+            {sub.currentPeriodEnd && sub.status === "active" && (
+              <div className="text-sm text-muted-foreground">
+                Nächste Zahlung am {new Date(sub.currentPeriodEnd).toLocaleDateString("de-CH")}
+              </div>
+            )}
+            {sub.cancelAtPeriodEnd && (
+              <div className="flex items-center gap-2 text-sm text-amber-600">
+                <AlertTriangle className="h-4 w-4" />
+                Abo wird zum Ende der Periode gekündigt
+              </div>
+            )}
+            <Button onClick={handleManageSubscription} disabled={createPortal.isPending} variant="outline">
+              {createPortal.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Wird geladen...</>
+              ) : (
+                <><ExternalLink className="h-4 w-4 mr-2" />Abo verwalten (Stripe)</>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Plan selection */}
+      <div>
+        <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+          {hasSubscription ? "Plan wechseln" : "Plan wählen"}
+        </h4>
+        <div className="grid md:grid-cols-3 gap-4">
+          {(Object.entries(PLAN_INFO) as [string, typeof PLAN_INFO[keyof typeof PLAN_INFO]][]).map(([key, plan]) => {
+            const isCurrentPlan = hasSubscription && sub.plan === key;
+            return (
+              <Card key={key} className={`relative ${isCurrentPlan ? "border-primary border-2" : ""} ${key === "professional" ? "ring-1 ring-blue-200" : ""}`}>
+                {isCurrentPlan && (
+                  <div className="absolute -top-3 left-4">
+                    <Badge className="bg-primary text-primary-foreground">Aktueller Plan</Badge>
+                  </div>
+                )}
+                {key === "professional" && !isCurrentPlan && (
+                  <div className="absolute -top-3 right-4">
+                    <Badge className="bg-blue-600 text-white">Beliebt</Badge>
+                  </div>
+                )}
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">{plan.name}</CardTitle>
+                  <CardDescription>{plan.description}</CardDescription>
+                  <div className="mt-2">
+                    <span className="text-2xl font-bold">CHF {plan.priceChf}</span>
+                    <span className="text-muted-foreground text-sm">/Monat</span>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <ul className="space-y-2">
+                    {plan.features.map((f, i) => (
+                      <li key={i} className="flex items-center gap-2 text-sm">
+                        <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    className="w-full mt-4"
+                    variant={isCurrentPlan ? "outline" : key === "professional" ? "default" : "outline"}
+                    disabled={isCurrentPlan || loadingPlan === key}
+                    onClick={() => handleSelectPlan(key as "starter" | "professional" | "enterprise")}
+                  >
+                    {loadingPlan === key ? (
+                      <><Loader2 className="h-4 w-4 animate-spin mr-2" />Wird geladen...</>
+                    ) : isCurrentPlan ? (
+                      "Aktueller Plan"
+                    ) : hasSubscription ? (
+                      "Wechseln"
+                    ) : (
+                      "30 Tage kostenlos testen"
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Info text */}
+      <p className="text-xs text-muted-foreground">
+        Alle Preise in CHF, exkl. MWST. 30 Tage kostenlose Testphase bei Erstregistrierung.
+        Sie können Ihr Abo jederzeit über das Stripe-Kundenportal verwalten oder kündigen.
+      </p>
     </div>
   );
 }

@@ -30,6 +30,7 @@ import { organizationsRouter } from "./organizationsRouter";
 import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
 import { remindersRouter } from "./remindersRouter";
+import { stripeRouter } from "./stripeRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -3510,6 +3511,7 @@ export const appRouter = router({
   organizations: organizationsRouter,
   invoices: invoicesRouter,
   reminders: remindersRouter,
+  stripe: stripeRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -883,3 +883,20 @@
 - [x] Landing Page /landing muss auch für eingeloggte User erreichbar sein (kein Redirect zum Onboarding)
 - [x] Logout-Funktion muss auf der published Site funktionieren (nicht nur Manus OAuth)
 - [x] Nach Logout → Redirect auf Landing Page
+
+## Feature: Stripe-Bezahlfunktion
+- [ ] Stripe-Feature via webdev_add_feature einrichten (Dependencies, Webhooks, Scaffold)
+- [ ] Stripe API-Keys konfigurieren (Secret Key, Publishable Key, Webhook Secret)
+- [ ] DB-Schema: subscriptions-Tabelle (stripeCustomerId, stripeSubscriptionId, plan, status, currentPeriodEnd)
+- [ ] Backend: Stripe Checkout Session erstellen (pro Plan: Starter/Professional/Enterprise)
+- [ ] Backend: Stripe Webhook Handler (checkout.session.completed, invoice.paid, customer.subscription.updated/deleted)
+- [ ] Backend: Kundenportal-Session erstellen (Abo verwalten, kündigen, Zahlungsmethode ändern)
+- [ ] Backend: Abo-Status-Abfrage (aktueller Plan, Ablaufdatum, Status)
+- [ ] Frontend: Pricing-Seite mit echten Stripe Checkout-Buttons verbinden
+- [ ] Frontend: Abo-Status im Dashboard/Settings anzeigen (aktueller Plan, nächste Zahlung)
+- [ ] Frontend: "Abo verwalten" Button → Stripe Kundenportal
+- [ ] Feature-Gating: Funktionen je nach Plan einschränken (z.B. Anzahl Firmen, Lohnbuchhaltung)
+- [ ] Tests: Vitest für Stripe Webhook-Verarbeitung und Abo-Status-Logik
+- [ ] Stripe Checkout: CHF als Währung fixieren (nicht EUR)
+- [ ] Stripe Webhook: Registrierung und Handler für Abo-Status-Updates
+- [ ] Stripe Dashboard: Firmennamen auf KLAX setzen

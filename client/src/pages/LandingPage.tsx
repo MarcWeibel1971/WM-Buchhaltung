@@ -1,8 +1,36 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, CheckCircle, Calculator, Shield, BarChart3, FileText, Users, Zap } from "lucide-react";
+import { ArrowRight, CheckCircle, Calculator, Shield, BarChart3, FileText, Users, Zap, Loader2 } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { useState } from "react";
+import { toast } from "sonner";
 
 export default function LandingPage() {
+  const { isAuthenticated } = useAuth();
+  const createCheckout = trpc.stripe.createCheckout.useMutation();
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+
+  const handleSelectPlan = async (plan: "starter" | "professional" | "enterprise") => {
+    if (!isAuthenticated) {
+      // Not logged in – redirect to register
+      window.location.href = `/register?plan=${plan}`;
+      return;
+    }
+    setLoadingPlan(plan);
+    try {
+      const { url } = await createCheckout.mutateAsync({
+        plan,
+        origin: window.location.origin,
+      });
+      if (url) window.location.href = url;
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Erstellen der Checkout-Session");
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-white">
       {/* Navigation */}
@@ -195,8 +223,17 @@ export default function LandingPage() {
                   </li>
                 ))}
               </ul>
-              <Button variant="outline" className="w-full" asChild>
-                <Link href="/register">Kostenlos testen</Link>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => handleSelectPlan("starter")}
+                disabled={loadingPlan === "starter"}
+              >
+                {loadingPlan === "starter" ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-2" />Wird geladen...</>
+                ) : (
+                  "Kostenlos testen"
+                )}
               </Button>
             </div>
 
@@ -219,8 +256,16 @@ export default function LandingPage() {
                   </li>
                 ))}
               </ul>
-              <Button className="w-full" asChild>
-                <Link href="/register">Kostenlos testen</Link>
+              <Button
+                className="w-full"
+                onClick={() => handleSelectPlan("professional")}
+                disabled={loadingPlan === "professional"}
+              >
+                {loadingPlan === "professional" ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-2" />Wird geladen...</>
+                ) : (
+                  "Kostenlos testen"
+                )}
               </Button>
             </div>
 
@@ -240,8 +285,17 @@ export default function LandingPage() {
                   </li>
                 ))}
               </ul>
-              <Button variant="outline" className="w-full" asChild>
-                <Link href="/register">Kostenlos testen</Link>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => handleSelectPlan("enterprise")}
+                disabled={loadingPlan === "enterprise"}
+              >
+                {loadingPlan === "enterprise" ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-2" />Wird geladen...</>
+                ) : (
+                  "Kostenlos testen"
+                )}
               </Button>
             </div>
           </div>

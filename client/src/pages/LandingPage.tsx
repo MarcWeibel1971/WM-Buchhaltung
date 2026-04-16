@@ -15,7 +15,7 @@ export default function LandingPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
                 </svg>
               </div>
-              <span className="text-lg font-bold text-slate-900">WM-Buchhaltung</span>
+              <span className="text-lg font-bold text-slate-900">KLAX</span>
             </div>
             <div className="flex items-center gap-3">
               <Button variant="ghost" size="sm" asChild>
@@ -73,7 +73,7 @@ export default function LandingPage() {
               Alles, was Sie für Ihre Buchhaltung brauchen
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-              Von der täglichen Buchführung bis zur Jahresabschluss – WM-Buchhaltung deckt alle Bereiche ab.
+              Von der täglichen Buchführung bis zur Jahresabschluss – KLAX deckt alle Bereiche ab.
             </p>
           </div>
 
@@ -128,7 +128,7 @@ export default function LandingPage() {
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div>
               <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-6">
-                Warum Schweizer KMU auf WM-Buchhaltung setzen
+                Warum Schweizer KMU auf KLAX setzen
               </h2>
               <div className="space-y-5">
                 {[
@@ -255,7 +255,7 @@ export default function LandingPage() {
             Bereit, Ihre Buchhaltung zu vereinfachen?
           </h2>
           <p className="text-lg text-blue-100 mb-8 max-w-2xl mx-auto">
-            Starten Sie noch heute mit WM-Buchhaltung und erleben Sie, wie einfach Schweizer Buchhaltung sein kann.
+            Starten Sie noch heute mit KLAX und erleben Sie, wie einfach Schweizer Buchhaltung sein kann.
           </p>
           <Button size="lg" variant="secondary" className="text-base px-8 py-3 h-auto bg-white text-blue-600 hover:bg-blue-50" asChild>
             <Link href="/register">
@@ -276,7 +276,7 @@ export default function LandingPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
                 </svg>
               </div>
-              <span className="text-sm font-medium text-slate-300">WM-Buchhaltung</span>
+              <span className="text-sm font-medium text-slate-300">KLAX</span>
             </div>
             <p className="text-sm">&copy; {new Date().getFullYear()} WM Weibel Mueller AG. Alle Rechte vorbehalten.</p>
           </div>

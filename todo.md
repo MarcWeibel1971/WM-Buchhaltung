@@ -871,3 +871,10 @@
 - [x] Vitest: auth.resendVerification (2 Tests – nicht existierende E-Mail, existierender User)
 - [x] Vitest: Vollständiger Register→Verify→Login Flow (1 Test – End-to-End mit DB-Token)
 - [x] Vitest: E-Mail-Service (3 Tests – API-Key Validierung, Verifizierungs-E-Mail, Reset-E-Mail)
+
+## Branding: KLAX
+- [x] App-Titel (VITE_APP_TITLE) auf "KLAX" setzen
+- [x] Landing Page: Alle Texte auf KLAX-Branding aktualisieren (Hero, Features, Pricing, CTA)
+- [x] index.html: Seitentitel und Meta-Tags auf KLAX aktualisieren
+- [x] Login/Register/Auth-Seiten: Produktname auf KLAX aktualisieren
+- [x] DashboardLayout: Produktname auf KLAX aktualisieren

@@ -11,8 +11,6 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { logger, requestLogger, errorLogger, installCrashHandlers } from "./logger";
-import { getSessionCookieOptions } from "./cookies";
-import { COOKIE_NAME } from "../../shared/const";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -93,18 +91,6 @@ async function startServer() {
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });
-  });
-
-  // Simple GET logout endpoint for browser-based logout
-  app.get("/api/logout", (req, res) => {
-    const cookieOptions = getSessionCookieOptions(req);
-    // Must set expires to past date to clear the cookie
-    res.cookie(COOKIE_NAME, "", {
-      ...cookieOptions,
-      expires: new Date(0),
-      maxAge: 0,
-    });
-    res.redirect("/login");
   });
 
   // OAuth callback under /api/oauth/callback

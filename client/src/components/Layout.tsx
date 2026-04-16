@@ -251,7 +251,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   {currentOrgName}
                 </div>
               )}
-              <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>Buchhaltung</div>
+              <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>KLAX</div>
             </div>
           </div>
           <button

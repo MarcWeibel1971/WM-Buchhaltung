@@ -176,6 +176,13 @@
       "when": 1776499200000,
       "tag": "0024_reminder_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1776500000000,
+      "tag": "0025_account_mappings",
+      "breakpoints": true
     }
   ]
 }

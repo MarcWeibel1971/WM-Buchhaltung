@@ -18,7 +18,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, organizations } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { qrBillRouter } from "./qrBillRouter";
@@ -57,6 +57,98 @@ function toDateStr(val: string | Date | undefined | null): string | undefined {
   // YYYYMMDD compact
   if (/^\d{8}$/.test(s)) return `${s.substring(0,4)}-${s.substring(4,6)}-${s.substring(6,8)}`;
   return undefined;
+}
+
+// ─── Org Account Mappings (Phase 3c) ──────────────────────────────────────
+// Zentrale Auflösung der konfigurierbaren Standard-Konten (Bank, CC-Clearing,
+// Gross-Lohn) mit Fallback auf die historisch hardcodierten Konto-Nummern,
+// damit bestehende Mandanten ohne Zuordnung weiter funktionieren.
+
+type OrgAccountMapping = {
+  bankAccountId: number | null;
+  ccClearingAccountId: number | null;
+  salaryExpenseAccountId: number | null;
+};
+
+async function getOrgAccountMapping(organizationId: number): Promise<OrgAccountMapping> {
+  const db = await getDb();
+  if (!db) return { bankAccountId: null, ccClearingAccountId: null, salaryExpenseAccountId: null };
+  const [row] = await db.select({
+    b:  organizations.defaultBankAccountId,
+    cc: organizations.creditCardClearingAccountId,
+    s:  organizations.defaultSalaryExpenseAccountId,
+  }).from(organizations).where(eq(organizations.id, organizationId)).limit(1);
+  return {
+    bankAccountId: row?.b ?? null,
+    ccClearingAccountId: row?.cc ?? null,
+    salaryExpenseAccountId: row?.s ?? null,
+  };
+}
+
+/** Liefert das Bank-Konto: Org-Mapping → Fallback accounts.number "1032". */
+async function resolveBankAccount(organizationId: number) {
+  const map = await getOrgAccountMapping(organizationId);
+  if (map.bankAccountId) {
+    const db = await getDb();
+    if (db) {
+      const [acc] = await db.select().from(accounts)
+        .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, map.bankAccountId)))
+        .limit(1);
+      if (acc) return acc;
+    }
+  }
+  return await getAccountByNumber(organizationId, "1032");
+}
+
+/** Liefert das CC-Durchlaufkonto: Org-Mapping → Fallback "1082". */
+async function resolveCcClearingAccount(organizationId: number) {
+  const map = await getOrgAccountMapping(organizationId);
+  if (map.ccClearingAccountId) {
+    const db = await getDb();
+    if (db) {
+      const [acc] = await db.select().from(accounts)
+        .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, map.ccClearingAccountId)))
+        .limit(1);
+      if (acc) return acc;
+    }
+  }
+  return await getAccountByNumber(organizationId, "1082");
+}
+
+/** Liefert das Gross-Lohn-Konto: Employee → Org-Mapping → Fallback "4000". */
+async function resolveGrossSalaryAccount(
+  organizationId: number,
+  employeeGrossSalaryAccountId: number | null | undefined,
+) {
+  const db = await getDb();
+  if (employeeGrossSalaryAccountId && db) {
+    const [acc] = await db.select().from(accounts)
+      .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, employeeGrossSalaryAccountId)))
+      .limit(1);
+    if (acc) return acc;
+  }
+  const map = await getOrgAccountMapping(organizationId);
+  if (map.salaryExpenseAccountId && db) {
+    const [acc] = await db.select().from(accounts)
+      .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, map.salaryExpenseAccountId)))
+      .limit(1);
+    if (acc) return acc;
+  }
+  return await getAccountByNumber(organizationId, "4000");
+}
+
+/** Liefert das Kontokorrent/Zahlkonto des Mitarbeiters (optional). */
+async function resolveEmployeeSalaryAccount(
+  organizationId: number,
+  employeeSalaryAccountId: number | null | undefined,
+) {
+  if (!employeeSalaryAccountId) return null;
+  const db = await getDb();
+  if (!db) return null;
+  const [acc] = await db.select().from(accounts)
+    .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, employeeSalaryAccountId)))
+    .limit(1);
+  return acc ?? null;
 }
 
 // ─── Accounts Router ──────────────────────────────────────────────────────────
@@ -1846,7 +1938,6 @@ const creditCardRouter = router({
         organizationId: ctx.organizationId,
         statementDate: toDateStr(input.statementDate) as string,
         totalAmount: input.totalAmount,
-        owner: "mw",
         status: "pending",
         rawText: input.rawText,
         parsedItems: input.parsedItems,
@@ -1869,8 +1960,8 @@ const creditCardRouter = router({
       const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
       if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
 
-      const visaAccount = await getAccountByNumber(ctx.organizationId, "1082");
-      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
+      const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Mahnwesen/Konten)" });
 
       const amount = Math.abs(parseFloat(stmt.totalAmount as string));
       const year = new Date(stmt.statementDate as any).getFullYear();
@@ -1885,7 +1976,7 @@ const creditCardRouter = router({
         status: "approved",
         lines: [
           { accountId: input.debitAccountId, side: "debit", amount: amount.toFixed(2), description: "Kreditkartenaufwand" },
-          { accountId: visaAccount.id, side: "credit", amount: amount.toFixed(2), description: "Durchlaufkonto VISA mw" },
+          { accountId: visaAccount.id, side: "credit", amount: amount.toFixed(2), description: `Durchlaufkonto ${visaAccount.name}` },
         ],
       });
 
@@ -2013,14 +2104,14 @@ Antwort NUR als JSON-Array, keine Erklärung:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const visaAccount = await getAccountByNumber(ctx.organizationId, "1082");
-      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
+      const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Konten-Mapping)" });
 
       const totalAmount = input.items.reduce((s, i) => s + Math.abs(parseFloat(i.amount)), 0);
       const dateStr = toDateStr(input.statementDate) ?? new Date().toISOString().split("T")[0];
       const year = parseInt(dateStr.substring(0, 4));
 
-      // Build journal lines: one debit per item + one credit total for 1082
+      // Build journal lines: one debit per item + one credit total for CC clearing
       const debitLines = input.items.map(item => ({
         accountId: item.debitAccountId,
         side: "debit" as const,
@@ -2032,7 +2123,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
         accountId: visaAccount.id,
         side: "credit" as const,
         amount: totalAmount.toFixed(2),
-        description: `Durchlaufkonto VISA mw – ${input.counterparty}`,
+        description: `${visaAccount.name} – ${input.counterparty}`,
       };
 
       const entryId = await createJournalEntry({
@@ -2058,7 +2149,6 @@ Antwort NUR als JSON-Array, keine Erklärung:
         organizationId: ctx.organizationId,
         statementDate: dateStr,
         totalAmount: totalAmount.toFixed(2),
-        owner: "mw",
         status: "approved",
         journalEntryId: entryId,
         rawText: input.items.map(i => `${i.date} ${i.description} ${i.amount}`).join("\n"),
@@ -2069,8 +2159,10 @@ Antwort NUR als JSON-Array, keine Erklärung:
     }),
 
   // ── Approve CC from BankImport: creates TWO journal entries ──
-  // Entry 1: 1082 Durchlaufkonto (Soll) / 1032 LUKB mw (Haben) → Totalbetrag
-  // Entry 2: Diverse Aufwandkonten (Soll) / 1082 Durchlaufkonto (Haben) → Sammelbuchung
+  // Entry 1: CC-Durchlaufkonto (Soll) / Bankkonto (Haben) → Totalbetrag
+  // Entry 2: Diverse Aufwandkonten (Soll) / CC-Durchlaufkonto (Haben) → Sammelbuchung
+  // Konto-Mapping pro Org (Phase 3c): organizations.creditCardClearingAccountId
+  // und organizations.defaultBankAccountId (Fallback: 1082 / 1032).
   approveCcFromBankImport: orgProcedure
     .input(z.object({
       bankTransactionId: z.number(),
@@ -2094,10 +2186,10 @@ Antwort NUR als JSON-Array, keine Erklärung:
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.bankTransactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Banktransaktion nicht gefunden" });
 
-      const visaAccount = await getAccountByNumber(ctx.organizationId, "1082");
-      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
-      const bankAccount = await getAccountByNumber(ctx.organizationId, "1032");
-      if (!bankAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1032 nicht gefunden" });
+      const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Konten-Mapping)" });
+      const bankAccount = await resolveBankAccount(ctx.organizationId);
+      if (!bankAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Standard-Bankkonto nicht gefunden (Einstellungen → Konten-Mapping)" });
 
       // totalAmount = Abrechnungstotal (alle Positionen)
       // paidAmount = effektiv bezahlter Betrag (Bankbelastung, kann kleiner sein wegen Vormonatsguthaben)
@@ -2106,7 +2198,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
       const dateStr = toDateStr(input.statementDate) ?? toDateStr(tx.transactionDate as string) ?? new Date().toISOString().split("T")[0];
       const year = parseInt(dateStr!.substring(0, 4));
 
-      // ── Entry 1: 1082 Durchlaufkonto (Soll) / 1032 LUKB mw (Haben) → effektiv bezahlter Betrag ──
+      // ── Entry 1: CC-Clearing (Soll) / Bank (Haben) → effektiv bezahlter Betrag ──
       const entry1Id = await createJournalEntry({
         organizationId: ctx.organizationId,
         bookingDate: dateStr as string,
@@ -2116,8 +2208,8 @@ Antwort NUR als JSON-Array, keine Erklärung:
         fiscalYear: year,
         status: "approved",
         lines: [
-          { accountId: visaAccount.id, side: "debit", amount: paidAmount.toFixed(2), description: "Durchlaufkonto VISA mw" },
-          { accountId: bankAccount.id, side: "credit", amount: paidAmount.toFixed(2), description: "LUKB mw" },
+          { accountId: visaAccount.id, side: "debit", amount: paidAmount.toFixed(2), description: visaAccount.name },
+          { accountId: bankAccount.id, side: "credit", amount: paidAmount.toFixed(2), description: bankAccount.name },
         ],
       });
       await approveJournalEntry(entry1Id, ctx.user.id);
@@ -2140,7 +2232,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
         status: "approved",
         lines: [
           ...debitLines,
-          { accountId: visaAccount.id, side: "credit", amount: itemsTotal.toFixed(2), description: `Durchlaufkonto VISA mw – ${input.counterparty}` },
+          { accountId: visaAccount.id, side: "credit", amount: itemsTotal.toFixed(2), description: `${visaAccount.name} – ${input.counterparty}` },
         ],
       });
       await approveJournalEntry(entry2Id, ctx.user.id);
@@ -2158,7 +2250,6 @@ Antwort NUR als JSON-Array, keine Erklärung:
           organizationId: ctx.organizationId,
           statementDate: dateStr as string,
           totalAmount: itemsTotal.toFixed(2),
-          owner: "mw",
           status: "approved",
           journalEntryId: entry2Id,
           rawText: input.items.map(i => `${i.date} ${i.description} ${i.amount}`).join("\n"),
@@ -2700,19 +2791,16 @@ const payrollRouter = router({
       const bvgTotal = parseFloat(p.bvgEmployee as string) + parseFloat(p.bvgEmployer as string);
       const ktgTotal = parseFloat(p.ktgUvgEmployee as string) + parseFloat(p.ktgUvgEmployer as string);
 
-      // Get accounts
-      const grossAccNum = emp.code === "mw" ? "4000" : "4001";
-      const grossAcc = await getAccountByNumber(ctx.organizationId, grossAccNum);
+      // Get accounts: Mitarbeiter-Zuordnung > Org-Default > hardcodierter Fallback.
+      const grossAcc = await resolveGrossSalaryAccount(ctx.organizationId, emp.grossSalaryAccountId);
       const ahvAcc = await getAccountByNumber(ctx.organizationId, "4010");
       const bvgAcc = await getAccountByNumber(ctx.organizationId, "4040");
       const ktgAcc = await getAccountByNumber(ctx.organizationId, "4025");
-      const bankAcc = await getAccountByNumber(ctx.organizationId, "1032"); // LUKB mw
-      const kkAcc = emp.code === "mw"
-        ? await getAccountByNumber(ctx.organizationId, "1081")
-        : await getAccountByNumber(ctx.organizationId, "1071");
+      const bankAcc = await resolveBankAccount(ctx.organizationId);
+      const kkAcc = await resolveEmployeeSalaryAccount(ctx.organizationId, emp.salaryAccountId);
 
       if (!grossAcc || !ahvAcc || !bvgAcc || !ktgAcc || !bankAcc) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Lohnkonten nicht gefunden" });
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Lohnkonten nicht gefunden (bitte in den Einstellungen Konten-Mapping prüfen)" });
       }
 
       const monthName = new Date(p.year, p.month - 1).toLocaleString("de-CH", { month: "long" });

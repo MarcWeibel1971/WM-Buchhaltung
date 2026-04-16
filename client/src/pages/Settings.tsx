@@ -24,7 +24,7 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
-  Bell,
+  Bell, Wallet,
 } from "lucide-react";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -53,6 +53,7 @@ const TABS = [
   { id: "customers", label: "Kunden", icon: UserCheck },
   { id: "templates", label: "Vorlagen", icon: FileStack },
   { id: "reminders", label: "Mahnwesen", icon: Bell },
+  { id: "accountMappings", label: "Standard-Konten", icon: Wallet },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
 ] as const;
 
@@ -120,6 +121,7 @@ export default function Settings() {
         {activeTab === "customers" && <CustomersTab />}
         {activeTab === "templates" && <TemplatesTab />}
         {activeTab === "reminders" && <RemindersTab />}
+        {activeTab === "accountMappings" && <AccountMappingsTab />}
         {activeTab === "dsg" && <DsgTab />}
       </main>
     </div>
@@ -4319,6 +4321,165 @@ function RemindersTab() {
           Zurücksetzen
         </Button>
         <Button onClick={handleSave} disabled={updateMut.isPending || !isAscending}>
+          {updateMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          Speichern
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Account Mappings Tab (Phase 3c) ────────────────────────────────────────
+// Konfiguration der organisationsweiten Standard-Konten für Lohn- und
+// Kreditkarten-Buchungen. Ersetzt die bisherigen Hardcodes (1032/1082/4000).
+
+function AccountMappingsTab() {
+  const utils = trpc.useUtils();
+  const orgQuery = trpc.organizations.getCurrent.useQuery();
+  const accountsQuery = trpc.accounts.list.useQuery();
+
+  const [form, setForm] = useState<{
+    defaultBankAccountId: number | null;
+    creditCardClearingAccountId: number | null;
+    defaultSalaryExpenseAccountId: number | null;
+  }>({
+    defaultBankAccountId: null,
+    creditCardClearingAccountId: null,
+    defaultSalaryExpenseAccountId: null,
+  });
+
+  useEffect(() => {
+    if (!orgQuery.data) return;
+    const o = orgQuery.data as any;
+    setForm({
+      defaultBankAccountId: o.defaultBankAccountId ?? null,
+      creditCardClearingAccountId: o.creditCardClearingAccountId ?? null,
+      defaultSalaryExpenseAccountId: o.defaultSalaryExpenseAccountId ?? null,
+    });
+  }, [orgQuery.data]);
+
+  const updateMut = trpc.organizations.update.useMutation({
+    onSuccess: () => {
+      toast.success("Konto-Mapping gespeichert");
+      utils.organizations.getCurrent.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  if (orgQuery.isLoading || accountsQuery.isLoading) {
+    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Lade…</div>;
+  }
+
+  const accounts = accountsQuery.data ?? [];
+  const bankAccounts = accounts.filter((a: any) => a.isBankAccount || String(a.number).startsWith("10"));
+  const assetAccounts = accounts.filter((a: any) => a.accountType === "asset");
+  const expenseAccounts = accounts.filter((a: any) => a.accountType === "expense");
+
+  const SelectAcc = ({
+    value, onChange, options, placeholder,
+  }: {
+    value: number | null;
+    onChange: (v: number | null) => void;
+    options: Array<{ id: number; number: string; name: string }>;
+    placeholder: string;
+  }) => (
+    <Select
+      value={value == null ? "__none__" : String(value)}
+      onValueChange={(v) => onChange(v === "__none__" ? null : parseInt(v, 10))}
+    >
+      <SelectTrigger>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">— (Fallback verwenden)</SelectItem>
+        {options.map(a => (
+          <SelectItem key={a.id} value={String(a.id)}>
+            {a.number} – {a.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  const handleSave = () => {
+    updateMut.mutate({
+      defaultBankAccountId: form.defaultBankAccountId,
+      creditCardClearingAccountId: form.creditCardClearingAccountId,
+      defaultSalaryExpenseAccountId: form.defaultSalaryExpenseAccountId,
+    });
+  };
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div>
+        <h1 className="text-2xl font-bold">Standard-Konten</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Organisationsweite Standardzuordnungen für Lohn- und Kreditkarten-Buchungen.
+          Wenn kein Konto zugewiesen ist, versucht die App auf die historischen
+          Kontonummern (1032 / 1082 / 4000) zurückzugreifen.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Standard-Bankkonto</CardTitle>
+          <CardDescription>
+            Wird als Zahlkonto für Lohn und als Gegenkonto bei
+            Kreditkarten-Belastungen verwendet (vormals hardcodiert 1032 LUKB).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SelectAcc
+            value={form.defaultBankAccountId}
+            onChange={(v) => setForm(f => ({ ...f, defaultBankAccountId: v }))}
+            options={bankAccounts.length > 0 ? bankAccounts : assetAccounts}
+            placeholder="Bitte Bankkonto wählen"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Kreditkarten-Durchlaufkonto</CardTitle>
+          <CardDescription>
+            Sammelkonto für Kreditkarten-Abrechnungen. Wird zwischen Monats-
+            Sammelbelastung und den einzelnen Aufwandspositionen verwendet
+            (vormals hardcodiert 1082 VISA Durchlauf).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SelectAcc
+            value={form.creditCardClearingAccountId}
+            onChange={(v) => setForm(f => ({ ...f, creditCardClearingAccountId: v }))}
+            options={assetAccounts}
+            placeholder="Bitte Durchlaufkonto wählen"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Standard-Lohnkonto (Brutto)</CardTitle>
+          <CardDescription>
+            Default-Aufwandskonto für Bruttolohn, wenn der Mitarbeiter kein
+            eigenes Gross-Lohnkonto hinterlegt hat (vormals hardcodiert 4000).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SelectAcc
+            value={form.defaultSalaryExpenseAccountId}
+            onChange={(v) => setForm(f => ({ ...f, defaultSalaryExpenseAccountId: v }))}
+            options={expenseAccounts}
+            placeholder="Bitte Aufwandskonto wählen"
+          />
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => orgQuery.refetch()} disabled={updateMut.isPending}>
+          Zurücksetzen
+        </Button>
+        <Button onClick={handleSave} disabled={updateMut.isPending}>
           {updateMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           Speichern
         </Button>

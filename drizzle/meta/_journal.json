@@ -162,6 +162,13 @@
       "when": 1776277647037,
       "tag": "0022_invoicing",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1776313125967,
+      "tag": "0023_reminders",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,20 @@
+CREATE TABLE `invoice_reminders` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`organizationId` int NOT NULL,
+	`invoiceId` int NOT NULL,
+	`level` int NOT NULL,
+	`reminderDate` date NOT NULL,
+	`newDueDate` date NOT NULL,
+	`feeAmount` decimal(15,2) NOT NULL DEFAULT '0',
+	`subject` varchar(200),
+	`introText` text,
+	`footerText` text,
+	`pdfS3Key` varchar(500),
+	`pdfS3Url` text,
+	`sentAt` timestamp,
+	`createdBy` int,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `invoice_reminders_id` PRIMARY KEY(`id`),
+	CONSTRAINT `invoice_reminders_org_invoice_level_unique` UNIQUE(`organizationId`,`invoiceId`,`level`)
+);

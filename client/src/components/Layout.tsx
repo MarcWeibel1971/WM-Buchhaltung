@@ -3,7 +3,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, BookOpen, Building2, CreditCard,
   Users, BarChart3, Receipt, LogOut, ChevronRight, ChevronDown,
-  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet, Clock, FileText
+  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet, Clock, FileText, AlertTriangle
 } from "lucide-react";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -25,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
     href: "/zahlungen", icon: Wallet, label: "Zahlungen",
     children: [
       { href: "/rechnungen", icon: FileText, label: "Rechnungen" },
+      { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
       { href: "/zahlungen/debitoren", icon: QrCode, label: "QR-Einzahlung" },
       { href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditoren" },
     ],

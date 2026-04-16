@@ -878,3 +878,8 @@
 - [x] index.html: Seitentitel und Meta-Tags auf KLAX aktualisieren
 - [x] Login/Register/Auth-Seiten: Produktname auf KLAX aktualisieren
 - [x] DashboardLayout: Produktname auf KLAX aktualisieren
+
+## Bugfix: Landing Page und Logout
+- [x] Landing Page /landing muss auch für eingeloggte User erreichbar sein (kein Redirect zum Onboarding)
+- [x] Logout-Funktion muss auf der published Site funktionieren (nicht nur Manus OAuth)
+- [x] Nach Logout → Redirect auf Landing Page

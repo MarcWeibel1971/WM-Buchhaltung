@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Loader2, Building2, CheckCircle2 } from "lucide-react";
+import { Loader2, Building2, CheckCircle2, LogOut, ArrowLeft } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
  */
 export default function Onboarding() {
   const utils = trpc.useUtils();
+  const { logout } = useAuth();
 
   const [form, setForm] = useState({
     name: "",
@@ -83,6 +85,21 @@ export default function Onboarding() {
   return (
     <div className="min-h-screen bg-background flex items-start justify-center py-12 px-4">
       <div className="w-full max-w-2xl">
+        {/* Top bar with back to landing + logout */}
+        <div className="flex items-center justify-between mb-6">
+          <a href="/landing" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="h-4 w-4" />
+            Zur Startseite
+          </a>
+          <button
+            onClick={() => logout()}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+            Abmelden
+          </button>
+        </div>
+
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Building2 className="w-8 h-8 text-primary" />

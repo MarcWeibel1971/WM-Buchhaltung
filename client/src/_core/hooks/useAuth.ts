@@ -21,6 +21,8 @@ export function useAuth(options?: UseAuthOptions) {
   const logoutMutation = trpc.auth.logout.useMutation({
     onSuccess: () => {
       utils.auth.me.setData(undefined, null);
+      // Redirect zur Landing Page nach Logout
+      window.location.href = "/landing";
     },
   });
 

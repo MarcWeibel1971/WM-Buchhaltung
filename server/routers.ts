@@ -31,6 +31,7 @@ import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
 import { remindersRouter } from "./remindersRouter";
 import { stripeRouter } from "./stripeRouter";
+import { searchCompanies } from "./uidSearch";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -3512,6 +3513,19 @@ export const appRouter = router({
   invoices: invoicesRouter,
   reminders: remindersRouter,
   stripe: stripeRouter,
+  uidSearch: router({
+    search: publicProcedure
+      .input(z.object({ name: z.string().min(2).max(200) }))
+      .query(async ({ input }) => {
+        try {
+          const results = await searchCompanies(input.name, 10);
+          return results;
+        } catch (e) {
+          console.error("UID search error:", e);
+          return [];
+        }
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

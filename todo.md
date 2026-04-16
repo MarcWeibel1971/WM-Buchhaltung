@@ -885,21 +885,27 @@
 - [x] Nach Logout → Redirect auf Landing Page
 
 ## Feature: Stripe-Bezahlfunktion
-- [ ] Stripe-Feature via webdev_add_feature einrichten (Dependencies, Webhooks, Scaffold)
-- [ ] Stripe API-Keys konfigurieren (Secret Key, Publishable Key, Webhook Secret)
-- [ ] DB-Schema: subscriptions-Tabelle (stripeCustomerId, stripeSubscriptionId, plan, status, currentPeriodEnd)
-- [ ] Backend: Stripe Checkout Session erstellen (pro Plan: Starter/Professional/Enterprise)
-- [ ] Backend: Stripe Webhook Handler (checkout.session.completed, invoice.paid, customer.subscription.updated/deleted)
-- [ ] Backend: Kundenportal-Session erstellen (Abo verwalten, kündigen, Zahlungsmethode ändern)
-- [ ] Backend: Abo-Status-Abfrage (aktueller Plan, Ablaufdatum, Status)
-- [ ] Frontend: Pricing-Seite mit echten Stripe Checkout-Buttons verbinden
-- [ ] Frontend: Abo-Status im Dashboard/Settings anzeigen (aktueller Plan, nächste Zahlung)
-- [ ] Frontend: "Abo verwalten" Button → Stripe Kundenportal
+- [x] Stripe-Feature via webdev_add_feature einrichten (Dependencies, Webhooks, Scaffold)
+- [x] Stripe API-Keys konfigurieren (Secret Key, Publishable Key, Webhook Secret)
+- [x] DB-Schema: subscriptions-Tabelle (stripeCustomerId, stripeSubscriptionId, plan, status, currentPeriodEnd)
+- [x] Backend: Stripe Checkout Session erstellen (pro Plan: Starter/Professional/Enterprise)
+- [x] Backend: Stripe Webhook Handler (checkout.session.completed, invoice.paid, customer.subscription.updated/deleted)
+- [x] Backend: Kundenportal-Session erstellen (Abo verwalten, kündigen, Zahlungsmethode ändern)
+- [x] Backend: Abo-Status-Abfrage (aktueller Plan, Ablaufdatum, Status)
+- [x] Frontend: Pricing-Seite mit echten Stripe Checkout-Buttons verbinden
+- [x] Frontend: Abo-Status im Dashboard/Settings anzeigen (aktueller Plan, nächste Zahlung)
+- [x] Frontend: "Abo verwalten" Button → Stripe Kundenportal
 - [ ] Feature-Gating: Funktionen je nach Plan einschränken (z.B. Anzahl Firmen, Lohnbuchhaltung)
 - [ ] Tests: Vitest für Stripe Webhook-Verarbeitung und Abo-Status-Logik
-- [ ] Stripe Checkout: CHF als Währung fixieren (nicht EUR)
-- [ ] Stripe Webhook: Registrierung und Handler für Abo-Status-Updates
+- [x] Stripe Checkout: CHF als Währung fixieren (nicht EUR)
+- [x] Stripe Webhook: Registrierung und Handler für Abo-Status-Updates
 - [ ] Stripe Dashboard: Firmennamen auf KLAX setzen
 
 ## Bugfix: GitHub Actions CI
 - [x] CI: "Multiple versions of pnpm specified" – packageManager in package.json und PNPM_VERSION in ci.yml synchronisieren
+
+## Feature: Zefix-Integration (Handelsregister-Autofill)
+- [x] Backend: tRPC-Endpunkt für Zefix/UID-Suche (SOAP API)
+- [x] Frontend: Onboarding-Formular mit Autocomplete-Dropdown
+- [x] Autofill: Firmenname, Rechtsform, UID, Adresse, MWST-Nr. automatisch abfüllen
+- [x] Autofill: Kanton korrekt aus UID-Daten übernommen

@@ -83,6 +83,15 @@ export default function Documents() {
     onError: (err) => toast.error(err.message),
   });
 
+  const batchReanalyzeMutation = trpc.documents.batchReanalyze.useMutation({
+    onSuccess: (result) => {
+      toast.success(`${result.success} von ${result.total} Dokument(en) neu analysiert`);
+      if (result.failed > 0) toast.warning(`${result.failed} Dokument(e) konnten nicht analysiert werden`);
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const unmatchMutation = trpc.documents.unmatch.useMutation({
     onSuccess: () => {
       toast.success("Match aufgehoben");
@@ -188,6 +197,24 @@ export default function Documents() {
             <RefreshCw className="w-4 h-4" />
           )}
           Auto-Match
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            if (confirm(`Alle Dokumente neu analysieren? Dies kann einige Minuten dauern.`)) {
+              batchReanalyzeMutation.mutate();
+            }
+          }}
+          disabled={batchReanalyzeMutation.isPending}
+          className="gap-2"
+        >
+          {batchReanalyzeMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4" />
+          )}
+          Alle neu analysieren
         </Button>
       </div>
 

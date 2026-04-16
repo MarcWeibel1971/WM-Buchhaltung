@@ -934,3 +934,23 @@
 - [x] Bug: Dateiname im Dokument-Detail und Bankimport unterschiedlich – abgleichen
 - [x] Bug: Kreditkartenabrechnung wird als "Kontoauszug" erkannt statt "Kreditkartenabrechnung" – credit_card_statement als neuer Typ
 - [x] Bug: Bankimport GJ-Filter zeigt bei GJ 2024 auch Transaktionen von 2025 – fiscalYear-Filter in Query implementiert
+
+## Batch Re-Analyse bestehender Dokumente
+- [ ] Backend: Endpunkt zum Neu-Analysieren aller bestehenden Dokumente (Dokumenttyp, Konto-Vorschlag aktualisieren)
+- [ ] Frontend: Button "Alle neu analysieren" in Dokumente-Seite
+
+## Bug 6: Automatische Kategorie-Zuordnung beim Kontoplan-Import
+- [x] Backend/Frontend: Beim Import eines individuellen Kontenplans Konten automatisch einer Kategorie zuordnen (Aktiven, Passiven, Aufwand, Ertrag)
+- [x] Intelligente Zuordnung basierend auf Kontonummer-Bereiche (1xxx=Aktiven, 2xxx=Passiven, 3xxx=Ertrag, 4-6xxx=Aufwand etc.) – autoCategory() mit Schweizer KMU-Kontenrahmen
+
+## Feature: Drag & Drop für Konten in Einstellungen
+- [x] Frontend: Konten per Drag & Drop verschieben/umordnen (wie bei Eröffnungssaldi) – SortableAccountRow/SortableAccountList
+- [x] Backend: Konto-Reihenfolge und Kategorie-Zuordnung speichern – updateAccountSortOrder mit category/subCategory
+- [x] Frontend: Konten zwischen Kategorien verschieben können – Kategorie-Dropdown im Drag-Modus
+
+## Feature: Verbuchen-Tab in Dokument-Detailansicht
+- [x] Neuer Tab "Verbuchen" in DocumentDetail (nur sichtbar wenn Dokument mit Transaktion verknüpft)
+- [x] Verbuchen-Tab zeigt: verknüpfte Transaktion, Soll-/Haben-Konto, Betrag, Buchungstext, Status
+- [x] Direkte Verbuchung aus Dokument-Detail heraus (approveTransaction Mutation)
+- [x] Automatische Vorbefüllung: Konten aus Kontierung-Tab, Betrag aus Belegdetails
+- [x] Status-Anzeige: Offen → Verbucht mit visueller Bestätigung

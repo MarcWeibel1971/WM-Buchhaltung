@@ -11,7 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft, Save, RefreshCw, Loader2, FileText, Building2,
   CreditCard, Receipt, BookOpen, Banknote, CheckCircle2, AlertCircle,
-  Sparkles, GraduationCap, ExternalLink
+  Sparkles, GraduationCap, ExternalLink, CheckSquare, ArrowRight,
+  CircleDot, Clock, XCircle
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -81,6 +82,10 @@ export default function DocumentDetail() {
   const [editedDocType, setEditedDocType] = useState("other");
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState("kontakt");
+  const [bookingDebitId, setBookingDebitId] = useState<number | null>(null);
+  const [bookingCreditId, setBookingCreditId] = useState<number | null>(null);
+  const [bookingText, setBookingText] = useState("");
+  const [isBooking, setIsBooking] = useState(false);
 
   // Queries
   const { data, isLoading, isError, refetch } = trpc.documents.getById.useQuery(
@@ -100,6 +105,19 @@ export default function DocumentDetail() {
       refetch();
     },
     onError: (err) => toast.error(err.message),
+  });
+
+  // Approve transaction mutation (for Verbuchen tab)
+  const approveMutation = trpc.bankImport.approveTransaction.useMutation({
+    onSuccess: () => {
+      toast.success("Transaktion erfolgreich verbucht");
+      setIsBooking(false);
+      refetch();
+    },
+    onError: (err: any) => {
+      toast.error("Verbuchung fehlgeschlagen: " + err.message);
+      setIsBooking(false);
+    },
   });
 
   const reanalyzeMutation = trpc.documents.reanalyze.useMutation({
@@ -128,6 +146,30 @@ export default function DocumentDetail() {
       setEditedNotes(data.document.notes || "");
       setEditedDocType(data.document.documentType || "other");
       setIsDirty(false);
+      
+      // Pre-fill booking fields from linked transaction
+      if (data.linkedTransaction) {
+        const tx = data.linkedTransaction;
+        setBookingDebitId(tx.suggestedDebitAccountId || null);
+        setBookingCreditId(tx.suggestedCreditAccountId || null);
+        setBookingText(tx.suggestedBookingText || tx.description || "");
+        // If we have a bookingSuggestion with an account, use it for the correct side
+        if (data.bookingSuggestion?.accountId) {
+          const amt = parseFloat(tx.amount);
+          if (amt < 0) {
+            // Expense: debit = expense account, credit = bank
+            setBookingDebitId(data.bookingSuggestion.accountId);
+            if (data.linkedBankAccount?.accountId) setBookingCreditId(data.linkedBankAccount.accountId);
+          } else {
+            // Income: debit = bank, credit = income account
+            if (data.linkedBankAccount?.accountId) setBookingDebitId(data.linkedBankAccount.accountId);
+            setBookingCreditId(data.bookingSuggestion.accountId);
+          }
+        }
+        if (data.bookingSuggestion?.bookingText) {
+          setBookingText(data.bookingSuggestion.bookingText);
+        }
+      }
     }
   }, [data]);
 
@@ -203,9 +245,26 @@ export default function DocumentDetail() {
     );
   }
 
-  const { document: doc, metadata, supplier, bookingSuggestion } = data;
+  const { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount } = data;
   const isPdf = doc.mimeType === "application/pdf";
   const isImage = doc.mimeType.startsWith("image/");
+  const hasLinkedTx = !!linkedTransaction;
+  const txIsBooked = linkedTransaction?.status === "approved" || linkedTransaction?.status === "booked";
+  const txAmount = linkedTransaction ? Math.abs(parseFloat(linkedTransaction.amount)) : 0;
+
+  const handleBookTransaction = () => {
+    if (!linkedTransaction || !bookingDebitId || !bookingCreditId) {
+      toast.error("Bitte Soll- und Haben-Konto auswählen");
+      return;
+    }
+    setIsBooking(true);
+    approveMutation.mutate({
+      transactionId: linkedTransaction.id,
+      debitAccountId: bookingDebitId,
+      creditAccountId: bookingCreditId,
+      description: bookingText || undefined,
+    });
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -330,6 +389,15 @@ export default function DocumentDetail() {
                 <Banknote className="w-3.5 h-3.5" />
                 Zahlung
               </TabsTrigger>
+              {hasLinkedTx && (
+                <TabsTrigger value="verbuchen" className="gap-1.5 text-xs">
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  Verbuchen
+                  {txIsBooked && (
+                    <span className="ml-1 w-2 h-2 rounded-full bg-green-500 inline-block" />
+                  )}
+                </TabsTrigger>
+              )}
             </TabsList>
 
             {/* ─── Tab: Kontakt ─────────────────────────────────────── */}
@@ -803,6 +871,179 @@ export default function DocumentDetail() {
                 )}
               </div>
             </TabsContent>
+
+            {/* ─── Tab: Verbuchen ──────────────────────────────────── */}
+            {hasLinkedTx && (
+              <TabsContent value="verbuchen" className="flex-1 overflow-auto p-4 space-y-4 mt-0">
+                {/* Transaction Info */}
+                <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <CircleDot className="w-4 h-4 text-muted-foreground" />
+                    Verknüpfte Transaktion
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-xs text-muted-foreground">Datum</span>
+                      <p className="font-medium">{formatDate(linkedTransaction!.transactionDate)}</p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">Betrag</span>
+                      <p className={`font-bold ${parseFloat(linkedTransaction!.amount) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        CHF {formatCHF(parseFloat(linkedTransaction!.amount))}
+                      </p>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-xs text-muted-foreground">Buchungstext</span>
+                      <p className="font-medium">{linkedTransaction!.description || '–'}</p>
+                    </div>
+                    {linkedTransaction!.counterparty && (
+                      <div className="col-span-2">
+                        <span className="text-xs text-muted-foreground">Gegenpartei</span>
+                        <p className="font-medium">{linkedTransaction!.counterparty}</p>
+                      </div>
+                    )}
+                    {linkedBankAccount && (
+                      <div className="col-span-2">
+                        <span className="text-xs text-muted-foreground">Bankkonto</span>
+                        <p className="font-medium">{linkedBankAccount.name}</p>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-xs text-muted-foreground">Status</span>
+                      <div className="mt-0.5">
+                        {txIsBooked ? (
+                          <Badge className="bg-green-100 text-green-700 border-green-200">
+                            <CheckCircle2 className="w-3 h-3 mr-1" />
+                            Verbucht
+                          </Badge>
+                        ) : linkedTransaction!.status === 'pending' ? (
+                          <Badge variant="outline" className="text-amber-600 border-amber-200">
+                            <Clock className="w-3 h-3 mr-1" />
+                            Ausstehend
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            {linkedTransaction!.status}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">Txn-ID</span>
+                      <p className="font-mono text-xs">#{linkedTransaction!.id}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Booking Form - only if not yet booked */}
+                {!txIsBooked ? (
+                  <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                    <h3 className="font-semibold text-sm flex items-center gap-2">
+                      <CheckSquare className="w-4 h-4 text-muted-foreground" />
+                      Buchung erstellen
+                    </h3>
+
+                    <div className="grid grid-cols-1 gap-3">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Buchungstext</Label>
+                        <Input
+                          value={bookingText}
+                          onChange={(e) => setBookingText(e.target.value)}
+                          placeholder="Buchungstext"
+                          className="mt-1"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Soll-Konto</Label>
+                          <Select
+                            value={bookingDebitId ? String(bookingDebitId) : "none"}
+                            onValueChange={(val) => setBookingDebitId(val === "none" ? null : Number(val))}
+                          >
+                            <SelectTrigger className="mt-1">
+                              <SelectValue placeholder="Soll-Konto wählen..." />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-60">
+                              <SelectItem value="none">Kein Konto</SelectItem>
+                              {accountOptions.map((a: any) => (
+                                <SelectItem key={a.id} value={String(a.id)}>
+                                  {a.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Haben-Konto</Label>
+                          <Select
+                            value={bookingCreditId ? String(bookingCreditId) : "none"}
+                            onValueChange={(val) => setBookingCreditId(val === "none" ? null : Number(val))}
+                          >
+                            <SelectTrigger className="mt-1">
+                              <SelectValue placeholder="Haben-Konto wählen..." />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-60">
+                              <SelectItem value="none">Kein Konto</SelectItem>
+                              {accountOptions.map((a: any) => (
+                                <SelectItem key={a.id} value={String(a.id)}>
+                                  {a.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="bg-muted/50 rounded-lg p-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-muted-foreground">Betrag</span>
+                          <span className="text-lg font-bold">CHF {formatCHF(txAmount)}</span>
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={handleBookTransaction}
+                        disabled={isBooking || !bookingDebitId || !bookingCreditId}
+                        className="w-full gap-2"
+                        size="lg"
+                      >
+                        {isBooking ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <CheckSquare className="w-4 h-4" />
+                        )}
+                        Transaktion verbuchen
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle2 className="w-8 h-8 text-green-600" />
+                      <div>
+                        <p className="font-semibold text-green-800">Erfolgreich verbucht</p>
+                        <p className="text-sm text-green-600">
+                          Journal-Eintrag #{linkedTransaction!.journalEntryId}
+                        </p>
+                        <p className="text-sm text-green-600 mt-0.5">
+                          Betrag: CHF {formatCHF(txAmount)}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3 gap-1.5"
+                      onClick={() => navigate("/journal")}
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                      Im Journal anzeigen
+                    </Button>
+                  </div>
+                )}
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </div>

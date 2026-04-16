@@ -3554,7 +3554,67 @@ const documentsRouter = router({
         };
       }
       
-      return { document: doc, metadata, supplier, bookingSuggestion };
+      // 5. Load linked bank transaction details for "Verbuchen" tab
+      let linkedTransaction: {
+        id: number;
+        transactionDate: string;
+        description: string | null;
+        amount: string;
+        counterparty: string | null;
+        status: string;
+        journalEntryId: number | null;
+        suggestedDebitAccountId: number | null;
+        suggestedCreditAccountId: number | null;
+        suggestedBookingText: string | null;
+        bankAccountId: number | null;
+      } | null = null;
+      
+      // Check via bankTransactionId on document
+      if (doc.bankTransactionId) {
+        const { bankTransactions: txnsTbl2 } = await import("../drizzle/schema");
+        const [txn] = await db.select().from(txnsTbl2).where(eqOp(txnsTbl2.id, doc.bankTransactionId));
+        if (txn) linkedTransaction = {
+          id: txn.id,
+          transactionDate: txn.transactionDate as string,
+          description: txn.description,
+          amount: txn.amount as string,
+          counterparty: txn.counterparty,
+          status: txn.status,
+          journalEntryId: txn.journalEntryId,
+          suggestedDebitAccountId: txn.suggestedDebitAccountId,
+          suggestedCreditAccountId: txn.suggestedCreditAccountId,
+          suggestedBookingText: txn.suggestedBookingText,
+          bankAccountId: txn.bankAccountId,
+        };
+      }
+      // Also check reverse lookup
+      if (!linkedTransaction) {
+        const { bankTransactions: txnsTbl3 } = await import("../drizzle/schema");
+        const [matchedTxn2] = await db.select().from(txnsTbl3).where(eqOp(txnsTbl3.matchedDocumentId, doc.id));
+        if (matchedTxn2) linkedTransaction = {
+          id: matchedTxn2.id,
+          transactionDate: matchedTxn2.transactionDate as string,
+          description: matchedTxn2.description,
+          amount: matchedTxn2.amount as string,
+          counterparty: matchedTxn2.counterparty,
+          status: matchedTxn2.status,
+          journalEntryId: matchedTxn2.journalEntryId,
+          suggestedDebitAccountId: matchedTxn2.suggestedDebitAccountId,
+          suggestedCreditAccountId: matchedTxn2.suggestedCreditAccountId,
+          suggestedBookingText: matchedTxn2.suggestedBookingText,
+          bankAccountId: matchedTxn2.bankAccountId,
+        };
+      }
+      
+      // Load bank account info for the linked transaction
+      let linkedBankAccount: { id: number; accountId: number | null; name: string } | null = null;
+      if (linkedTransaction?.bankAccountId) {
+        const { bankAccounts: baTbl } = await import("../drizzle/schema");
+        const [ba] = await db.select().from(baTbl).where(eqOp(baTbl.id, linkedTransaction.bankAccountId));
+        if (ba) linkedBankAccount = { id: ba.id, accountId: ba.accountId, name: ba.bank || ba.name || `Konto ${ba.id}` };
+      }
+      
+      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount };
     }),
 
   // Update document metadata (user edits from detail view)
@@ -3646,8 +3706,8 @@ const documentsRouter = router({
   "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
   "referenceNumber": "Referenznummer oder null",
   "description": "Kurzbeschreibung des Belegs (max 100 Zeichen)",
-  "documentType": "invoice_in | invoice_out | receipt | bank_statement | other",
-  "suggestedAccount": "Kontonummer aus Schweizer KMU-Kontenrahmen oder null",
+  "documentType": "invoice_in | invoice_out | receipt | bank_statement | credit_card_statement | salary_slip | insurance | other",
+  "suggestedAccount": "Kontonummer aus Schweizer KMU-Kontenrahmen oder null (z.B. 6300 für Versicherungen, 5700 für Sozialversicherungsaufwand, 4000 für Materialaufwand)",
   "rawText": "Vollst\u00e4ndiger extrahierter Text des Belegs"
 }
 Antworte NUR mit dem JSON-Objekt, ohne Erkl\u00e4rungen.`,
@@ -3716,6 +3776,99 @@ Antworte NUR mit dem JSON-Objekt, ohne Erkl\u00e4rungen.`,
         try { metadata = JSON.parse(updated.aiMetadata); } catch { /* ignore */ }
       }
       return { success: true, document: updated, metadata };
+    }),
+
+  // Batch re-analyze all documents for the current org
+  batchReanalyze: orgProcedure
+    .mutation(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const allDocs = await db.select().from(docs).where(eqOp(docs.organizationId, ctx.organizationId));
+      const results: { id: number; filename: string; success: boolean; error?: string }[] = [];
+      for (const doc of allDocs) {
+        const isPdf = doc.mimeType === "application/pdf";
+        const isImage = doc.mimeType.startsWith("image/");
+        if (!isPdf && !isImage) { results.push({ id: doc.id, filename: doc.filename, success: false, error: "Nicht analysierbar" }); continue; }
+        try {
+          const contentPart = isPdf
+            ? { type: "file_url" as const, file_url: { url: doc.s3Url, mime_type: "application/pdf" as const } }
+            : { type: "image_url" as const, image_url: { url: doc.s3Url, detail: "high" as const } };
+          const extractResp = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: `Du bist ein Schweizer Buchhalter. Extrahiere aus dem Beleg folgende Informationen als JSON:
+{
+  "documentDate": "YYYY-MM-DD oder null",
+  "dueDate": "YYYY-MM-DD oder null",
+  "invoiceNumber": "Rechnungsnummer oder null",
+  "totalAmount": Zahl oder null,
+  "netAmount": Zahl oder null,
+  "vatAmount": Zahl oder null,
+  "vatRate": Zahl oder null,
+  "currency": "CHF" oder andere,
+  "counterparty": "Firmenname oder Person",
+  "counterpartyUid": "UID-Nummer oder null",
+  "counterpartyVatNumber": "MWST-Nummer oder null",
+  "counterpartyStreet": "Strasse oder null",
+  "counterpartyZipCode": "PLZ oder null",
+  "counterpartyCity": "Ort oder null",
+  "counterpartyCountry": "Land oder null",
+  "counterpartyIban": "IBAN oder null",
+  "qrReference": "QR-Referenz oder null",
+  "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
+  "referenceNumber": "Referenznummer oder null",
+  "description": "Kurzbeschreibung (max 100 Zeichen)",
+  "documentType": "invoice_in | invoice_out | receipt | bank_statement | credit_card_statement | salary_slip | insurance | other",
+  "suggestedAccount": "Kontonummer oder null (z.B. 5700 Sozialversicherungsaufwand, 6300 Versicherungen, 4000 Materialaufwand)",
+  "rawText": "Vollst\u00e4ndiger extrahierter Text"
+}
+WICHTIG: Kreditkartenabrechnungen (Viseca, Mastercard, VISA) = credit_card_statement. Personenversicherung/UVG/BVG = insurance mit Konto 5700. Sachversicherungen = insurance mit Konto 6300.
+Antworte NUR mit dem JSON-Objekt.`,
+              },
+              { role: "user", content: [{ type: "text" as const, text: "Analysiere diesen Beleg:" }, contentPart] },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "document_extraction",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    documentDate: { type: ["string", "null"] }, dueDate: { type: ["string", "null"] },
+                    invoiceNumber: { type: ["string", "null"] }, totalAmount: { type: ["number", "null"] },
+                    netAmount: { type: ["number", "null"] }, vatAmount: { type: ["number", "null"] },
+                    vatRate: { type: ["number", "null"] }, currency: { type: ["string", "null"] },
+                    counterparty: { type: ["string", "null"] }, counterpartyUid: { type: ["string", "null"] },
+                    counterpartyVatNumber: { type: ["string", "null"] }, counterpartyStreet: { type: ["string", "null"] },
+                    counterpartyZipCode: { type: ["string", "null"] }, counterpartyCity: { type: ["string", "null"] },
+                    counterpartyCountry: { type: ["string", "null"] }, counterpartyIban: { type: ["string", "null"] },
+                    qrReference: { type: ["string", "null"] }, paymentMethod: { type: ["string", "null"] },
+                    referenceNumber: { type: ["string", "null"] }, description: { type: ["string", "null"] },
+                    documentType: { type: ["string", "null"] }, suggestedAccount: { type: ["string", "null"] },
+                    rawText: { type: ["string", "null"] },
+                  },
+                  required: ["documentDate", "dueDate", "invoiceNumber", "totalAmount", "netAmount", "vatAmount", "vatRate", "currency", "counterparty", "counterpartyUid", "counterpartyVatNumber", "counterpartyStreet", "counterpartyZipCode", "counterpartyCity", "counterpartyCountry", "counterpartyIban", "qrReference", "paymentMethod", "referenceNumber", "description", "documentType", "suggestedAccount", "rawText"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+          const content = extractResp.choices[0]?.message?.content;
+          if (!content) { results.push({ id: doc.id, filename: doc.filename, success: false, error: "Keine KI-Antwort" }); continue; }
+          const aiMetadata = typeof content === "string" ? content : JSON.stringify(content);
+          let extractedText: string | null = null;
+          try { const parsed = JSON.parse(aiMetadata); extractedText = parsed.rawText ?? null; } catch { /* ignore */ }
+          await db.update(docs).set({ aiMetadata, extractedText }).where(eqOp(docs.id, doc.id));
+          results.push({ id: doc.id, filename: doc.filename, success: true });
+        } catch (e: any) {
+          results.push({ id: doc.id, filename: doc.filename, success: false, error: e.message?.slice(0, 100) });
+        }
+      }
+      return { total: allDocs.length, success: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length, results };
     }),
 
   // Manual match: link a document to a bank transaction

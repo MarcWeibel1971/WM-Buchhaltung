@@ -2298,6 +2298,36 @@ function ChartOfAccountsTab() {
                             {dragEnabled && (
                               <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab shrink-0" />
                             )}
+                            {/* Category move dropdown (only in drag mode) */}
+                            {dragEnabled && (
+                              <Select
+                                value={`${acc.category || "Ohne Kategorie"}::${acc.subCategory || "Allgemein"}`}
+                                onValueChange={(val) => {
+                                  const [newCat, newSub] = val.split("::");
+                                  reorderMut.mutate({
+                                    updates: [{
+                                      id: acc.id,
+                                      sortOrder: acc.sortOrder ?? 0,
+                                      category: newCat === "Ohne Kategorie" ? undefined : newCat,
+                                      subCategory: newSub === "Allgemein" ? undefined : newSub,
+                                    }],
+                                  });
+                                }}
+                              >
+                                <SelectTrigger className="w-44 h-7 text-xs">
+                                  <SelectValue placeholder="Kategorie" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {tree.flatMap((c: TreeCategory) =>
+                                    c.subCategories.map((s: TreeSubCategory) => (
+                                      <SelectItem key={s.key} value={s.key}>
+                                        {c.label} / {s.label}
+                                      </SelectItem>
+                                    ))
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            )}
                             {/* Account number */}
                             {editingId === acc.id ? (
                               <Input
@@ -2490,6 +2520,51 @@ function ChartOfAccountsTab() {
                       if (num >= 9000) return "equity";
                       return "expense";
                     };
+                    // Automatische Kategorie-Zuordnung nach Schweizer KMU-Kontenrahmen
+                    const autoCategory = (num: number): { category: string; subCategory: string } => {
+                      if (num >= 1000 && num < 1100) return { category: "Umlaufverm\u00f6gen", subCategory: "Fl\u00fcssige Mittel" };
+                      if (num >= 1100 && num < 1200) return { category: "Umlaufverm\u00f6gen", subCategory: "Kurzfristige Forderungen" };
+                      if (num >= 1200 && num < 1300) return { category: "Umlaufverm\u00f6gen", subCategory: "Vorr\u00e4te" };
+                      if (num >= 1300 && num < 1400) return { category: "Umlaufverm\u00f6gen", subCategory: "Aktive Rechnungsabgrenzung" };
+                      if (num >= 1400 && num < 1500) return { category: "Anlageverm\u00f6gen", subCategory: "Finanzanlagen" };
+                      if (num >= 1500 && num < 1600) return { category: "Anlageverm\u00f6gen", subCategory: "Mobile Sachanlagen" };
+                      if (num >= 1600 && num < 1700) return { category: "Anlageverm\u00f6gen", subCategory: "Immobile Sachanlagen" };
+                      if (num >= 1700 && num < 2000) return { category: "Anlageverm\u00f6gen", subCategory: "Immaterielle Anlagen" };
+                      if (num >= 2000 && num < 2100) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Verbindlichkeiten" };
+                      if (num >= 2100 && num < 2200) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Finanzverbindlichkeiten" };
+                      if (num >= 2200 && num < 2300) return { category: "Kurzfristiges Fremdkapital", subCategory: "Passive Rechnungsabgrenzung" };
+                      if (num >= 2300 && num < 2400) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige R\u00fcckstellungen" };
+                      if (num >= 2400 && num < 2500) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige Finanzverbindlichkeiten" };
+                      if (num >= 2500 && num < 2600) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige R\u00fcckstellungen" };
+                      if (num >= 2600 && num < 2800) return { category: "Langfristiges Fremdkapital", subCategory: "\u00dcbrige langfristige Verbindlichkeiten" };
+                      if (num >= 2800 && num < 2900) return { category: "Eigenkapital", subCategory: "Grund-/Stammkapital" };
+                      if (num >= 2900 && num < 3000) return { category: "Eigenkapital", subCategory: "Reserven / Gewinnvortrag" };
+                      if (num >= 3000 && num < 3200) return { category: "Betriebsertrag", subCategory: "Produktionsertrag" };
+                      if (num >= 3200 && num < 3400) return { category: "Betriebsertrag", subCategory: "Handelsertrag" };
+                      if (num >= 3400 && num < 3600) return { category: "Betriebsertrag", subCategory: "Dienstleistungsertrag" };
+                      if (num >= 3600 && num < 3800) return { category: "Betriebsertrag", subCategory: "\u00dcbriger Ertrag" };
+                      if (num >= 3800 && num < 4000) return { category: "Betriebsertrag", subCategory: "Erl\u00f6sminderungen" };
+                      if (num >= 4000 && num < 4500) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Materialaufwand" };
+                      if (num >= 4500 && num < 5000) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Drittleistungen" };
+                      if (num >= 5000 && num < 5800) return { category: "Personalaufwand", subCategory: "L\u00f6hne und Geh\u00e4lter" };
+                      if (num >= 5800 && num < 6000) return { category: "Personalaufwand", subCategory: "Sozialversicherungsaufwand" };
+                      if (num >= 6000 && num < 6100) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Raumaufwand" };
+                      if (num >= 6100 && num < 6200) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Unterhalt und Reparaturen" };
+                      if (num >= 6200 && num < 6300) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Fahrzeugaufwand" };
+                      if (num >= 6300 && num < 6400) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Versicherungen" };
+                      if (num >= 6400 && num < 6500) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Energie und Entsorgung" };
+                      if (num >= 6500 && num < 6600) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Verwaltungsaufwand" };
+                      if (num >= 6600 && num < 6700) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Informatikaufwand" };
+                      if (num >= 6700 && num < 6800) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "\u00dcbriger Betriebsaufwand" };
+                      if (num >= 6800 && num < 6900) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Abschreibungen" };
+                      if (num >= 6900 && num < 7000) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Finanzaufwand" };
+                      if (num >= 7000 && num < 7500) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Ertrag" };
+                      if (num >= 7500 && num < 8000) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Aufwand" };
+                      if (num >= 8000 && num < 8500) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Ertrag" };
+                      if (num >= 8500 && num < 9000) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Aufwand" };
+                      if (num >= 9000) return { category: "Abschluss", subCategory: "Abschlusskonten" };
+                      return { category: "", subCategory: "" };
+                    };
                     const parsed = rows.map((r: Record<string, any>) => {
                       const num = getCol(r, "Nummer", "Konto", "Nr", "number", "Account", "Kontonummer");
                       const name = getCol(r, "Name", "Bezeichnung", "Kontoname", "name", "Description");
@@ -2501,8 +2576,12 @@ function ChartOfAccountsTab() {
                       // Skip rows explicitly marked as "Gruppe"
                       if (kontoart.toLowerCase() === "gruppe" || kontoart.toLowerCase() === "group") return null;
                       const accountType = mapAccountType(kontoart, n);
-                      const cat = getCol(r, "Kategorie", "category") || undefined;
-                      const sub = getCol(r, "Unterkategorie", "subCategory") || undefined;
+                      // Auto-assign category from file or from number-based rules
+                      const fileCat = getCol(r, "Kategorie", "category");
+                      const fileSub = getCol(r, "Unterkategorie", "subCategory");
+                      const auto = autoCategory(n);
+                      const cat = fileCat || auto.category || undefined;
+                      const sub = fileSub || auto.subCategory || undefined;
                       return { number: num, name, accountType, category: cat, subCategory: sub };
                     }).filter((a): a is NonNullable<typeof a> => a !== null && !!a.number && !!a.name);
                     setImportPreview(parsed);
@@ -2534,12 +2613,63 @@ function ChartOfAccountsTab() {
                       throw new Error(err.error || "Upload fehlgeschlagen");
                     }
                     const result = await resp.json();
+                    // Reuse autoCategory for PDF-imported accounts
+                    const autoCatPdf = (num: number): { category: string; subCategory: string } => {
+                      if (num >= 1000 && num < 1100) return { category: "Umlaufverm\u00f6gen", subCategory: "Fl\u00fcssige Mittel" };
+                      if (num >= 1100 && num < 1200) return { category: "Umlaufverm\u00f6gen", subCategory: "Kurzfristige Forderungen" };
+                      if (num >= 1200 && num < 1300) return { category: "Umlaufverm\u00f6gen", subCategory: "Vorr\u00e4te" };
+                      if (num >= 1300 && num < 1400) return { category: "Umlaufverm\u00f6gen", subCategory: "Aktive Rechnungsabgrenzung" };
+                      if (num >= 1400 && num < 1500) return { category: "Anlageverm\u00f6gen", subCategory: "Finanzanlagen" };
+                      if (num >= 1500 && num < 1600) return { category: "Anlageverm\u00f6gen", subCategory: "Mobile Sachanlagen" };
+                      if (num >= 1600 && num < 1700) return { category: "Anlageverm\u00f6gen", subCategory: "Immobile Sachanlagen" };
+                      if (num >= 1700 && num < 2000) return { category: "Anlageverm\u00f6gen", subCategory: "Immaterielle Anlagen" };
+                      if (num >= 2000 && num < 2100) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Verbindlichkeiten" };
+                      if (num >= 2100 && num < 2200) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Finanzverbindlichkeiten" };
+                      if (num >= 2200 && num < 2300) return { category: "Kurzfristiges Fremdkapital", subCategory: "Passive Rechnungsabgrenzung" };
+                      if (num >= 2300 && num < 2400) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige R\u00fcckstellungen" };
+                      if (num >= 2400 && num < 2500) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige Finanzverbindlichkeiten" };
+                      if (num >= 2500 && num < 2600) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige R\u00fcckstellungen" };
+                      if (num >= 2600 && num < 2800) return { category: "Langfristiges Fremdkapital", subCategory: "\u00dcbrige langfristige Verbindlichkeiten" };
+                      if (num >= 2800 && num < 2900) return { category: "Eigenkapital", subCategory: "Grund-/Stammkapital" };
+                      if (num >= 2900 && num < 3000) return { category: "Eigenkapital", subCategory: "Reserven / Gewinnvortrag" };
+                      if (num >= 3000 && num < 3200) return { category: "Betriebsertrag", subCategory: "Produktionsertrag" };
+                      if (num >= 3200 && num < 3400) return { category: "Betriebsertrag", subCategory: "Handelsertrag" };
+                      if (num >= 3400 && num < 3600) return { category: "Betriebsertrag", subCategory: "Dienstleistungsertrag" };
+                      if (num >= 3600 && num < 3800) return { category: "Betriebsertrag", subCategory: "\u00dcbriger Ertrag" };
+                      if (num >= 3800 && num < 4000) return { category: "Betriebsertrag", subCategory: "Erl\u00f6sminderungen" };
+                      if (num >= 4000 && num < 4500) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Materialaufwand" };
+                      if (num >= 4500 && num < 5000) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Drittleistungen" };
+                      if (num >= 5000 && num < 5800) return { category: "Personalaufwand", subCategory: "L\u00f6hne und Geh\u00e4lter" };
+                      if (num >= 5800 && num < 6000) return { category: "Personalaufwand", subCategory: "Sozialversicherungsaufwand" };
+                      if (num >= 6000 && num < 6100) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Raumaufwand" };
+                      if (num >= 6100 && num < 6200) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Unterhalt und Reparaturen" };
+                      if (num >= 6200 && num < 6300) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Fahrzeugaufwand" };
+                      if (num >= 6300 && num < 6400) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Versicherungen" };
+                      if (num >= 6400 && num < 6500) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Energie und Entsorgung" };
+                      if (num >= 6500 && num < 6600) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Verwaltungsaufwand" };
+                      if (num >= 6600 && num < 6700) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Informatikaufwand" };
+                      if (num >= 6700 && num < 6800) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "\u00dcbriger Betriebsaufwand" };
+                      if (num >= 6800 && num < 6900) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Abschreibungen" };
+                      if (num >= 6900 && num < 7000) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Finanzaufwand" };
+                      if (num >= 7000 && num < 7500) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Ertrag" };
+                      if (num >= 7500 && num < 8000) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Aufwand" };
+                      if (num >= 8000 && num < 8500) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Ertrag" };
+                      if (num >= 8500 && num < 9000) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Aufwand" };
+                      if (num >= 9000) return { category: "Abschluss", subCategory: "Abschlusskonten" };
+                      return { category: "", subCategory: "" };
+                    };
                     if (result.accounts && result.accounts.length > 0) {
-                      setImportPreview(result.accounts.map((a: any) => ({
-                        number: a.number,
-                        name: a.name,
-                        accountType: a.accountType,
-                      })));
+                      setImportPreview(result.accounts.map((a: any) => {
+                        const n = parseInt(a.number);
+                        const auto = autoCatPdf(isNaN(n) ? 0 : n);
+                        return {
+                          number: a.number,
+                          name: a.name,
+                          accountType: a.accountType,
+                          category: auto.category || undefined,
+                          subCategory: auto.subCategory || undefined,
+                        };
+                      }));
                       toast.success(`${result.accounts.length} Konten per KI aus PDF extrahiert`);
                     } else {
                       toast.error("Keine Konten im PDF gefunden");

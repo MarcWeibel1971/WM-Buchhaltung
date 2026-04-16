@@ -3,7 +3,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
   FileText, Plus, Search, Eye, Send, CheckCircle2, XCircle,
-  Clock, AlertTriangle, Trash2, Pencil, Loader2, Banknote, Ban,
+  Clock, AlertTriangle, Trash2, Pencil, Loader2, Banknote, Ban, FileDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -110,6 +110,10 @@ export default function Invoices() {
       utils.invoices.list.invalidate();
       setPaymentDialog(null);
     },
+    onError: (e) => toast.error(e.message),
+  });
+  const pdfMutation = trpc.invoices.generatePdf.useMutation({
+    onSuccess: (r) => window.open(r.url, "_blank", "noopener,noreferrer"),
     onError: (e) => toast.error(e.message),
   });
 
@@ -301,6 +305,16 @@ export default function Invoices() {
                               </AlertDialogContent>
                             </AlertDialog>
                           </>
+                        )}
+
+                        {inv.status !== "draft" && (
+                          <Button
+                            size="sm" variant="ghost" title="PDF öffnen"
+                            disabled={pdfMutation.isPending}
+                            onClick={() => pdfMutation.mutate({ id: inv.id, regenerate: false })}
+                          >
+                            <FileDown className="h-4 w-4" />
+                          </Button>
                         )}
 
                         {(inv.status === "sent" || inv.status === "partially_paid") && (

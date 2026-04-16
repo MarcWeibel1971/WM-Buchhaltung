@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Plus, Trash2, Send, CheckCircle2, Loader2, FileDown } from "lucide-react";
+import { Plus, Trash2, Send, CheckCircle2, Loader2, FileDown, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -130,6 +130,23 @@ export default function InvoiceEditor(props: {
   const issueMut = trpc.invoices.issue.useMutation({
     onSuccess: (r) => {
       toast.success(`Rechnung ${r.invoiceNumber} verbucht`);
+      utils.invoices.list.invalidate();
+      utils.invoices.getById.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const pdfMut = trpc.invoices.generatePdf.useMutation({
+    onSuccess: (r) => {
+      toast.success(r.cached ? "PDF bereit" : "PDF generiert");
+      window.open(r.url, "_blank", "noopener,noreferrer");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const emailMut = trpc.invoices.sendEmail.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Email an ${r.to} versandt`);
+      setEmailDialogOpen(false);
       utils.invoices.list.invalidate();
       utils.invoices.getById.invalidate();
     },
@@ -464,11 +481,117 @@ export default function InvoiceEditor(props: {
               )}
             </Button>
           )}
-          {isReadOnly && existing.data?.invoiceNumber && (
-            <Button variant="outline" disabled title="PDF-Download kommt in Commit C">
-              <FileDown className="h-4 w-4 mr-1" /> PDF
-            </Button>
+          {isEdit && props.invoiceId != null && existing.data && existing.data.status !== "draft" && (
+            <>
+              <Button
+                variant="outline"
+                disabled={pdfMut.isPending}
+                onClick={() => pdfMut.mutate({ id: props.invoiceId!, regenerate: false })}
+              >
+                {pdfMut.isPending ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> PDF…</>
+                ) : (
+                  <><FileDown className="h-4 w-4 mr-1" /> PDF öffnen</>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={emailMut.isPending}
+                onClick={() => setEmailDialogOpen(true)}
+              >
+                <Mail className="h-4 w-4 mr-1" /> Per E-Mail senden
+              </Button>
+            </>
           )}
+        </DialogFooter>
+
+        {/* Email-Dialog */}
+        {emailDialogOpen && existing.data && (
+          <SendEmailDialog
+            open={emailDialogOpen}
+            onOpenChange={setEmailDialogOpen}
+            defaultTo={existing.data.customer?.email ?? ""}
+            invoiceNumber={existing.data.invoiceNumber ?? ""}
+            invoiceSubject={existing.data.subject ?? ""}
+            isPending={emailMut.isPending}
+            onSend={(data) => emailMut.mutate({ id: props.invoiceId!, ...data })}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── SendEmailDialog ────────────────────────────────────────────────────────
+
+function SendEmailDialog(props: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  defaultTo: string;
+  invoiceNumber: string;
+  invoiceSubject: string;
+  isPending: boolean;
+  onSend: (data: { to: string; cc?: string[]; subject?: string; bodyText?: string }) => void;
+}) {
+  const [to, setTo] = useState(props.defaultTo);
+  const [cc, setCc] = useState("");
+  const [subject, setSubject] = useState(
+    `Rechnung ${props.invoiceNumber}${props.invoiceSubject ? " – " + props.invoiceSubject : ""}`.trim(),
+  );
+  const [bodyText, setBodyText] = useState("");
+
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Rechnung per E-Mail senden</DialogTitle>
+          <DialogDescription>
+            Die Rechnung wird als PDF-Anhang an den Empfänger gesandt.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>An *</Label>
+            <Input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="kunde@example.ch" />
+          </div>
+          <div>
+            <Label>CC (kommasepariert, optional)</Label>
+            <Input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="buchhaltung@example.ch" />
+          </div>
+          <div>
+            <Label>Betreff</Label>
+            <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+          </div>
+          <div>
+            <Label>Nachricht (optional – Standard-Text wird verwendet wenn leer)</Label>
+            <textarea
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[120px]"
+              value={bodyText}
+              onChange={(e) => setBodyText(e.target.value)}
+              placeholder="Lieber Kunde, ..."
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => props.onOpenChange(false)}>Abbrechen</Button>
+          <Button
+            disabled={!to || props.isPending}
+            onClick={() => {
+              const ccList = cc.split(",").map(s => s.trim()).filter(s => s.length > 0);
+              props.onSend({
+                to,
+                cc: ccList.length > 0 ? ccList : undefined,
+                subject: subject || undefined,
+                bodyText: bodyText || undefined,
+              });
+            }}
+          >
+            {props.isPending ? (
+              <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Sende…</>
+            ) : (
+              <><Mail className="h-4 w-4 mr-1" /> Senden</>
+            )}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

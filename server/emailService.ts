@@ -4,11 +4,27 @@
  */
 import { ENV } from "./_core/env";
 
+/**
+ * Resend-Attachment. `content` ist immer base64-kodiert (egal ob Text oder
+ * Binary – z.B. PDF). Max-Größe pro Attachment: 40 MB (Resend-Limit).
+ */
+export interface EmailAttachment {
+  filename: string;
+  content: string;        // base64-encoded
+  contentType?: string;   // z.B. "application/pdf"; Resend rät Content-Type aus Dateiendung
+}
+
 interface SendEmailParams {
   to: string;
   subject: string;
   html: string;
   text?: string;
+  /** Optional: CC-Empfänger (z.B. Treuhänder). */
+  cc?: string[];
+  /** Optional: Antwort-an-Adresse (wenn abweichend vom Absender). */
+  replyTo?: string;
+  /** Optional: PDF/Bild-Anhänge (Rechnungen, Mahnungen etc.). */
+  attachments?: EmailAttachment[];
 }
 
 interface ResendResponse {
@@ -20,7 +36,7 @@ interface ResendResponse {
  * Returns the message ID on success, throws on failure.
  */
 export async function sendEmail(params: SendEmailParams): Promise<string> {
-  const { to, subject, html, text } = params;
+  const { to, subject, html, text, cc, replyTo, attachments } = params;
 
   if (!ENV.resendApiKey) {
     console.warn("[Email] RESEND_API_KEY not configured – email not sent");
@@ -28,6 +44,7 @@ export async function sendEmail(params: SendEmailParams): Promise<string> {
     console.log("[Email] Would send to:", to);
     console.log("[Email] Subject:", subject);
     console.log("[Email] HTML:", html.substring(0, 200) + "...");
+    if (attachments?.length) console.log("[Email] Attachments:", attachments.map(a => a.filename).join(", "));
     return "dev-no-api-key";
   }
 
@@ -40,9 +57,14 @@ export async function sendEmail(params: SendEmailParams): Promise<string> {
     body: JSON.stringify({
       from: ENV.resendFromEmail,
       to: [to],
+      cc: cc && cc.length > 0 ? cc : undefined,
+      reply_to: replyTo,
       subject,
       html,
       text: text || undefined,
+      attachments: attachments && attachments.length > 0
+        ? attachments.map(a => ({ filename: a.filename, content: a.content, content_type: a.contentType }))
+        : undefined,
     }),
   });
 

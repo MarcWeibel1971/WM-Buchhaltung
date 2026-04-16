@@ -21,8 +21,16 @@ import {
   accounts,
   journalEntries,
   companySettings,
+  qrSettings,
+  organizations,
+  documents,
 } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
+import PDFDocument from "pdfkit";
+import { SwissQRBill } from "swissqrbill/pdf";
+import type { Data } from "swissqrbill/types";
+import { storagePut } from "./storage";
+import { sendEmail } from "./emailService";
 import {
   getDb,
   allocateInvoiceNumber,
@@ -83,6 +91,223 @@ const invoiceItemInput = z.object({
   vatRate: z.number().min(0).max(100).default(0),
   revenueAccountId: z.number().optional(),
 });
+
+// ─── PDF-Renderer ───────────────────────────────────────────────────────────
+
+/** CHF-Format mit Apostroph als Tausendertrenner: 1234.56 → "1'234.56" */
+function formatCHF(n: number): string {
+  const [int, dec] = n.toFixed(2).split(".");
+  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, "'")}.${dec}`;
+}
+
+/** QR-Referenz in 5er-Gruppen formatieren. */
+function formatQRRef(ref: string): string {
+  const parts: string[] = [];
+  let i = ref.length;
+  while (i > 0) { const start = Math.max(0, i - 5); parts.unshift(ref.slice(start, i)); i = start; }
+  return parts.join(" ");
+}
+
+/**
+ * Rendert eine vollständige PDF-Rechnung mit Briefkopf, Positions-Tabelle,
+ * Totalen und QR-Einzahlungsschein. Erwartet alle Daten als strukturierte
+ * Objekte (keine DB-Calls). Gibt das PDF als Buffer zurück.
+ */
+async function renderInvoicePdf(params: {
+  org: typeof companySettings.$inferSelect;
+  orgLegal?: typeof organizations.$inferSelect | null;
+  invoice: typeof invoices.$inferSelect;
+  items: Array<typeof invoiceItems.$inferSelect>;
+  customer: typeof customers.$inferSelect;
+  qr: typeof qrSettings.$inferSelect | null;
+}): Promise<Buffer> {
+  const { org, orgLegal, invoice, items, customer, qr } = params;
+
+  const pdfDoc = new PDFDocument({
+    size: "A4",
+    autoFirstPage: true,
+    margins: { top: 40, bottom: 40, left: 55, right: 55 },
+  });
+  const chunks: Buffer[] = [];
+  pdfDoc.on("data", (c: Buffer) => chunks.push(c));
+
+  const pageW = 595.28;
+  const leftM = 55;
+  const rightM = 55;
+  const contentW = pageW - leftM - rightM;
+
+  const invoiceDate = new Date(invoice.invoiceDate);
+  const dueDate = new Date(invoice.dueDate);
+  const dateStr = invoiceDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
+  const dueStr  = dueDate.toLocaleDateString("de-CH", { day: "numeric", month: "long", year: "numeric" });
+
+  const currency = invoice.currency;
+  const subtotal = parseFloat(invoice.subtotal as string);
+  const vatTotal = parseFloat(invoice.vatTotal as string);
+  const total = parseFloat(invoice.total as string);
+
+  // ── Briefkopf ──
+  pdfDoc.fontSize(11).font("Helvetica-Bold");
+  pdfDoc.text(org.companyName, leftM, 45);
+  pdfDoc.fontSize(8.5).font("Helvetica").fillColor("#444444");
+  if (org.street)  pdfDoc.text(org.street);
+  if (org.zipCode || org.city) pdfDoc.text(`${org.zipCode ?? ""} ${org.city ?? ""}`.trim());
+  if (org.phone)   pdfDoc.text(`Tel: ${org.phone}`);
+  if (org.email)   pdfDoc.text(org.email);
+  if (org.website) pdfDoc.text(org.website);
+  if (org.vatNumber) pdfDoc.text(`MWST-Nr. ${org.vatNumber}`);
+
+  // ── Empfänger-Adresse ──
+  pdfDoc.fillColor("#000000");
+  const addrX = 350;
+  let addrY = 120;
+  const custDisplay = customer.company || customer.name;
+  const custLine2  = customer.company && customer.name ? customer.name : null;
+  pdfDoc.fontSize(10).font("Helvetica-Bold").text(custDisplay, addrX, addrY); addrY += 14;
+  if (custLine2) { pdfDoc.fontSize(9).font("Helvetica").text(custLine2, addrX, addrY); addrY += 14; }
+  pdfDoc.fontSize(9).font("Helvetica");
+  if (customer.street)  { pdfDoc.text(customer.street, addrX, addrY); addrY += 14; }
+  if (customer.zipCode || customer.city) {
+    pdfDoc.text(`${customer.zipCode ?? ""} ${customer.city ?? ""}`.trim(), addrX, addrY); addrY += 14;
+  }
+
+  // ── Datum + Rechnungsnummer ──
+  let yPos = 210;
+  pdfDoc.fontSize(9).font("Helvetica").fillColor("#666666");
+  pdfDoc.text(`${org.city ?? ""}, ${dateStr}`.replace(/^, /, ""), leftM, yPos, { width: contentW, align: "right" });
+  yPos += 14;
+  if (invoice.invoiceNumber) {
+    pdfDoc.text(`Rechnung ${invoice.invoiceNumber}`, leftM, yPos, { width: contentW, align: "right" });
+    yPos += 14;
+  }
+  yPos += 16;
+
+  // ── Betreff ──
+  pdfDoc.fillColor("#000000").fontSize(13).font("Helvetica-Bold");
+  pdfDoc.text(invoice.subject ?? `Rechnung ${invoice.invoiceNumber ?? ""}`, leftM, yPos, { width: contentW });
+  yPos = pdfDoc.y + 16;
+
+  // ── Anrede + Einleitungstext ──
+  pdfDoc.fontSize(10).font("Helvetica");
+  if (customer.salutation) {
+    pdfDoc.text(customer.salutation, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 10;
+  }
+  if (invoice.introText) {
+    pdfDoc.text(invoice.introText, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 18;
+  }
+
+  // ── Positions-Tabelle Header ──
+  pdfDoc.fontSize(8.5).font("Helvetica-Bold").fillColor("#666666");
+  pdfDoc.text("Pos.", leftM, yPos, { width: 28 });
+  pdfDoc.text("Beschreibung", leftM + 32, yPos, { width: contentW - 260 });
+  pdfDoc.text("Menge", leftM + contentW - 225, yPos, { width: 45, align: "right" });
+  pdfDoc.text("Einzelpreis", leftM + contentW - 175, yPos, { width: 70, align: "right" });
+  pdfDoc.text("MWST", leftM + contentW - 100, yPos, { width: 30, align: "right" });
+  pdfDoc.text("Total", leftM + contentW - 65, yPos, { width: 65, align: "right" });
+  yPos += 14;
+  pdfDoc.moveTo(leftM, yPos).lineTo(leftM + contentW, yPos).lineWidth(0.5).strokeColor("#cccccc").stroke();
+  yPos += 6;
+
+  // ── Items ──
+  pdfDoc.fillColor("#000000").font("Helvetica").fontSize(9);
+  items.forEach((item, idx) => {
+    const qty = parseFloat(item.quantity as string);
+    const price = parseFloat(item.unitPrice as string);
+    const lineTotal = parseFloat(item.lineTotal as string);
+    const rowStartY = yPos;
+    pdfDoc.text(`${item.position ?? idx + 1}.`, leftM, yPos, { width: 28 });
+    pdfDoc.text(item.description, leftM + 32, yPos, { width: contentW - 260 });
+    const descEndY = pdfDoc.y;
+    pdfDoc.text(`${qty} ${item.unit ?? ""}`.trim(), leftM + contentW - 225, rowStartY, { width: 45, align: "right" });
+    pdfDoc.text(formatCHF(price), leftM + contentW - 175, rowStartY, { width: 70, align: "right" });
+    pdfDoc.text(`${parseFloat(item.vatRate as string)}%`, leftM + contentW - 100, rowStartY, { width: 30, align: "right" });
+    pdfDoc.text(formatCHF(lineTotal), leftM + contentW - 65, rowStartY, { width: 65, align: "right" });
+    yPos = Math.max(descEndY, rowStartY + 14) + 4;
+  });
+
+  // ── Summen ──
+  yPos += 4;
+  pdfDoc.moveTo(leftM + contentW - 220, yPos).lineTo(leftM + contentW, yPos).lineWidth(0.5).strokeColor("#cccccc").stroke();
+  yPos += 6;
+  pdfDoc.fontSize(9.5).font("Helvetica");
+  pdfDoc.text("Nettobetrag", leftM + contentW - 220, yPos, { width: 140 });
+  pdfDoc.text(`${currency} ${formatCHF(subtotal)}`, leftM + contentW - 80, yPos, { width: 80, align: "right" });
+  yPos += 14;
+  if (vatTotal > 0) {
+    pdfDoc.text("MWST", leftM + contentW - 220, yPos, { width: 140 });
+    pdfDoc.text(`${currency} ${formatCHF(vatTotal)}`, leftM + contentW - 80, yPos, { width: 80, align: "right" });
+    yPos += 14;
+  }
+  pdfDoc.moveTo(leftM + contentW - 220, yPos).lineTo(leftM + contentW, yPos).lineWidth(1).strokeColor("#000000").stroke();
+  yPos += 6;
+  pdfDoc.fontSize(11).font("Helvetica-Bold");
+  pdfDoc.text("Total", leftM + contentW - 220, yPos, { width: 140 });
+  pdfDoc.text(`${currency} ${formatCHF(total)}`, leftM + contentW - 80, yPos, { width: 80, align: "right" });
+  yPos += 24;
+
+  // ── Zahlungsbedingungen ──
+  pdfDoc.fontSize(9).font("Helvetica").fillColor("#666666");
+  pdfDoc.text(`Zahlbar innert ${invoice.paymentTermDays} Tagen bis ${dueStr}.`, leftM, yPos, { width: contentW });
+  yPos = pdfDoc.y + 16;
+
+  // ── Fusszeile ──
+  if (invoice.footerText) {
+    pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
+    pdfDoc.text(invoice.footerText, leftM, yPos, { width: contentW });
+  }
+
+  // ── QR-Einzahlungsschein (falls IBAN konfiguriert und CHF/EUR) ──
+  if (qr && qr.iban) {
+    const cleanIban = qr.iban.replace(/\s/g, "");
+    const iid = parseInt(cleanIban.substring(4, 9));
+    const isQrIban = iid >= 30000 && iid <= 31999;
+
+    const data: Data = {
+      amount: total,
+      currency: currency as "CHF" | "EUR",
+      creditor: {
+        account: cleanIban,
+        name: org.companyName,
+        address: org.street ?? "",
+        zip: parseInt(org.zipCode ?? "0"),
+        city: org.city ?? "",
+        country: "CH",
+      },
+      debtor: {
+        name: customer.company || customer.name,
+        address: customer.street ?? "",
+        zip: parseInt(customer.zipCode ?? "0"),
+        city: customer.city ?? "",
+        country: customer.country === "Schweiz" ? "CH" : (customer.country ?? "CH").slice(0, 2).toUpperCase(),
+      },
+    };
+
+    // Referenz: QRR nur mit QR-IBAN, sonst SCOR, oder invoice.qrReference wenn gesetzt
+    const effectiveRefType = isQrIban ? (qr.referenceType || "QRR") : "SCOR";
+    if (effectiveRefType === "QRR" && isQrIban) {
+      const ref = invoice.qrReference || generateQRReference(invoice.id, invoice.fiscalYear ?? invoiceDate.getFullYear());
+      data.reference = formatQRRef(ref);
+    } else if (effectiveRefType === "SCOR") {
+      const refBody = String(invoice.id).padStart(11, "0");
+      const numericStr = refBody + "2715" + "00";
+      let remainder = 0;
+      for (const ch of numericStr) remainder = (remainder * 10 + parseInt(ch)) % 97;
+      const checkDigits = String(98 - remainder).padStart(2, "0");
+      data.reference = `RF${checkDigits}${refBody}`;
+    }
+
+    const qrBill = new SwissQRBill(data);
+    qrBill.attachTo(pdfDoc);
+  }
+
+  const pdfPromise = new Promise<Buffer>((resolve) => {
+    pdfDoc.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+  pdfDoc.end();
+  return pdfPromise;
+}
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
@@ -572,5 +797,200 @@ export const invoicesRouter = router({
       }).where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)));
 
       return { success: true, cancelled: true, cancelJournalEntryId: cancelEntryId };
+    }),
+
+  // ─── GENERATE PDF ─────────────────────────────────────────────────────────
+  // Rendert das Rechnungs-PDF (mit QR-Einzahlungsschein falls konfiguriert),
+  // lädt es nach S3, speichert die URL im invoice-Record und legt ausserdem
+  // einen documents-Eintrag für das interne Dokumenten-Archiv an.
+  generatePdf: orgProcedure
+    .input(z.object({
+      id: z.number(),
+      regenerate: z.boolean().default(false),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [invoice] = await db.select().from(invoices)
+        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)))
+        .limit(1);
+      if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Rechnung nicht gefunden" });
+
+      // Gecachtes PDF zurückgeben, wenn vorhanden und kein Regenerate-Flag
+      if (!input.regenerate && invoice.pdfS3Key && invoice.pdfS3Url) {
+        return {
+          url: invoice.pdfS3Url,
+          s3Key: invoice.pdfS3Key,
+          cached: true,
+          filename: `Rechnung_${invoice.invoiceNumber ?? invoice.id}.pdf`,
+        };
+      }
+
+      const items = await db.select().from(invoiceItems)
+        .where(eq(invoiceItems.invoiceId, invoice.id))
+        .orderBy(asc(invoiceItems.position));
+      if (items.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung hat keine Positionen" });
+      }
+
+      const [customer] = await db.select().from(customers)
+        .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
+        .limit(1);
+      if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
+
+      const [org] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
+      if (!org) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen" });
+
+      const [orgLegal] = await db.select().from(organizations)
+        .where(eq(organizations.id, ctx.organizationId)).limit(1);
+
+      // QR-Settings sind optional – wenn nicht konfiguriert, wird kein
+      // Einzahlungsschein angehängt (die Rechnung ist dann nur das Brief-PDF).
+      const [qr] = await db.select().from(qrSettings)
+        .where(eq(qrSettings.organizationId, ctx.organizationId)).limit(1);
+
+      const pdfBuffer = await renderInvoicePdf({
+        org, orgLegal: orgLegal ?? null,
+        invoice, items, customer,
+        qr: qr ?? null,
+      });
+
+      // Nach S3 hochladen (org-gescopt + invoice-ID als eindeutiger Key)
+      const timestamp = Date.now();
+      const cleanNumber = (invoice.invoiceNumber ?? `draft-${invoice.id}`).replace(/[^a-zA-Z0-9_-]/g, "-");
+      const filename = `Rechnung_${cleanNumber}.pdf`;
+      const s3Key = `invoices/${ctx.organizationId}/${cleanNumber}-${timestamp}.pdf`;
+      const { url } = await storagePut(s3Key, pdfBuffer, "application/pdf");
+
+      // In Invoice-Record speichern (für Caching)
+      await db.update(invoices).set({
+        pdfS3Key: s3Key,
+        pdfS3Url: url,
+      }).where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, invoice.id)));
+
+      // Als Document registrieren (fürs interne Archiv, GeBüV)
+      try {
+        await db.insert(documents).values({
+          organizationId: ctx.organizationId,
+          filename,
+          s3Key,
+          s3Url: url,
+          mimeType: "application/pdf",
+          fileSize: pdfBuffer.byteLength,
+          documentType: "invoice_out",
+          fiscalYear: invoice.fiscalYear ?? null,
+          uploadedBy: ctx.user.id,
+          matchStatus: "matched",
+          notes: `Auto-generiert aus Rechnung ${invoice.invoiceNumber ?? `#${invoice.id}`}`,
+        });
+      } catch (e) {
+        // Dokumenten-Eintrag ist nicht kritisch – PDF wurde erfolgreich erstellt.
+        console.warn("[invoices.generatePdf] document insert failed:", e);
+      }
+
+      return { url, s3Key, cached: false, filename };
+    }),
+
+  // ─── SEND EMAIL ───────────────────────────────────────────────────────────
+  // Sendet die Rechnung als Email mit PDF-Anhang via Resend. Generiert das
+  // PDF falls noch nicht vorhanden. Default-Empfänger ist customer.email,
+  // kann aber überschrieben werden. Nach erfolgreichem Versand wird der
+  // Status auf "sent" gesetzt (falls noch draft – aber Email nur sinnvoll
+  // für issued invoices).
+  sendEmail: orgProcedure
+    .input(z.object({
+      id: z.number(),
+      to: z.string().email().optional(),
+      cc: z.array(z.string().email()).optional(),
+      subject: z.string().optional(),
+      bodyText: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [invoice] = await db.select().from(invoices)
+        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)))
+        .limit(1);
+      if (!invoice) throw new TRPCError({ code: "NOT_FOUND", message: "Rechnung nicht gefunden" });
+      if (invoice.status === "draft") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Bitte Rechnung zuerst verbuchen, bevor sie per E-Mail versandt wird." });
+      }
+
+      // Empfänger ermitteln
+      const [customer] = await db.select().from(customers)
+        .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
+        .limit(1);
+      if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
+
+      const recipient = input.to ?? customer.email;
+      if (!recipient) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Keine E-Mail-Adresse: Bitte Empfänger angeben oder Kunden-E-Mail hinterlegen.",
+        });
+      }
+
+      // PDF generieren/cachen
+      const items = await db.select().from(invoiceItems)
+        .where(eq(invoiceItems.invoiceId, invoice.id))
+        .orderBy(asc(invoiceItems.position));
+      const [org] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
+      if (!org) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen" });
+      const [qr] = await db.select().from(qrSettings)
+        .where(eq(qrSettings.organizationId, ctx.organizationId)).limit(1);
+
+      const pdfBuffer = await renderInvoicePdf({
+        org, orgLegal: null,
+        invoice, items, customer, qr: qr ?? null,
+      });
+
+      const cleanNumber = (invoice.invoiceNumber ?? `draft-${invoice.id}`).replace(/[^a-zA-Z0-9_-]/g, "-");
+      const filename = `Rechnung_${cleanNumber}.pdf`;
+      const subject = input.subject
+        ?? `Rechnung ${invoice.invoiceNumber ?? ""} – ${invoice.subject ?? org.companyName}`;
+      const greeting = customer.salutation
+        ?? `Sehr geehrte Damen und Herren`;
+      const bodyText = input.bodyText
+        ?? `${greeting}
+
+im Anhang finden Sie unsere Rechnung ${invoice.invoiceNumber ?? ""}${invoice.subject ? " für \"" + invoice.subject + "\"" : ""}.
+
+Zahlbar bis ${new Date(invoice.dueDate).toLocaleDateString("de-CH")}.
+
+Bei Fragen stehen wir gerne zur Verfügung.
+
+Freundliche Grüsse
+${org.companyName}`;
+
+      // Simple HTML-Version (Plain-Text → <br>)
+      const html = `<div style="font-family: Helvetica, Arial, sans-serif; font-size: 14px; color: #222; line-height: 1.5;">${bodyText
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>")}</div>`;
+
+      const messageId = await sendEmail({
+        to: recipient,
+        cc: input.cc,
+        subject,
+        html,
+        text: bodyText,
+        replyTo: org.email ?? undefined,
+        attachments: [{
+          filename,
+          content: pdfBuffer.toString("base64"),
+          contentType: "application/pdf",
+        }],
+      });
+
+      // sentAt setzen, damit im UI sichtbar ist, dass Email raus ist
+      if (!invoice.sentAt) {
+        await db.update(invoices).set({ sentAt: new Date() })
+          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, invoice.id)));
+      }
+
+      return { success: true, messageId, to: recipient };
     }),
 });

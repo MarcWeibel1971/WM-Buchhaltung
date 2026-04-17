@@ -76,7 +76,7 @@ uploadRouter.post("/document", upload.single("file"), async (req, res) => {
   "counterpartyZipCode": "PLZ oder null",
   "counterpartyCity": "Ort oder null",
   "counterpartyCountry": "Land oder null (Standard: Schweiz)",
-  "counterpartyIban": "IBAN oder null",
+  "counterpartyIban": "IBAN des Empfängers/Zahlungsempfängers – WICHTIG: Bei QR-Rechnungen steht die IBAN im Zahlteil unter 'Konto / Zahlbar an' (z.B. CH36 0900 0000 4070 5388 7). Diese IBAN IMMER extrahieren! Niemals null wenn ein Zahlteil/Empfangsschein vorhanden ist.",
   "qrReference": "QR-Referenz (26-27 stellig numerisch) oder SCOR-Referenz (RF...) oder null – aus dem QR-Einzahlungsschein/Zahlteil",
   "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
   "referenceNumber": "Referenznummer: IMMER die QR-Referenz oder SCOR-Referenz (RF...) aus dem Zahlteil/Empfangsschein übernehmen falls vorhanden, sonst Rechnungsreferenz oder null",

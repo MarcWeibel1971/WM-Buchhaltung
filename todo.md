@@ -1037,3 +1037,7 @@
 ## Bug: Referenznummer aus QR-Einzahlungsschein wird nicht erkannt
 - [x] KI-Analyse soll Referenznummer (RF-Nummer, QR-Referenz, ESR-Referenz) aus Belegen extrahieren
 - [x] Referenznummer ins Feld "Referenznummer" übernehmen (+ Fallback: qrReference → referenceNumber)
+
+## Bug: IBAN aus QR-Einzahlungsschein wird nicht korrekt erkannt
+- [x] IBAN im Zahlungs-Tab zeigt "CH00 0000 0000 0000 0000 0" statt der korrekten IBAN aus dem Beleg
+- [x] LLM-Prompt verbessert: IBAN aus QR-Zahlteil 'Konto / Zahlbar an' wird jetzt explizit extrahiert

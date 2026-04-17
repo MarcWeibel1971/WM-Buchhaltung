@@ -967,3 +967,8 @@
 - [x] Frontend: Admin kann kundenspezifische Regel zu globaler Regel hochstufen (promoteToGlobal)
 - [x] Frontend: Übersicht mit Scope-Badge (Global/Org), Kategorie-Hint, Statistiken
 - [x] Tests: 12 Vitest-Tests für Zwei-Ebenen-Matching, Scope-Filterung, Account-Resolution, Admin-Sichtbarkeit
+
+## Bug: Inkonsistente Kontovorschläge zwischen Kontierung-Tab, Verbuchen-Tab und Bankimport
+- [x] Verbuchen-Tab: Soll/Haben-Konten aus Kontierung-Tab (bookingSuggestion) übernehmen, nicht aus Transaktion
+- [x] Verbuchen-Tab: Bankkonto aus linkedBankAccount verwenden
+- [x] Konsistenz: Kontierung-Tab und Verbuchen-Tab zeigen gleichen Kontovorschlag (bookingSuggestion hat Priorität)

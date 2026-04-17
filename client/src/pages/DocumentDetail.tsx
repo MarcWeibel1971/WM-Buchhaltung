@@ -148,27 +148,47 @@ export default function DocumentDetail() {
       setIsDirty(false);
       
       // Pre-fill booking fields from linked transaction
+      // IMPORTANT: Use the SAME account as shown in the Kontierung tab (bookingSuggestion)
+      // to ensure consistency across Kontierung-Tab, Verbuchen-Tab, and Bankimport
       if (data.linkedTransaction) {
         const tx = data.linkedTransaction;
-        setBookingDebitId(tx.suggestedDebitAccountId || null);
-        setBookingCreditId(tx.suggestedCreditAccountId || null);
-        setBookingText(tx.suggestedBookingText || tx.description || "");
-        // If we have a bookingSuggestion with an account, use it for the correct side
+        const amt = parseFloat(tx.amount);
+        const bankAccountId = data.linkedBankAccount?.accountId || null;
+        
+        // Determine the expense/income account: prefer bookingSuggestion (Kontierung-Tab),
+        // then fall back to editedMeta.suggestedAccount lookup, then tx suggested accounts
+        let expenseAccountId: number | null = null;
+        
+        // 1. bookingSuggestion from Kontierung-Tab (highest priority - same as what user sees)
         if (data.bookingSuggestion?.accountId) {
-          const amt = parseFloat(tx.amount);
-          if (amt < 0) {
-            // Expense: debit = expense account, credit = bank
-            setBookingDebitId(data.bookingSuggestion.accountId);
-            if (data.linkedBankAccount?.accountId) setBookingCreditId(data.linkedBankAccount.accountId);
-          } else {
-            // Income: debit = bank, credit = income account
-            if (data.linkedBankAccount?.accountId) setBookingDebitId(data.linkedBankAccount.accountId);
-            setBookingCreditId(data.bookingSuggestion.accountId);
+          expenseAccountId = data.bookingSuggestion.accountId;
+        }
+        
+        // 2. Fall back to transaction's suggested accounts (but NOT the bank account)
+        if (!expenseAccountId) {
+          const txDebit = tx.suggestedDebitAccountId;
+          const txCredit = tx.suggestedCreditAccountId;
+          // Pick the one that is NOT the bank account
+          if (txDebit && txDebit !== bankAccountId) {
+            expenseAccountId = txDebit;
+          } else if (txCredit && txCredit !== bankAccountId) {
+            expenseAccountId = txCredit;
           }
         }
-        if (data.bookingSuggestion?.bookingText) {
-          setBookingText(data.bookingSuggestion.bookingText);
+        
+        // Set Soll/Haben based on transaction direction
+        if (amt < 0) {
+          // Expense (Ausgabe): Soll = Aufwandkonto, Haben = Bankkonto
+          setBookingDebitId(expenseAccountId);
+          setBookingCreditId(bankAccountId);
+        } else {
+          // Income (Einnahme): Soll = Bankkonto, Haben = Ertragskonto
+          setBookingDebitId(bankAccountId);
+          setBookingCreditId(expenseAccountId);
         }
+        
+        // Booking text: prefer bookingSuggestion, then tx description
+        setBookingText(data.bookingSuggestion?.bookingText || tx.suggestedBookingText || tx.description || "");
       }
     }
   }, [data]);

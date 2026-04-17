@@ -972,3 +972,12 @@
 - [x] Verbuchen-Tab: Soll/Haben-Konten aus Kontierung-Tab (bookingSuggestion) übernehmen, nicht aus Transaktion
 - [x] Verbuchen-Tab: Bankkonto aus linkedBankAccount verwenden
 - [x] Konsistenz: Kontierung-Tab und Verbuchen-Tab zeigen gleichen Kontovorschlag (bookingSuggestion hat Priorität)
+
+## Verbesserung: Saldosteuersatz-Auswahl im Onboarding
+- [x] Onboarding: Bei MWST-Methode "Saldosteuersatz" ein Dropdown mit offiziellen ESTV-Saldosteuersätzen anzeigen
+- [x] ESTV-Saldosteuersätze als Konstante hinterlegen (0.1% bis 6.8%)
+- [x] Saldosteuersatz in Organization-Schema speichern (vatSaldoRate)
+
+## Bug: GJ-Wähler zeigt aktuelles Jahr statt erstes Geschäftsjahr
+- [x] FiscalYearContext: Default-GJ auf das älteste offene Geschäftsjahr setzen (aus DB geladen, nicht hardcoded)
+- [x] Wenn GJ 2025 im Onboarding gewählt wird, soll Dashboard automatisch GJ 2025 anzeigen

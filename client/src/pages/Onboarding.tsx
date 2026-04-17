@@ -30,6 +30,7 @@ export default function Onboarding() {
     uid: "",
     vatNumber: "",
     vatMethod: "effective" as "effective" | "saldo" | "pauschal",
+    vatSaldoRate: "",
     vatPeriod: "quarterly" as "quarterly" | "semi-annual",
     email: "",
     phone: "",
@@ -134,6 +135,7 @@ export default function Onboarding() {
       uid: form.uid || undefined,
       vatNumber: form.vatNumber || undefined,
       vatMethod: form.vatMethod,
+      vatSaldoRate: form.vatMethod === "saldo" && form.vatSaldoRate ? form.vatSaldoRate : undefined,
       vatPeriod: form.vatPeriod,
       fiscalYearStartMonth: 1,
       email: form.email || undefined,
@@ -356,6 +358,34 @@ export default function Onboarding() {
                     </Select>
                   </div>
                 </div>
+                {form.vatMethod === "saldo" && (
+                  <div>
+                    <Label htmlFor="vatSaldoRate">Saldosteuersatz (ESTV)</Label>
+                    <Select
+                      value={form.vatSaldoRate}
+                      onValueChange={(v) => setForm({ ...form, vatSaldoRate: v })}
+                    >
+                      <SelectTrigger id="vatSaldoRate">
+                        <SelectValue placeholder="Satz wählen" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="0.1">0.1%</SelectItem>
+                        <SelectItem value="0.6">0.6%</SelectItem>
+                        <SelectItem value="1.3">1.3%</SelectItem>
+                        <SelectItem value="2.1">2.1%</SelectItem>
+                        <SelectItem value="3.0">3.0%</SelectItem>
+                        <SelectItem value="3.7">3.7%</SelectItem>
+                        <SelectItem value="4.5">4.5%</SelectItem>
+                        <SelectItem value="5.3">5.3%</SelectItem>
+                        <SelectItem value="6.2">6.2%</SelectItem>
+                        <SelectItem value="6.8">6.8%</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Gemäss ESTV-Verordnung über die Saldosteuersätze nach Branchen (ab 1.1.2024)
+                    </p>
+                  </div>
+                )}
                 <div>
                   <Label htmlFor="vatPeriod">Abrechnungsperiode</Label>
                   <Select

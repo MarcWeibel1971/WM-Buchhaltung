@@ -1029,3 +1029,7 @@
 ### Routing
 - [x] Alle neuen Routes registrieren in App.tsx
 - [x] Alte Routes als Redirects beibehalten für Kompatibilität
+
+## Verbesserung: Rückgängig-Button im Kontenplan
+- [x] Rückgängig-Button im Kontenplan hinzufügen (letzte Änderung rückgängig machen)
+- [x] Undo-Stack für Kontenplan-Aktionen (Aktivieren/Deaktivieren, MWST-Toggle, Umbenennung, Erstellen, Löschen)

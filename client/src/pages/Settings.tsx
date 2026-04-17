@@ -24,7 +24,7 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
-  CreditCard, ExternalLink, CheckCircle, Crown,
+  CreditCard, ExternalLink, CheckCircle, Crown, Undo2,
 } from "lucide-react";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -35,7 +35,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { useMemo, useState as useReactState } from "react";
+import { useMemo, useState as useReactState, useCallback } from "react";
 import { toast } from "sonner";
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
@@ -1968,9 +1968,24 @@ function buildTree(accounts: AccountRow[]): TreeCategory[] {
   return tree;
 }
 
+// Undo action types for Kontenplan
+type UndoAction =
+  | { type: "toggleActive"; id: number; previousActive: boolean; accountLabel: string }
+  | { type: "updateVat"; id: number; previousVatRelevant: boolean; previousVatRate: string | null; accountLabel: string }
+  | { type: "updateAccount"; id: number; previousName: string; previousNumber: string; accountLabel: string }
+  | { type: "deleteAccount"; accountData: { number: string; name: string; accountType: string; normalBalance: string; category?: string; subCategory?: string; isBankAccount?: boolean; isVatRelevant?: boolean; defaultVatRate?: string | null }; accountLabel: string }
+  | { type: "createAccount"; id: number; accountLabel: string };
+
 function ChartOfAccountsTab() {
   const { data: allAccounts, isLoading, refetch } = trpc.settings.getAllAccounts.useQuery();
   const utils = trpc.useUtils();
+
+  // Undo stack
+  const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+  const pushUndo = useCallback((action: UndoAction) => {
+    setUndoStack(prev => [...prev.slice(-19), action]); // keep last 20
+  }, []);
+
   const updateMut = trpc.settings.updateAccount.useMutation({
     onSuccess: (data) => {
       refetch();
@@ -1992,6 +2007,10 @@ function ChartOfAccountsTab() {
       if (data.bankAccountCreated) {
         toast.success("Bankkonto automatisch in Bankkonten erstellt");
         utils.settings.getBankAccounts.invalidate();
+      }
+      // Push undo for create
+      if (data.id) {
+        pushUndo({ type: "createAccount", id: data.id, accountLabel: `${addNumber} ${addName}` });
       }
       refetch(); setShowAdd(false); resetAddForm();
     },
@@ -2059,6 +2078,67 @@ function ChartOfAccountsTab() {
     setAddCategory(""); setAddSubCategory(""); setAddIsBankAccount(false);
   };
 
+  // Undo handler
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const action = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+
+    switch (action.type) {
+      case "toggleActive":
+        toggleActiveMut.mutate({ id: action.id, isActive: action.previousActive });
+        toast.info(`Rückgängig: ${action.accountLabel} ${action.previousActive ? "aktiviert" : "deaktiviert"}`);
+        break;
+      case "updateVat":
+        updateVatMut.mutate({
+          id: action.id,
+          isVatRelevant: action.previousVatRelevant,
+          defaultVatRate: action.previousVatRate,
+        });
+        toast.info(`Rückgängig: MWST für ${action.accountLabel} zurückgesetzt`);
+        break;
+      case "updateAccount":
+        updateMut.mutate({
+          id: action.id,
+          name: action.previousName,
+          number: action.previousNumber,
+        });
+        toast.info(`Rückgängig: ${action.accountLabel} zurückgesetzt`);
+        break;
+      case "createAccount":
+        deleteMut.mutate({ id: action.id });
+        toast.info(`Rückgängig: Konto ${action.accountLabel} gelöscht`);
+        break;
+      case "deleteAccount":
+        createMut.mutate({
+          number: action.accountData.number,
+          name: action.accountData.name,
+          accountType: action.accountData.accountType as any,
+          normalBalance: action.accountData.normalBalance as any,
+          category: action.accountData.category,
+          subCategory: action.accountData.subCategory,
+          isBankAccount: action.accountData.isBankAccount ?? false,
+        });
+        toast.info(`Rückgängig: Konto ${action.accountLabel} wiederhergestellt`);
+        break;
+    }
+  }, [undoStack, toggleActiveMut, updateVatMut, updateMut, deleteMut, createMut]);
+
+  // Keyboard shortcut Ctrl+Z
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        // Only if not editing an input
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleUndo]);
+
   const tree = useMemo(() => {
     if (!allAccounts) return [];
     let filtered = allAccounts as AccountRow[];
@@ -2110,6 +2190,13 @@ function ChartOfAccountsTab() {
   };
 
   const saveEdit = (acc: AccountRow) => {
+    pushUndo({
+      type: "updateAccount",
+      id: acc.id,
+      previousName: acc.name,
+      previousNumber: acc.number,
+      accountLabel: `${acc.number} ${acc.name}`,
+    });
     updateMut.mutate({
       id: acc.id,
       name: editName !== acc.name ? editName : undefined,
@@ -2152,6 +2239,11 @@ function ChartOfAccountsTab() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {undoStack.length > 0 && (
+            <Button variant="outline" size="sm" onClick={handleUndo} className="text-orange-600 border-orange-300 hover:bg-orange-50">
+              <Undo2 className="h-4 w-4 mr-1" /> Rückgängig
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={expandAll}>Alle öffnen</Button>
           <Button variant="outline" size="sm" onClick={collapseAll}>Alle schliessen</Button>
           <Button variant={dragEnabled ? "default" : "outline"} size="sm" onClick={() => setDragEnabled(!dragEnabled)}>
@@ -2370,6 +2462,13 @@ function ChartOfAccountsTab() {
                               <Switch
                                 checked={!!acc.isVatRelevant}
                                 onCheckedChange={(checked) => {
+                                  pushUndo({
+                                    type: "updateVat",
+                                    id: acc.id,
+                                    previousVatRelevant: !!acc.isVatRelevant,
+                                    previousVatRate: acc.defaultVatRate,
+                                    accountLabel: `${acc.number} ${acc.name}`,
+                                  });
                                   updateVatMut.mutate({
                                     id: acc.id,
                                     isVatRelevant: checked,
@@ -2385,6 +2484,13 @@ function ChartOfAccountsTab() {
                               <Select
                                 value={acc.defaultVatRate || "8.10"}
                                 onValueChange={(val) => {
+                                  pushUndo({
+                                    type: "updateVat",
+                                    id: acc.id,
+                                    previousVatRelevant: true,
+                                    previousVatRate: acc.defaultVatRate,
+                                    accountLabel: `${acc.number} ${acc.name}`,
+                                  });
                                   updateVatMut.mutate({
                                     id: acc.id,
                                     isVatRelevant: true,
@@ -2408,7 +2514,15 @@ function ChartOfAccountsTab() {
                             {/* Active toggle */}
                             <button
                               className="shrink-0"
-                              onClick={() => toggleActiveMut.mutate({ id: acc.id, isActive: !acc.isActive })}
+                              onClick={() => {
+                                pushUndo({
+                                  type: "toggleActive",
+                                  id: acc.id,
+                                  previousActive: acc.isActive,
+                                  accountLabel: `${acc.number} ${acc.name}`,
+                                });
+                                toggleActiveMut.mutate({ id: acc.id, isActive: !acc.isActive });
+                              }}
                               title={acc.isActive ? "Deaktivieren" : "Aktivieren"}
                             >
                               {acc.isActive ? (
@@ -2436,8 +2550,24 @@ function ChartOfAccountsTab() {
                                 <Button
                                   size="sm" variant="ghost"
                                   onClick={() => {
-                                    if (confirm(`Konto ${acc.number} ${acc.name} wirklich löschen?`))
+                                    if (confirm(`Konto ${acc.number} ${acc.name} wirklich löschen?`)) {
+                                      pushUndo({
+                                        type: "deleteAccount",
+                                        accountData: {
+                                          number: acc.number,
+                                          name: acc.name,
+                                          accountType: acc.accountType,
+                                          normalBalance: acc.normalBalance,
+                                          category: acc.category || undefined,
+                                          subCategory: acc.subCategory || undefined,
+                                          isBankAccount: acc.isBankAccount ?? false,
+                                          isVatRelevant: acc.isVatRelevant ?? false,
+                                          defaultVatRate: acc.defaultVatRate,
+                                        },
+                                        accountLabel: `${acc.number} ${acc.name}`,
+                                      });
                                       deleteMut.mutate({ id: acc.id });
+                                    }
                                   }}
                                 >
                                   <Trash2 className="h-3.5 w-3.5 text-red-500" />

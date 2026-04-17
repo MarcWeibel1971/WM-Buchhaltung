@@ -1041,3 +1041,16 @@
 ## Bug: IBAN aus QR-Einzahlungsschein wird nicht korrekt erkannt
 - [x] IBAN im Zahlungs-Tab zeigt "CH00 0000 0000 0000 0000 0" statt der korrekten IBAN aus dem Beleg
 - [x] LLM-Prompt verbessert: IBAN aus QR-Zahlteil 'Konto / Zahlbar an' wird jetzt explizit extrahiert
+
+## Bug: Sidebar-Sub-Items nicht aktiviert (Belege, Bank, Freigaben)
+- [x] Sub-Items in Belege-Section klickbar machen mit Filter-Funktionalität (Neu hochgeladen, Von KI verarbeitet, Zu prüfen, Gematcht, Archiv)
+- [x] Sub-Items in Bank-Section klickbar machen (Importe, Ungematchte, Gematchte, Konten & Karten)
+- [x] Sub-Items in Freigaben-Section klickbar machen (Mit Warnungen, Manuell angepasst, Verbucht)
+
+## Feature: Verbuchung ohne Banktransaktion (Barauslagen)
+- [x] Verbuchen-Tab im Belegdetail auch ohne verknüpfte Banktransaktion ermöglichen
+- [x] Barauslagen direkt aus dem Beleg verbuchen können (Soll/Haben manuell wählen)
+- [x] Konto "Kasse" (1000) als Default-Gegenkonto für Barauslagen
+
+## Bug: Bankkonto-Dropdown im Bankimport
+- [x] Bankkonto-Dropdown funktioniert korrekt – zeigt Bankkonten aus Einstellungen (Daten-Problem wenn leer, kein Code-Bug)

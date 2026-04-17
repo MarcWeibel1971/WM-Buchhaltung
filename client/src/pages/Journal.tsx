@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
 import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet } from "lucide-react";
@@ -38,7 +38,27 @@ function SourceBadge({ source }: { source: string }) {
 }
 
 export default function Journal() {
-  const [status, setStatus] = useState<string>("all");
+  // Read filter from URL query params (sidebar sub-items use ?filter=...)
+  const urlFilter = new URLSearchParams(window.location.search).get("filter");
+  const getInitialStatus = () => {
+    if (urlFilter === "warnings") return "pending";
+    if (urlFilter === "manual") return "pending";
+    if (urlFilter === "booked") return "approved";
+    // Default for Freigaben page: show pending
+    if (window.location.pathname === "/freigaben") return "pending";
+    return "all";
+  };
+  const [status, setStatus] = useState<string>(getInitialStatus);
+  
+  // Update status filter when URL changes
+  useEffect(() => {
+    const newFilter = new URLSearchParams(window.location.search).get("filter");
+    if (window.location.pathname === "/freigaben") {
+      if (newFilter === "booked") setStatus("approved");
+      else if (newFilter === "warnings" || newFilter === "manual") setStatus("pending");
+      else setStatus("pending");
+    }
+  }, [urlFilter]);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);

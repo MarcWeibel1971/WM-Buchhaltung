@@ -37,9 +37,28 @@ type EditableTx = {
 };
 
 export default function BankImport() {
+  // Read tab from URL query params (sidebar sub-items use ?tab=...)
+  const urlTab = new URLSearchParams(window.location.search).get("tab");
+  const getInitialStatusFilter = (): "pending" | "matched" | "all" => {
+    if (urlTab === "unmatched") return "pending";
+    if (urlTab === "matched") return "matched";
+    return "pending";
+  };
+  
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [pendingFilter, setPendingFilter] = useState<number | undefined>(undefined);
-  const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">("pending");
+  const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">(getInitialStatusFilter);
+  const [showImportSection, setShowImportSection] = useState(urlTab === "import");
+  const [showAccountsSection, setShowAccountsSection] = useState(urlTab === "accounts");
+  
+  // Update filters when URL changes (sidebar navigation)
+  useEffect(() => {
+    const newTab = new URLSearchParams(window.location.search).get("tab");
+    if (newTab === "unmatched") setStatusFilter("pending");
+    else if (newTab === "matched") setStatusFilter("matched");
+    else if (newTab === "import") setShowImportSection(true);
+    else if (newTab === "accounts") setShowAccountsSection(true);
+  }, [urlTab]);
   // showCreditorExport removed – now at /zahlungen/kreditoren
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);

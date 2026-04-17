@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { DocumentUpload, type UploadedDocument } from "@/components/DocumentUpload";
 import { Badge } from "@/components/ui/badge";
@@ -48,10 +48,31 @@ function formatCHF(n: number) {
 export default function Documents() {
   const { fiscalYear, fiscalYears } = useFiscalYear();
   const [, navigate] = useLocation();
+  
+  // Read filter from URL query params (sidebar sub-items use ?filter=...)
+  const urlFilter = new URLSearchParams(window.location.search).get("filter");
+  
+  // Map sidebar filter values to internal filter states
+  const getInitialMatchFilter = () => {
+    if (urlFilter === "matched") return "matched";
+    if (urlFilter === "new" || urlFilter === "review") return "unmatched";
+    return "all";
+  };
+  
   const [filterType, setFilterType] = useState<string>("all");
-  const [filterMatch, setFilterMatch] = useState<string>("all");
+  const [filterMatch, setFilterMatch] = useState<string>(getInitialMatchFilter);
   const [search, setSearch] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [sidebarFilter, setSidebarFilter] = useState<string | null>(urlFilter);
+  
+  // Update filters when URL changes (sidebar navigation)
+  useEffect(() => {
+    const newFilter = new URLSearchParams(window.location.search).get("filter");
+    setSidebarFilter(newFilter);
+    if (newFilter === "matched") setFilterMatch("matched");
+    else if (newFilter === "new" || newFilter === "review") setFilterMatch("unmatched");
+    else if (!newFilter) { setFilterMatch("all"); setFilterType("all"); }
+  }, [urlFilter]);
 
   // Manual match dialog state
   const [matchDialogOpen, setMatchDialogOpen] = useState(false);
@@ -147,8 +168,20 @@ export default function Documents() {
   };
 
   const filtered = (docs ?? []).filter(doc => {
-    // Match status filter
-    if (filterMatch !== "all") {
+    // Sidebar filter from URL params
+    if (sidebarFilter) {
+      const ms = (doc as any).matchStatus ?? "unmatched";
+      const hasAi = !!(doc as any).aiMetadata;
+      switch (sidebarFilter) {
+        case "new": if (hasAi || ms === "matched" || ms === "manual") return false; break;
+        case "ai-processed": if (!hasAi || ms === "matched" || ms === "manual") return false; break;
+        case "review": if (ms !== "unmatched" || !hasAi) return false; break;
+        case "matched": if (ms !== "matched" && ms !== "manual") return false; break;
+        case "archived": if (doc.documentType !== "other") return false; break;
+      }
+    }
+    // Match status filter (from dropdown)
+    if (!sidebarFilter && filterMatch !== "all") {
       const ms = (doc as any).matchStatus ?? "unmatched";
       if (ms !== filterMatch) return false;
     }

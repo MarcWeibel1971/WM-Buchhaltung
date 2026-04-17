@@ -3911,6 +3911,61 @@ Antworte NUR mit dem JSON-Objekt.`,
 
       return { success: true };
     }),
+
+  // Direct booking from document (without bank transaction, e.g. Barauslagen)
+  bookDirect: orgProcedure
+    .input(z.object({
+      documentId: z.number(),
+      debitAccountId: z.number(),
+      creditAccountId: z.number(),
+      amount: z.string(),
+      description: z.string().optional(),
+      bookingDate: z.string(),
+      vatAmount: z.string().optional(),
+      vatRate: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      
+      // Verify document exists
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      
+      const year = new Date(input.bookingDate).getFullYear();
+      const lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string; vatAmount?: string; vatRate?: string }> = [
+        { accountId: input.debitAccountId, side: "debit", amount: input.amount },
+        { accountId: input.creditAccountId, side: "credit", amount: input.amount },
+      ];
+      // Add VAT info to the expense line if provided
+      if (input.vatAmount && input.vatRate) {
+        lines[0].vatAmount = input.vatAmount;
+        lines[0].vatRate = input.vatRate;
+      }
+      
+      const entryId = await createJournalEntry({
+        organizationId: ctx.organizationId,
+        bookingDate: input.bookingDate,
+        description: input.description || `Beleg: ${doc.filename}`,
+        source: "manual",
+        fiscalYear: year,
+        status: "pending",
+        lines,
+      });
+      
+      // Link document to journal entry
+      await db.update(docs)
+        .set({
+          journalEntryId: entryId,
+          matchStatus: 'manual',
+        })
+        .where(eqOp(docs.id, input.documentId));
+      
+      return { entryId };
+    }),
 });
 
 // ─── App Router ───────────────────────────────────────────────────────────────

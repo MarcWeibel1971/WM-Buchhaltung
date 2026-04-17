@@ -120,6 +120,19 @@ export default function DocumentDetail() {
     },
   });
 
+  // Direct booking mutation (for documents without bank transaction, e.g. Barauslagen)
+  const bookDirectMutation = trpc.documents.bookDirect.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Beleg direkt verbucht (Journal #${result.entryId})`);
+      setIsBooking(false);
+      refetch();
+    },
+    onError: (err: any) => {
+      toast.error("Verbuchung fehlgeschlagen: " + err.message);
+      setIsBooking(false);
+    },
+  });
+
   const reanalyzeMutation = trpc.documents.reanalyze.useMutation({
     onSuccess: (result) => {
       toast.success("Beleg wurde neu analysiert");
@@ -150,6 +163,22 @@ export default function DocumentDetail() {
       setEditedNotes(data.document.notes || "");
       setEditedDocType(data.document.documentType || "other");
       setIsDirty(false);
+      
+      // Pre-fill booking fields from bookingSuggestion (for both linked tx and direct booking)
+      if (data.bookingSuggestion?.accountId) {
+        // For Eingangsrechnungen/Quittungen: Soll = Aufwandkonto, Haben = Kasse/Bank
+        const expenseAccountId = data.bookingSuggestion.accountId;
+        // Try to find Kasse (1000) as default for direct booking
+        const kasseAccount = accountsQuery.data?.find((a: any) => a.number === '1000' && a.isActive);
+        const kasseId = kasseAccount?.id || null;
+        
+        if (!data.linkedTransaction) {
+          // Direct booking (no bank tx): default Soll=Aufwand, Haben=Kasse
+          setBookingDebitId(expenseAccountId);
+          setBookingCreditId(kasseId);
+          setBookingText(data.bookingSuggestion.bookingText || meta.description || '');
+        }
+      }
       
       // Pre-fill booking fields from linked transaction
       // IMPORTANT: Use the SAME account as shown in the Kontierung tab (bookingSuggestion)
@@ -275,19 +304,39 @@ export default function DocumentDetail() {
   const hasLinkedTx = !!linkedTransaction;
   const txIsBooked = linkedTransaction?.status === "approved" || linkedTransaction?.status === "booked";
   const txAmount = linkedTransaction ? Math.abs(parseFloat(linkedTransaction.amount)) : 0;
+  const docAmount = editedMeta.totalAmount || editedMeta.netAmount || 0;
+  const isDirectBooked = !!doc.journalEntryId && !hasLinkedTx;
 
   const handleBookTransaction = () => {
-    if (!linkedTransaction || !bookingDebitId || !bookingCreditId) {
+    if (!bookingDebitId || !bookingCreditId) {
       toast.error("Bitte Soll- und Haben-Konto auswählen");
       return;
     }
     setIsBooking(true);
-    approveMutation.mutate({
-      transactionId: linkedTransaction.id,
-      debitAccountId: bookingDebitId,
-      creditAccountId: bookingCreditId,
-      description: bookingText || undefined,
-    });
+    
+    if (linkedTransaction) {
+      // Book via bank transaction approval
+      approveMutation.mutate({
+        transactionId: linkedTransaction.id,
+        debitAccountId: bookingDebitId,
+        creditAccountId: bookingCreditId,
+        description: bookingText || undefined,
+      });
+    } else {
+      // Direct booking without bank transaction (Barauslage)
+      const amount = docAmount > 0 ? String(docAmount) : "0";
+      const bookingDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
+      bookDirectMutation.mutate({
+        documentId: doc.id,
+        debitAccountId: bookingDebitId,
+        creditAccountId: bookingCreditId,
+        amount,
+        description: bookingText || undefined,
+        bookingDate,
+        vatAmount: editedMeta.vatAmount ? String(editedMeta.vatAmount) : undefined,
+        vatRate: editedMeta.vatRate ? String(editedMeta.vatRate) : undefined,
+      });
+    }
   };
 
   return (
@@ -413,15 +462,13 @@ export default function DocumentDetail() {
                 <Banknote className="w-3.5 h-3.5" />
                 Zahlung
               </TabsTrigger>
-              {hasLinkedTx && (
-                <TabsTrigger value="verbuchen" className="gap-1.5 text-xs">
-                  <CheckSquare className="w-3.5 h-3.5" />
-                  Verbuchen
-                  {txIsBooked && (
-                    <span className="ml-1 w-2 h-2 rounded-full bg-green-500 inline-block" />
-                  )}
-                </TabsTrigger>
-              )}
+              <TabsTrigger value="verbuchen" className="gap-1.5 text-xs">
+                <CheckSquare className="w-3.5 h-3.5" />
+                Verbuchen
+                {(txIsBooked || isDirectBooked) && (
+                  <span className="ml-1 w-2 h-2 rounded-full bg-green-500 inline-block" />
+                )}
+              </TabsTrigger>
             </TabsList>
 
             {/* ─── Tab: Kontakt ─────────────────────────────────────── */}
@@ -897,9 +944,9 @@ export default function DocumentDetail() {
             </TabsContent>
 
             {/* ─── Tab: Verbuchen ──────────────────────────────────── */}
-            {hasLinkedTx && (
-              <TabsContent value="verbuchen" className="flex-1 overflow-auto p-4 space-y-4 mt-0">
-                {/* Transaction Info */}
+            <TabsContent value="verbuchen" className="flex-1 overflow-auto p-4 space-y-4 mt-0">
+              {/* Show linked transaction info if exists */}
+              {hasLinkedTx && (
                 <div className="bg-card border border-border rounded-xl p-4 space-y-3">
                   <h3 className="font-semibold text-sm flex items-center gap-2">
                     <CircleDot className="w-4 h-4 text-muted-foreground" />
@@ -918,7 +965,7 @@ export default function DocumentDetail() {
                     </div>
                     <div className="col-span-2">
                       <span className="text-xs text-muted-foreground">Buchungstext</span>
-                      <p className="font-medium">{linkedTransaction!.description || '–'}</p>
+                      <p className="font-medium">{linkedTransaction!.description || '\u2013'}</p>
                     </div>
                     {linkedTransaction!.counterparty && (
                       <div className="col-span-2">
@@ -958,116 +1005,131 @@ export default function DocumentDetail() {
                     </div>
                   </div>
                 </div>
+              )}
 
-                {/* Booking Form - only if not yet booked */}
-                {!txIsBooked ? (
-                  <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-                    <h3 className="font-semibold text-sm flex items-center gap-2">
-                      <CheckSquare className="w-4 h-4 text-muted-foreground" />
-                      Buchung erstellen
-                    </h3>
-
-                    <div className="grid grid-cols-1 gap-3">
-                      <div>
-                        <Label className="text-xs text-muted-foreground">Buchungstext</Label>
-                        <Input
-                          value={bookingText}
-                          onChange={(e) => setBookingText(e.target.value)}
-                          placeholder="Buchungstext"
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Soll-Konto</Label>
-                          <Select
-                            value={bookingDebitId ? String(bookingDebitId) : "none"}
-                            onValueChange={(val) => setBookingDebitId(val === "none" ? null : Number(val))}
-                          >
-                            <SelectTrigger className="mt-1">
-                              <SelectValue placeholder="Soll-Konto wählen..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-60">
-                              <SelectItem value="none">Kein Konto</SelectItem>
-                              {accountOptions.map((a: any) => (
-                                <SelectItem key={a.id} value={String(a.id)}>
-                                  {a.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Haben-Konto</Label>
-                          <Select
-                            value={bookingCreditId ? String(bookingCreditId) : "none"}
-                            onValueChange={(val) => setBookingCreditId(val === "none" ? null : Number(val))}
-                          >
-                            <SelectTrigger className="mt-1">
-                              <SelectValue placeholder="Haben-Konto wählen..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-60">
-                              <SelectItem value="none">Kein Konto</SelectItem>
-                              {accountOptions.map((a: any) => (
-                                <SelectItem key={a.id} value={String(a.id)}>
-                                  {a.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="bg-muted/50 rounded-lg p-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-muted-foreground">Betrag</span>
-                          <span className="text-lg font-bold">CHF {formatCHF(txAmount)}</span>
-                        </div>
-                      </div>
-
-                      <Button
-                        onClick={handleBookTransaction}
-                        disabled={isBooking || !bookingDebitId || !bookingCreditId}
-                        className="w-full gap-2"
-                        size="lg"
-                      >
-                        {isBooking ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <CheckSquare className="w-4 h-4" />
-                        )}
-                        Transaktion verbuchen
-                      </Button>
+              {/* Direct booking info (no bank transaction) */}
+              {!hasLinkedTx && !isDirectBooked && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                    <div>
+                      <p className="font-semibold text-amber-800 text-sm">Direktverbuchung (ohne Banktransaktion)</p>
+                      <p className="text-xs text-amber-600 mt-0.5">
+                        Dieser Beleg ist nicht mit einer Banktransaktion verknüpft. Sie können ihn direkt verbuchen (z.B. Barauslage, Kassabeleg).
+                      </p>
                     </div>
                   </div>
-                ) : (
-                  <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                    <div className="flex items-center gap-3">
-                      <CheckCircle2 className="w-8 h-8 text-green-600" />
+                </div>
+              )}
+
+              {/* Booking Form - show if not yet booked (either via tx or direct) */}
+              {!txIsBooked && !isDirectBooked ? (
+                <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <CheckSquare className="w-4 h-4 text-muted-foreground" />
+                    Buchung erstellen
+                  </h3>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Buchungstext</Label>
+                      <Input
+                        value={bookingText}
+                        onChange={(e) => setBookingText(e.target.value)}
+                        placeholder="Buchungstext"
+                        className="mt-1"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <p className="font-semibold text-green-800">Erfolgreich verbucht</p>
-                        <p className="text-sm text-green-600">
-                          Journal-Eintrag #{linkedTransaction!.journalEntryId}
-                        </p>
-                        <p className="text-sm text-green-600 mt-0.5">
-                          Betrag: CHF {formatCHF(txAmount)}
-                        </p>
+                        <Label className="text-xs text-muted-foreground">Soll-Konto</Label>
+                        <Select
+                          value={bookingDebitId ? String(bookingDebitId) : "none"}
+                          onValueChange={(val) => setBookingDebitId(val === "none" ? null : Number(val))}
+                        >
+                          <SelectTrigger className="mt-1">
+                            <SelectValue placeholder="Soll-Konto wählen..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60">
+                            <SelectItem value="none">Kein Konto</SelectItem>
+                            {accountOptions.map((a: any) => (
+                              <SelectItem key={a.id} value={String(a.id)}>
+                                {a.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Haben-Konto</Label>
+                        <Select
+                          value={bookingCreditId ? String(bookingCreditId) : "none"}
+                          onValueChange={(val) => setBookingCreditId(val === "none" ? null : Number(val))}
+                        >
+                          <SelectTrigger className="mt-1">
+                            <SelectValue placeholder="Haben-Konto wählen..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60">
+                            <SelectItem value="none">Kein Konto</SelectItem>
+                            {accountOptions.map((a: any) => (
+                              <SelectItem key={a.id} value={String(a.id)}>
+                                {a.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
+
+                    <div className="bg-muted/50 rounded-lg p-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Betrag</span>
+                        <span className="text-lg font-bold">CHF {formatCHF(hasLinkedTx ? txAmount : docAmount)}</span>
+                      </div>
+                    </div>
+
                     <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3 gap-1.5"
-                      onClick={() => navigate("/journal")}
+                      onClick={handleBookTransaction}
+                      disabled={isBooking || !bookingDebitId || !bookingCreditId}
+                      className="w-full gap-2"
+                      size="lg"
                     >
-                      <ArrowRight className="w-4 h-4" />
-                      Im Journal anzeigen
+                      {isBooking ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <CheckSquare className="w-4 h-4" />
+                      )}
+                      {hasLinkedTx ? 'Transaktion verbuchen' : 'Beleg direkt verbuchen'}
                     </Button>
                   </div>
-                )}
-              </TabsContent>
-            )}
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="w-8 h-8 text-green-600" />
+                    <div>
+                      <p className="font-semibold text-green-800">Erfolgreich verbucht</p>
+                      <p className="text-sm text-green-600">
+                        Journal-Eintrag #{hasLinkedTx ? linkedTransaction!.journalEntryId : doc.journalEntryId}
+                      </p>
+                      <p className="text-sm text-green-600 mt-0.5">
+                        Betrag: CHF {formatCHF(hasLinkedTx ? txAmount : docAmount)}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-1.5"
+                    onClick={() => navigate("/journal")}
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                    Im Journal anzeigen
+                  </Button>
+                </div>
+              )}
+            </TabsContent>
           </Tabs>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -514,6 +515,14 @@ export default function BankImport() {
             <Select value={String(selectedBankAccountId ?? "")} onValueChange={v => setSelectedBankAccountId(parseInt(v))}>
               <SelectTrigger><SelectValue placeholder="Konto auswählen..." /></SelectTrigger>
               <SelectContent>
+                {bankAccounts?.length === 0 && (
+                  <div className="px-3 py-4 text-sm text-center">
+                    <p className="text-muted-foreground mb-2">Noch keine Bankkonten erfasst.</p>
+                    <Link href="/einstellungen/bankkonten" className="text-blue-600 underline font-medium">
+                      → Einstellungen → Bankkonten
+                    </Link>
+                  </div>
+                )}
                 {bankAccounts?.map(ba => (
                   <SelectItem key={ba.bankAccount.id} value={String(ba.bankAccount.id)}>
                     {ba.bankAccount.name} ({ba.account.number}){ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
@@ -521,6 +530,13 @@ export default function BankImport() {
                 ))}
               </SelectContent>
             </Select>
+            {bankAccounts?.length === 0 && (
+              <p className="text-xs text-amber-600 mt-1.5">
+                Bitte zuerst ein Bankkonto unter{" "}
+                <Link href="/einstellungen/bankkonten" className="underline font-medium">Einstellungen → Bankkonten</Link>{" "}
+                erfassen.
+              </p>
+            )}
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Datei</label>

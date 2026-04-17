@@ -1054,3 +1054,6 @@
 
 ## Bug: Bankkonto-Dropdown im Bankimport
 - [x] Bankkonto-Dropdown funktioniert korrekt – zeigt Bankkonten aus Einstellungen (Daten-Problem wenn leer, kein Code-Bug)
+
+## UX: Bankimport - Hinweis wenn keine Bankkonten erfasst
+- [x] Wenn bankAccounts leer ist: Hinweis + Link zu Einstellungen → Bankkonten anzeigen

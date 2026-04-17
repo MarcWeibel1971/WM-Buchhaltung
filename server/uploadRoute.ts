@@ -77,9 +77,9 @@ uploadRouter.post("/document", upload.single("file"), async (req, res) => {
   "counterpartyCity": "Ort oder null",
   "counterpartyCountry": "Land oder null (Standard: Schweiz)",
   "counterpartyIban": "IBAN oder null",
-  "qrReference": "QR-Referenz (26-27 stellig numerisch) oder SCOR-Referenz (RF...) oder null",
+  "qrReference": "QR-Referenz (26-27 stellig numerisch) oder SCOR-Referenz (RF...) oder null – aus dem QR-Einzahlungsschein/Zahlteil",
   "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
-  "referenceNumber": "Referenznummer oder null",
+  "referenceNumber": "Referenznummer: IMMER die QR-Referenz oder SCOR-Referenz (RF...) aus dem Zahlteil/Empfangsschein übernehmen falls vorhanden, sonst Rechnungsreferenz oder null",
   "description": "Kurzbeschreibung des Belegs (max 100 Zeichen)",
   "documentType": Einer der folgenden Werte (WICHTIG – wähle den passendsten!):
     - "invoice_in" = Eingangsrechnung (Rechnung von einem Lieferanten AN uns, z.B. Hostpoint, Gewerbe-Treuhand, Mobility, AXA Versicherung, Velokurier etc.)

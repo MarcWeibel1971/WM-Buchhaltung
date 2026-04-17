@@ -142,6 +142,10 @@ export default function DocumentDetail() {
       if (data.bookingSuggestion?.vatRate != null && meta.vatRate == null) {
         meta.vatRate = data.bookingSuggestion.vatRate;
       }
+      // Fallback: If referenceNumber is empty but qrReference exists, use qrReference
+      if (!meta.referenceNumber && meta.qrReference) {
+        meta.referenceNumber = meta.qrReference;
+      }
       setEditedMeta(meta);
       setEditedNotes(data.document.notes || "");
       setEditedDocType(data.document.documentType || "other");

@@ -1033,3 +1033,7 @@
 ## Verbesserung: Rückgängig-Button im Kontenplan
 - [x] Rückgängig-Button im Kontenplan hinzufügen (letzte Änderung rückgängig machen)
 - [x] Undo-Stack für Kontenplan-Aktionen (Aktivieren/Deaktivieren, MWST-Toggle, Umbenennung, Erstellen, Löschen)
+
+## Bug: Referenznummer aus QR-Einzahlungsschein wird nicht erkannt
+- [x] KI-Analyse soll Referenznummer (RF-Nummer, QR-Referenz, ESR-Referenz) aus Belegen extrahieren
+- [x] Referenznummer ins Feld "Referenznummer" übernehmen (+ Fallback: qrReference → referenceNumber)

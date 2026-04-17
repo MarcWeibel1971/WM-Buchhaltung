@@ -981,3 +981,51 @@
 ## Bug: GJ-Wähler zeigt aktuelles Jahr statt erstes Geschäftsjahr
 - [x] FiscalYearContext: Default-GJ auf das älteste offene Geschäftsjahr setzen (aus DB geladen, nicht hardcoded)
 - [x] Wenn GJ 2025 im Onboarding gewählt wird, soll Dashboard automatisch GJ 2025 anzeigen
+
+## Redesign: Belegzentrierte Informationsarchitektur (Komplett-Überarbeitung)
+
+### Sidebar-Navigation (neu)
+- [x] Sidebar komplett umbauen: Dashboard, Inbox, Belege, Bank, Freigaben, Rechnungen, Berichte, Abschluss & MWST, Einstellungen, Admin
+- [x] Belege-Section mit Unterpunkten: Alle Belege, Neu hochgeladen, Von KI verarbeitet, Zu prüfen, Gematcht, Archiv
+- [x] Bank-Section mit Unterpunkten: Banktransaktionen, Importe, Ungematchte, Gematchte, Bankkonten & Karten
+- [x] Freigaben-Section mit Unterpunkten: Bereit zur Genehmigung, Mit Warnungen, Manuell angepasst, Verbucht
+- [x] Rechnungen-Section mit Unterpunkten: Ausgangsrechnungen, Offene Forderungen, Zahlungseingänge, Mahnwesen, Kunden
+- [x] Berichte-Section: Erfolgsrechnung, Bilanz, Kontoblätter, Journal
+- [x] Abschluss & MWST: MWST, Periodenabschluss, Jahresabschluss
+- [x] Einstellungen und Admin-Bereich konsolidieren
+- [x] Umbenennungen: Journal→Freigaben, Bankimport→Bank, Dokumente→Belege, Kreditkarte→unter Bank
+
+### Inbox-Seite (neu)
+- [x] Neue Inbox-Seite: Zentrale Aufgabenübersicht für alles was Aufmerksamkeit braucht
+- [x] Inbox zeigt: Neue Belege, KI-Vorschläge zur Freigabe, Ungematchte Banktx, Offene Rechnungen, Fällige Zahlungen
+- [x] Inbox: Klickbare Aufgaben-Karten die direkt zum jeweiligen Bereich navigieren
+
+### Dashboard (komplett neu)
+- [x] Block 1: "Heute zu erledigen" – Aufgaben-Übersicht mit Empty State
+- [x] Block 2: "KI hat für dich vorbereitet" – Automatisch erkannt, Gematcht, Automatisierungsquote, Match-Quote
+- [x] Block 3: Belege + Bank Statusübersicht (nebeneinander)
+- [x] Block 4: Freigaben + Rechnungen Statusübersicht (nebeneinander)
+- [x] Block 5: Finanzstatus – Liquidität, Ertrag, Aufwand, Ergebnis, Off. Forderungen, Off. Verbindlichkeiten
+- [x] Block 6: Fristen & Hinweise – MWST, Periodenabschluss
+- [x] Primäre CTAs: Beleg hochladen, Bank importieren, Rechnung erstellen
+
+### Belege-Seite (aufgewertet)
+- [x] Belege-Seite: Status-Tabs (Alle, Neu, KI verarbeitet, Zu prüfen, Gematcht, Archiv) via Sidebar-Sub-Items
+- [x] Belege: KI-Workflow sichtbar machen (bestehende Documents-Seite mit Status-Filtern)
+
+### Bank-Bereich (konsolidiert)
+- [x] Bank-Seite: Bankimport und Kreditkarte zusammenführen unter "Bank"
+- [x] Bank: Sidebar-Sub-Items für Transaktionen, Importe, Ungematchte, Gematchte, Konten & Karten
+
+### Freigaben-Seite (neu, ersetzt Journal als Primärbereich)
+- [x] Freigaben-Seite: Ersetzt Journal als primären Arbeitsbereich
+- [x] Freigaben: Sidebar-Sub-Items für Bereit zur Genehmigung, Mit Warnungen, Manuell angepasst, Verbucht
+- [x] Journal bleibt als technische Detailansicht unter Berichte erreichbar
+
+### Empty States & CTAs
+- [x] Aktivierende Empty States: "Lade Rechnungen hoch...", "Alle Vorschläge verbucht...", etc.
+- [x] Globale primäre CTAs: Beleg hochladen, Bank importieren, Rechnung erstellen
+
+### Routing
+- [x] Alle neuen Routes registrieren in App.tsx
+- [x] Alte Routes als Redirects beibehalten für Kompatibilität

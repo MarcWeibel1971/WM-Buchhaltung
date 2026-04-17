@@ -20,6 +20,11 @@ import LandingPage from "./pages/LandingPage";
 
 // Pages – App (protected)
 import Dashboard from "./pages/Dashboard";
+import Inbox from "./pages/Inbox";
+import Belege from "./pages/Belege";
+import Bank from "./pages/Bank";
+import Freigaben from "./pages/Freigaben";
+import Berichte from "./pages/Berichte";
 import Journal from "./pages/Journal";
 import BankImport from "./pages/BankImport";
 import CreditCard from "./pages/CreditCard";
@@ -38,6 +43,7 @@ import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
 import GlobalRules from "./pages/GlobalRules";
 import Layout from "./components/Layout";
+import Accounts from "./pages/Accounts";
 
 /**
  * AuthGuard: Prüft ob der User eingeloggt ist.
@@ -66,9 +72,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Phase 1c OrgGuard: Stellt sicher, dass der eingeloggte User eine aktive
- * Organisation hat. Falls nicht, wird die Onboarding-Seite angezeigt, auf der
- * der User eine neue Firma anlegen kann.
+ * OrgGuard: Stellt sicher, dass der eingeloggte User eine aktive
+ * Organisation hat. Falls nicht, wird die Onboarding-Seite angezeigt.
  */
 function OrgGuard({ children }: { children: React.ReactNode }) {
   const utils = trpc.useUtils();
@@ -121,30 +126,56 @@ function OrgGuard({ children }: { children: React.ReactNode }) {
 
 /**
  * Protected app routes – only accessible after login + org selection
+ * 
+ * Neue Informationsarchitektur:
+ * - /inbox → Zentrale Aufgabenübersicht
+ * - /belege → Belege (= Documents)
+ * - /bank → Banktransaktionen (= BankImport + CreditCard)
+ * - /freigaben → Freigaben (= Journal mit pending-Filter)
+ * - /berichte → Berichte (= Reports)
+ * - /rechnungen → Ausgangsrechnungen
+ * - /mahnwesen → Mahnwesen
+ * - /vat → MWST
+ * - /year-end → Jahresabschluss
+ * - /settings → Einstellungen
+ * - /admin/* → Admin-Bereich
+ * 
+ * Alte Pfade werden per Redirect auf neue Pfade umgeleitet.
  */
 function AppRouter() {
   return (
     <Switch>
+      {/* Neue Hauptrouten */}
       <Route path="/" component={Dashboard} />
-      <Route path="/journal" component={Journal} />
-      <Route path="/bank-import" component={BankImport} />
-      <Route path="/credit-card" component={CreditCard} />
-      <Route path="/payroll" component={Payroll} />
-      <Route path="/reports" component={Reports} />
-      <Route path="/accounts">{() => { window.location.replace("/reports"); return null; }}</Route>
-      <Route path="/vat" component={VatPage} />
-      <Route path="/documents/:id" component={DocumentDetail} />
-      <Route path="/documents" component={Documents} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/year-end" component={YearEnd} />
-      <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
-      <Route path="/zahlungen/kreditoren" component={Kreditoren} />
+      <Route path="/inbox" component={Inbox} />
+      <Route path="/belege" component={Belege} />
+      <Route path="/bank" component={Bank} />
+      <Route path="/freigaben" component={Freigaben} />
+      <Route path="/berichte" component={Berichte} />
       <Route path="/rechnungen" component={Invoices} />
       <Route path="/mahnwesen" component={OpenPositions} />
-      <Route path="/time-tracking" component={TimeTracking} />
+      <Route path="/vat" component={VatPage} />
+      <Route path="/year-end" component={YearEnd} />
+      <Route path="/settings" component={Settings} />
+      <Route path="/accounts" component={Accounts} />
       <Route path="/admin/global-rules" component={GlobalRules} />
+
+      {/* Bestehende Detail-Routen */}
+      <Route path="/documents/:id" component={DocumentDetail} />
+      <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
+      <Route path="/zahlungen/kreditoren" component={Kreditoren} />
+      <Route path="/time-tracking" component={TimeTracking} />
+      <Route path="/payroll" component={Payroll} />
+
+      {/* Redirects: Alte Pfade → Neue Pfade */}
+      <Route path="/journal">{() => { window.location.replace("/freigaben"); return null; }}</Route>
+      <Route path="/bank-import">{() => { window.location.replace("/bank"); return null; }}</Route>
+      <Route path="/credit-card">{() => { window.location.replace("/bank"); return null; }}</Route>
+      <Route path="/documents">{() => { window.location.replace("/belege"); return null; }}</Route>
+      <Route path="/reports">{() => { window.location.replace("/berichte"); return null; }}</Route>
       <Route path="/zahlungen">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
       <Route path="/qr-rechnung">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
+
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

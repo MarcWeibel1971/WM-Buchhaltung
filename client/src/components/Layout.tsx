@@ -1,12 +1,15 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  LayoutDashboard, BookOpen, Building2, CreditCard,
-  Users, BarChart3, Receipt, LogOut, ChevronRight, ChevronDown,
-  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet, Clock, FileText, AlertTriangle,
-  Brain, ShieldCheck
+  LayoutDashboard, Inbox, FileText, Building2, CheckSquare,
+  Receipt, BarChart3, LogOut, ChevronRight, ChevronDown,
+  Menu, X, Bell, Settings, CalendarCheck, Clock,
+  Brain, ShieldCheck, Upload, Sparkles, Search, Eye,
+  Link2, Archive, CreditCard, ArrowLeftRight, Wallet,
+  AlertTriangle, Users, BookOpen, PieChart, List,
+  FileCheck, AlertCircle, CheckCircle, Banknote
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
@@ -16,62 +19,138 @@ type NavItem = {
   href: string;
   icon: any;
   label: string;
+  badge?: number | string;
   children?: NavItem[];
   adminOnly?: boolean;
+  separator?: boolean;
 };
-
-const NAV_ITEMS: NavItem[] = [
-  { href: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/journal", icon: BookOpen, label: "Journal" },
-  {
-    href: "/zahlungen", icon: Wallet, label: "Zahlungen",
-    children: [
-      { href: "/rechnungen", icon: FileText, label: "Rechnungen" },
-      { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
-      { href: "/zahlungen/debitoren", icon: QrCode, label: "QR-Einzahlung" },
-      { href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditoren" },
-    ],
-  },
-  { href: "/bank-import", icon: Building2, label: "Bankimport" },
-  { href: "/credit-card", icon: CreditCard, label: "Kreditkarte" },
-  { href: "/payroll", icon: Users, label: "Lohnbuchhaltung" },
-  { href: "/vat", icon: Receipt, label: "MWST" },
-  { href: "/reports", icon: BarChart3, label: "Berichte" },
-  { href: "/documents", icon: Paperclip, label: "Dokumente" },
-  { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
-  { href: "/time-tracking", icon: Clock, label: "Zeiterfassung" },
-  { href: "/settings", icon: Settings, label: "Einstellungen" },
-  // Admin-only section – nur für Admins sichtbar
-  { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln (Admin)", adminOnly: true },
-];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { fiscalYear, setFiscalYear, fiscalYears } = useFiscalYear();
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
-    // Auto-expand Zahlungen if we're on a Zahlungen sub-page
-    const initial = new Set<string>();
-    if (location.startsWith("/zahlungen")) initial.add("/zahlungen");
-    return initial;
-  });
 
+  // Queries for badge counts
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
   const { data: companyData } = trpc.settings.getCompanySettings.useQuery();
   const { data: myOrgs } = trpc.organizations.listMine.useQuery();
+  const { data: pendingBank } = trpc.bankImport.getPendingTransactions.useQuery({});
+  const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 1 });
+  const { data: allDocs } = trpc.documents.list.useQuery({ fiscalYear });
+
   const utils = trpc.useUtils();
   const switchOrg = trpc.organizations.setCurrent.useMutation({
     onSuccess: async () => {
-      // Nach Org-Wechsel komplette App neu laden, damit alle Queries frisch sind.
       await utils.invalidate();
       window.location.href = "/";
     },
   });
 
-  const pendingCount = (stats?.pendingEntries ?? 0) + (stats?.pendingBankTransactions ?? 0);
+  // Compute badge counts
+  const pendingEntries = stats?.pendingEntries ?? 0;
+  const pendingBankTx = pendingBank?.length ?? 0;
+  const unmatchedBankTx = pendingBank?.filter(tx => !tx.matchedDocumentId)?.length ?? 0;
+  const newDocs = allDocs?.filter(d => d.matchStatus === "unmatched" || !d.matchStatus)?.length ?? 0;
+  const totalInbox = pendingEntries + pendingBankTx + newDocs;
+
   const currentOrgName = myOrgs?.find(o => o.isCurrent)?.name ?? companyData?.companyName ?? 'Meine Firma';
   const hasMultipleOrgs = (myOrgs?.length ?? 0) > 1;
+
+  // Auto-expand sections based on current route
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    // Auto-expand the section containing the current route
+    const sectionPrefixes: Record<string, string[]> = {
+      "/belege": ["/belege", "/documents"],
+      "/bank": ["/bank", "/bank-import", "/credit-card"],
+      "/freigaben": ["/freigaben", "/journal"],
+      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen"],
+      "/berichte": ["/berichte", "/reports"],
+      "/abschluss": ["/abschluss", "/vat", "/year-end"],
+      "/einstellungen": ["/einstellungen", "/settings"],
+      "/admin": ["/admin"],
+    };
+    for (const [section, prefixes] of Object.entries(sectionPrefixes)) {
+      if (prefixes.some(p => location.startsWith(p))) {
+        initial.add(section);
+      }
+    }
+    return initial;
+  });
+
+  // Update expanded sections when location changes
+  useEffect(() => {
+    const sectionPrefixes: Record<string, string[]> = {
+      "/belege": ["/belege", "/documents"],
+      "/bank": ["/bank", "/bank-import", "/credit-card"],
+      "/freigaben": ["/freigaben", "/journal"],
+      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen"],
+      "/berichte": ["/berichte", "/reports"],
+      "/abschluss": ["/abschluss", "/vat", "/year-end"],
+      "/einstellungen": ["/einstellungen", "/settings"],
+      "/admin": ["/admin"],
+    };
+    setExpandedSections(prev => {
+      const next = new Set(prev);
+      for (const [section, prefixes] of Object.entries(sectionPrefixes)) {
+        if (prefixes.some(p => location.startsWith(p))) {
+          next.add(section);
+        }
+      }
+      return next;
+    });
+  }, [location]);
+
+  const NAV_ITEMS: NavItem[] = [
+    { href: "/", icon: LayoutDashboard, label: "Dashboard" },
+    { href: "/inbox", icon: Inbox, label: "Inbox", badge: totalInbox > 0 ? totalInbox : undefined },
+    { href: "/belege", icon: FileText, label: "Belege", separator: true, badge: newDocs > 0 ? newDocs : undefined, children: [
+      { href: "/belege", icon: List, label: "Alle Belege" },
+      { href: "/belege?filter=new", icon: Upload, label: "Neu hochgeladen" },
+      { href: "/belege?filter=ai-processed", icon: Sparkles, label: "Von KI verarbeitet" },
+      { href: "/belege?filter=review", icon: Eye, label: "Zu prüfen" },
+      { href: "/belege?filter=matched", icon: Link2, label: "Gematcht" },
+      { href: "/belege?filter=archived", icon: Archive, label: "Archiv" },
+    ]},
+    { href: "/bank", icon: Building2, label: "Bank", badge: pendingBankTx > 0 ? pendingBankTx : undefined, children: [
+      { href: "/bank", icon: ArrowLeftRight, label: "Banktransaktionen" },
+      { href: "/bank?tab=import", icon: Upload, label: "Importe" },
+      { href: "/bank?tab=unmatched", icon: AlertCircle, label: "Ungematchte" },
+      { href: "/bank?tab=matched", icon: CheckCircle, label: "Gematchte" },
+      { href: "/bank?tab=accounts", icon: CreditCard, label: "Konten & Karten" },
+    ]},
+    { href: "/freigaben", icon: CheckSquare, label: "Freigaben", badge: pendingEntries > 0 ? pendingEntries : undefined, children: [
+      { href: "/freigaben", icon: FileCheck, label: "Bereit zur Genehmigung" },
+      { href: "/freigaben?filter=warnings", icon: AlertTriangle, label: "Mit Warnungen" },
+      { href: "/freigaben?filter=manual", icon: BookOpen, label: "Manuell angepasst" },
+      { href: "/freigaben?filter=booked", icon: CheckCircle, label: "Verbucht" },
+    ]},
+    { href: "/rechnungen", icon: Receipt, label: "Rechnungen", separator: true, children: [
+      { href: "/rechnungen", icon: FileText, label: "Ausgangsrechnungen" },
+      { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },
+      { href: "/rechnungen?tab=payments", icon: Banknote, label: "Zahlungseingänge" },
+      { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
+      { href: "/rechnungen?tab=customers", icon: Users, label: "Kunden" },
+    ]},
+    { href: "/berichte", icon: BarChart3, label: "Berichte", children: [
+      { href: "/berichte?view=income", icon: PieChart, label: "Erfolgsrechnung" },
+      { href: "/berichte?view=balance", icon: BarChart3, label: "Bilanz" },
+      { href: "/berichte?view=accounts", icon: BookOpen, label: "Kontoblätter" },
+      { href: "/berichte?view=journal", icon: List, label: "Journal" },
+    ]},
+    { href: "/abschluss", icon: CalendarCheck, label: "Abschluss & MWST", separator: true, children: [
+      { href: "/vat", icon: Receipt, label: "MWST" },
+      { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
+    ]},
+    { href: "/einstellungen", icon: Settings, label: "Einstellungen", children: [
+      { href: "/settings", icon: Settings, label: "Firma & Konten" },
+      { href: "/settings?tab=users", icon: Users, label: "Benutzer" },
+    ]},
+    { href: "/admin", icon: Brain, label: "Admin", adminOnly: true, children: [
+      { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln" },
+    ]},
+  ];
 
   const toggleSection = (href: string) => {
     setExpandedSections(prev => {
@@ -83,15 +162,24 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const isItemActive = (item: NavItem): boolean => {
     if (item.children) {
-      return item.children.some(child => location === child.href || location.startsWith(child.href + "/"));
+      return item.children.some(child => {
+        const baseHref = child.href.split("?")[0];
+        return location === baseHref || location.startsWith(baseHref + "/") ||
+          (child.href.includes("?") && location + window.location.search === child.href);
+      });
     }
     return location === item.href || (item.href !== "/" && location.startsWith(item.href));
   };
 
-  // Ensure Zahlungen is expanded when navigating to a sub-page
-  if (location.startsWith("/zahlungen") && !expandedSections.has("/zahlungen")) {
-    setExpandedSections(prev => { const next = new Set(prev); next.add("/zahlungen"); return next; });
-  }
+  const isChildActive = (child: NavItem): boolean => {
+    const baseHref = child.href.split("?")[0];
+    // Exact match for base routes
+    if (!child.href.includes("?")) {
+      return location === baseHref;
+    }
+    // For query-filtered routes, check if current URL matches
+    return location === baseHref && window.location.search === "?" + child.href.split("?")[1];
+  };
 
   const renderNavItem = (item: NavItem) => {
     const hasChildren = item.children && item.children.length > 0;
@@ -101,17 +189,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (hasChildren) {
       return (
         <div key={item.href}>
+          {item.separator && <div className="my-2 mx-3 border-t" style={{ borderColor: "oklch(0.25 0.03 240)" }} />}
           <div
             className={cn(
-              "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer",
-              isActive ? "text-white" : ""
+              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer"
             )}
             style={{
-              backgroundColor: isActive && !isExpanded ? "oklch(0.35 0.12 240)" : "transparent",
-              color: isActive ? "oklch(0.88 0.01 240)" : "oklch(0.65 0.03 240)",
+              backgroundColor: isActive && !isExpanded ? "oklch(0.25 0.08 240)" : "transparent",
+              color: isActive ? "oklch(0.88 0.01 240)" : "oklch(0.60 0.03 240)",
             }}
             onMouseEnter={e => {
-              if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.28 0.04 240)";
+              if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.24 0.04 240)";
             }}
             onMouseLeave={e => {
               if (!isActive || isExpanded) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
@@ -119,39 +207,50 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             onClick={() => toggleSection(item.href)}
           >
             <item.icon className="h-4 w-4 flex-shrink-0" />
-            <span className="flex-1">{item.label}</span>
+            <span className="flex-1 text-[13px]">{item.label}</span>
+            {item.badge && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                style={{ backgroundColor: "oklch(0.55 0.22 25)", color: "white", minWidth: "18px", textAlign: "center" }}>
+                {typeof item.badge === 'number' && item.badge > 99 ? '99+' : item.badge}
+              </span>
+            )}
             {isExpanded ? (
-              <ChevronDown className="h-3 w-3 opacity-60" />
+              <ChevronDown className="h-3 w-3 opacity-50" />
             ) : (
-              <ChevronRight className="h-3 w-3 opacity-60" />
+              <ChevronRight className="h-3 w-3 opacity-50" />
             )}
           </div>
           {isExpanded && (
             <div className="ml-4 mt-0.5 space-y-0.5">
               {item.children!.map(child => {
-                const childActive = location === child.href || location.startsWith(child.href + "/");
+                const childActive = isChildActive(child);
                 return (
                   <Link key={child.href} href={child.href}>
                     <div
                       className={cn(
-                        "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all cursor-pointer",
-                        childActive ? "text-white font-medium" : ""
+                        "flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px] transition-all cursor-pointer"
                       )}
                       style={{
-                        backgroundColor: childActive ? "oklch(0.35 0.12 240)" : "transparent",
-                        color: childActive ? "white" : "oklch(0.55 0.03 240)",
+                        backgroundColor: childActive ? "oklch(0.30 0.10 240)" : "transparent",
+                        color: childActive ? "white" : "oklch(0.52 0.03 240)",
+                        fontWeight: childActive ? 600 : 400,
                       }}
                       onMouseEnter={e => {
-                        if (!childActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.25 0.04 240)";
+                        if (!childActive) {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.04 240)";
+                          (e.currentTarget as HTMLElement).style.color = "oklch(0.75 0.03 240)";
+                        }
                       }}
                       onMouseLeave={e => {
-                        if (!childActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                        if (!childActive) {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                          (e.currentTarget as HTMLElement).style.color = "oklch(0.52 0.03 240)";
+                        }
                       }}
                       onClick={() => setMobileOpen(false)}
                     >
-                      <child.icon className="h-3.5 w-3.5 flex-shrink-0" />
+                      <child.icon className="h-3 w-3 flex-shrink-0 opacity-70" />
                       <span>{child.label}</span>
-                      {childActive && <ChevronRight className="h-3 w-3 opacity-60 ml-auto" />}
                     </div>
                   </Link>
                 );
@@ -162,19 +261,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       );
     }
 
+    // Top-level items without children (Dashboard, Inbox)
     return (
       <Link key={item.href} href={item.href}>
         <div
           className={cn(
-            "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer group",
-            isActive ? "text-white" : "hover:text-white"
+            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer"
           )}
           style={{
-            backgroundColor: isActive ? "oklch(0.35 0.12 240)" : "transparent",
-            color: isActive ? "white" : "oklch(0.65 0.03 240)",
+            backgroundColor: isActive ? "oklch(0.30 0.10 240)" : "transparent",
+            color: isActive ? "white" : "oklch(0.60 0.03 240)",
           }}
           onMouseEnter={e => {
-            if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.28 0.04 240)";
+            if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.24 0.04 240)";
           }}
           onMouseLeave={e => {
             if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
@@ -182,14 +281,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           onClick={() => setMobileOpen(false)}
         >
           <item.icon className="h-4 w-4 flex-shrink-0" />
-          <span className="flex-1">{item.label}</span>
-          {item.href === "/journal" && pendingCount > 0 && (
-            <span className="text-xs px-1.5 py-0.5 rounded-full font-semibold"
-              style={{ backgroundColor: "oklch(0.75 0.18 75)", color: "oklch(0.15 0.02 240)" }}>
-              {pendingCount}
+          <span className="flex-1 text-[13px]">{item.label}</span>
+          {item.badge && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+              style={{ backgroundColor: "oklch(0.55 0.22 25)", color: "white", minWidth: "18px", textAlign: "center" }}>
+              {typeof item.badge === 'number' && item.badge > 99 ? '99+' : item.badge}
             </span>
           )}
-          {isActive && <ChevronRight className="h-3 w-3 opacity-60" />}
+          {isActive && <ChevronRight className="h-3 w-3 opacity-50" />}
         </div>
       </Link>
     );
@@ -200,7 +299,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     for (const item of items) {
       if (item.children) {
         for (const child of item.children) {
-          if (location === child.href || location.startsWith(child.href + "/")) return child.label;
+          const baseHref = child.href.split("?")[0];
+          if (location === baseHref || location.startsWith(baseHref + "/")) return child.label;
         }
       }
       if (location === item.href || (item.href !== "/" && location.startsWith(item.href))) return item.label;
@@ -220,15 +320,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-30 w-64 flex flex-col transition-transform duration-200 lg:relative lg:translate-x-0",
+        "fixed inset-y-0 left-0 z-30 w-60 flex flex-col transition-transform duration-200 lg:relative lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full"
-      )} style={{ backgroundColor: "oklch(0.18 0.03 240)", borderRight: "1px solid oklch(0.28 0.04 240)" }}>
+      )} style={{ backgroundColor: "oklch(0.16 0.02 240)", borderRight: "1px solid oklch(0.24 0.03 240)" }}>
 
         {/* Logo + Org-Switcher */}
-        <div className="flex items-center justify-between px-5 py-5 border-b" style={{ borderColor: "oklch(0.28 0.04 240)" }}>
-          <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="flex items-center justify-between px-4 py-4 border-b" style={{ borderColor: "oklch(0.24 0.03 240)" }}>
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
             {companyData?.logoUrl && (
-              <img src={companyData.logoUrl} alt="Logo" className="h-8 w-auto object-contain flex-shrink-0" />
+              <img src={companyData.logoUrl} alt="Logo" className="h-7 w-auto object-contain flex-shrink-0" />
             )}
             <div className="min-w-0 flex-1">
               {hasMultipleOrgs ? (
@@ -238,7 +338,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                   <SelectTrigger
                     className="h-auto min-h-0 px-0 py-0 border-0 bg-transparent hover:opacity-80 shadow-none focus:ring-0"
-                    style={{ color: "oklch(0.95 0.01 240)" }}
+                    style={{ color: "oklch(0.92 0.01 240)" }}
                   >
                     <SelectValue>
                       <span className="text-sm font-bold truncate block">{currentOrgName}</span>
@@ -253,54 +353,54 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </SelectContent>
                 </Select>
               ) : (
-                <div className="text-sm font-bold truncate" style={{ color: "oklch(0.95 0.01 240)" }}>
+                <div className="text-sm font-bold truncate" style={{ color: "oklch(0.92 0.01 240)" }}>
                   {currentOrgName}
                 </div>
               )}
-              <div className="text-xs mt-0.5" style={{ color: "oklch(0.55 0.02 240)" }}>KLAX</div>
+              <div className="text-[10px] font-medium mt-0.5 tracking-wider" style={{ color: "oklch(0.45 0.02 240)" }}>KLAX</div>
             </div>
           </div>
           <button
             onClick={() => setMobileOpen(false)}
             className="lg:hidden p-1 rounded flex-shrink-0"
-            style={{ color: "oklch(0.55 0.02 240)" }}
+            style={{ color: "oklch(0.50 0.02 240)" }}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
           {NAV_ITEMS
             .filter(item => !item.adminOnly || user?.role === "admin")
             .map(item => renderNavItem(item))}
         </nav>
 
         {/* User section */}
-        <div className="px-3 py-4 border-t" style={{ borderColor: "oklch(0.28 0.04 240)" }}>
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg mb-1"
-            style={{ backgroundColor: "oklch(0.23 0.04 240)" }}>
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+        <div className="px-2 py-3 border-t" style={{ borderColor: "oklch(0.24 0.03 240)" }}>
+          <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg mb-1"
+            style={{ backgroundColor: "oklch(0.20 0.03 240)" }}>
+            <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
               style={{ backgroundColor: "oklch(0.35 0.12 240)", color: "white" }}>
               {user?.name?.charAt(0) ?? "U"}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium truncate" style={{ color: "oklch(0.88 0.01 240)" }}>
+              <div className="text-[11px] font-medium truncate" style={{ color: "oklch(0.85 0.01 240)" }}>
                 {user?.name ?? "Benutzer"}
               </div>
-              <div className="text-xs truncate" style={{ color: "oklch(0.55 0.02 240)" }}>
+              <div className="text-[10px] truncate" style={{ color: "oklch(0.48 0.02 240)" }}>
                 {user?.email ?? ""}
               </div>
             </div>
           </div>
           <button
             onClick={() => logout()}
-            className="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-colors"
-            style={{ color: "oklch(0.55 0.02 240)" }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "oklch(0.88 0.01 240)"; (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.28 0.04 240)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "oklch(0.55 0.02 240)"; (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+            className="flex items-center gap-2.5 w-full px-3 py-1.5 rounded-lg text-[12px] transition-colors"
+            style={{ color: "oklch(0.48 0.02 240)" }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "oklch(0.85 0.01 240)"; (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.03 240)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "oklch(0.48 0.02 240)"; (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
           >
-            <LogOut className="h-4 w-4" />
+            <LogOut className="h-3.5 w-3.5" />
             <span>Abmelden</span>
           </button>
         </div>
@@ -309,7 +409,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar */}
-        <header className="flex items-center gap-4 px-4 lg:px-6 py-3 border-b border-border bg-card flex-shrink-0">
+        <header className="flex items-center gap-4 px-4 lg:px-6 py-2.5 border-b border-border bg-card flex-shrink-0">
           <button
             onClick={() => setMobileOpen(true)}
             className="lg:hidden p-2 rounded-lg hover:bg-muted transition-colors"
@@ -325,7 +425,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-2">
             <Select value={String(fiscalYear)} onValueChange={v => setFiscalYear(Number(v))}>
-              <SelectTrigger className="w-28 h-8 text-xs">
+              <SelectTrigger className="w-24 h-7 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -334,14 +434,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 ))}
               </SelectContent>
             </Select>
-            {pendingCount > 0 && (
-              <div className="relative">
-                <Bell className="h-5 w-5 text-muted-foreground" />
-                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-xs flex items-center justify-center font-bold"
-                  style={{ backgroundColor: "oklch(0.55 0.22 25)", color: "white" }}>
-                  {pendingCount > 9 ? "9+" : pendingCount}
-                </span>
-              </div>
+            {totalInbox > 0 && (
+              <Link href="/inbox">
+                <div className="relative cursor-pointer p-1.5 rounded-lg hover:bg-muted transition-colors">
+                  <Bell className="h-4 w-4 text-muted-foreground" />
+                  <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full text-[9px] flex items-center justify-center font-bold"
+                    style={{ backgroundColor: "oklch(0.55 0.22 25)", color: "white" }}>
+                    {totalInbox > 9 ? "9+" : totalInbox}
+                  </span>
+                </div>
+              </Link>
             )}
           </div>
         </header>

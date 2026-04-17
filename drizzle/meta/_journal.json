@@ -190,6 +190,13 @@
       "when": 1776371999180,
       "tag": "0026_clumsy_unicorn",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "5",
+      "when": 1776406106065,
+      "tag": "0027_broad_white_tiger",
+      "breakpoints": true
     }
   ]
 }

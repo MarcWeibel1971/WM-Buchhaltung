@@ -596,6 +596,16 @@ export const bookingRules = mysqlTable("booking_rules", {
   source: mysqlEnum("source", ["manual", "ai"]).default("manual").notNull(),
   // Is this rule active?
   isActive: boolean("isActive").default(true).notNull(),
+  // ─── Two-Level Rule System ────────────────────────────────────────────────
+  // Scope: "global" = system-wide base rule (trained by admin, applies to all orgs)
+  //        "org"    = org-specific rule (learned from this org's corrections, has priority)
+  scope: mysqlEnum("scope", ["global", "org"]).default("org").notNull(),
+  // Global account mapping: for global rules, store generic account NUMBER (not org-specific ID)
+  // When matching, the system resolves the number to the org's actual account ID
+  globalDebitAccountNumber: varchar("globalDebitAccountNumber", { length: 20 }),
+  globalCreditAccountNumber: varchar("globalCreditAccountNumber", { length: 20 }),
+  // Optional: category hint for global rules (e.g., "Versicherungen", "Telekommunikation")
+  categoryHint: varchar("categoryHint", { length: 200 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

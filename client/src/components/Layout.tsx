@@ -3,7 +3,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, BookOpen, Building2, CreditCard,
   Users, BarChart3, Receipt, LogOut, ChevronRight, ChevronDown,
-  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet, Clock, FileText, AlertTriangle
+  Menu, X, Bell, Paperclip, Settings, CalendarCheck, QrCode, Banknote, Wallet, Clock, FileText, AlertTriangle,
+  Brain, ShieldCheck
 } from "lucide-react";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
@@ -16,6 +17,7 @@ type NavItem = {
   icon: any;
   label: string;
   children?: NavItem[];
+  adminOnly?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
@@ -39,6 +41,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
   { href: "/time-tracking", icon: Clock, label: "Zeiterfassung" },
   { href: "/settings", icon: Settings, label: "Einstellungen" },
+  // Admin-only section – nur für Admins sichtbar
+  { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln (Admin)", adminOnly: true },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -267,7 +271,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {NAV_ITEMS.map(item => renderNavItem(item))}
+          {NAV_ITEMS
+            .filter(item => !item.adminOnly || user?.role === "admin")
+            .map(item => renderNavItem(item))}
         </nav>
 
         {/* User section */}

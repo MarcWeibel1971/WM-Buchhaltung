@@ -687,34 +687,105 @@ export async function findMatchingRule(orgId: number, counterpartyName: string):
   const db = await getDb();
   if (!db || !counterpartyName) return null;
 
-  const rules = await db.select().from(bookingRules)
+  // Step 1: Try org-specific rules first (highest priority)
+  const orgRules = await db.select().from(bookingRules)
     .where(and(
       eq(bookingRules.organizationId, orgId),
+      eq(bookingRules.scope, "org"),
       eq(bookingRules.isActive, true),
     ))
     .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
 
   const cpLower = counterpartyName.toLowerCase();
-  for (const rule of rules) {
+  for (const rule of orgRules) {
     if (cpLower.includes(rule.counterpartyPattern.toLowerCase())) {
       return rule;
     }
   }
+
+  // Step 2: Fallback to global rules (trained by admin, applies to all orgs)
+  const globalRules = await db.select().from(bookingRules)
+    .where(and(
+      eq(bookingRules.scope, "global"),
+      eq(bookingRules.isActive, true),
+    ))
+    .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
+
+  for (const rule of globalRules) {
+    if (cpLower.includes(rule.counterpartyPattern.toLowerCase())) {
+      // For global rules, resolve account numbers to org-specific account IDs
+      if (rule.globalDebitAccountNumber || rule.globalCreditAccountNumber) {
+        const resolved = await resolveGlobalRuleAccounts(orgId, rule);
+        return resolved;
+      }
+      return rule;
+    }
+  }
+
   return null;
+}
+
+/**
+ * Resolve global rule account numbers to org-specific account IDs.
+ * Global rules store generic account numbers (e.g., "6300") instead of org-specific IDs.
+ * This function maps those numbers to the actual account IDs in the target org.
+ */
+async function resolveGlobalRuleAccounts(orgId: number, rule: BookingRule): Promise<BookingRule> {
+  const db = await getDb();
+  if (!db) return rule;
+
+  const orgAccounts = await db.select({ id: accounts.id, number: accounts.number })
+    .from(accounts)
+    .where(eq(accounts.organizationId, orgId));
+
+  let debitId = rule.debitAccountId;
+  let creditId = rule.creditAccountId;
+
+  if (rule.globalDebitAccountNumber) {
+    const match = orgAccounts.find(a => a.number === rule.globalDebitAccountNumber);
+    if (match) debitId = match.id;
+  }
+  if (rule.globalCreditAccountNumber) {
+    const match = orgAccounts.find(a => a.number === rule.globalCreditAccountNumber);
+    if (match) creditId = match.id;
+  }
+
+  return { ...rule, debitAccountId: debitId, creditAccountId: creditId };
 }
 
 /**
  * Get all active booking rules.
  */
-export async function getAllBookingRules(orgId: number): Promise<BookingRule[]> {
+export async function getAllBookingRules(orgId: number, includeGlobal = true): Promise<BookingRule[]> {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(bookingRules)
+
+  // Get org-specific rules
+  const orgRules = await db.select().from(bookingRules)
     .where(and(
       eq(bookingRules.organizationId, orgId),
+      eq(bookingRules.scope, "org"),
       eq(bookingRules.isActive, true),
     ))
     .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
+
+  if (!includeGlobal) return orgRules;
+
+  // Get global rules and resolve their account numbers for this org
+  const globalRules = await db.select().from(bookingRules)
+    .where(and(
+      eq(bookingRules.scope, "global"),
+      eq(bookingRules.isActive, true),
+    ))
+    .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
+
+  // Resolve global account numbers to org-specific IDs
+  const resolvedGlobal = await Promise.all(
+    globalRules.map(r => resolveGlobalRuleAccounts(orgId, r))
+  );
+
+  // Org rules first (higher priority), then global
+  return [...orgRules, ...resolvedGlobal];
 }
 
 /**

@@ -20,6 +20,7 @@ import {
 } from "./db";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
+import { globalRulesRouter } from "./globalRulesRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { qrBillRouter } from "./qrBillRouter";
 import { dsgRouter } from "./dsgRouter";
@@ -3925,6 +3926,7 @@ export const appRouter = router({
   vat: vatRouter,
   documents: documentsRouter,
   settings: settingsRouter,
+  globalRules: globalRulesRouter,
   yearEnd: yearEndRouter,
   qrBill: qrBillRouter,
   dsg: dsgRouter,

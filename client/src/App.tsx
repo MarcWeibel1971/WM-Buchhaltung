@@ -36,6 +36,7 @@ import TimeTracking from "./pages/TimeTracking";
 import Onboarding from "./pages/Onboarding";
 import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
+import GlobalRules from "./pages/GlobalRules";
 import Layout from "./components/Layout";
 
 /**
@@ -141,6 +142,7 @@ function AppRouter() {
       <Route path="/rechnungen" component={Invoices} />
       <Route path="/mahnwesen" component={OpenPositions} />
       <Route path="/time-tracking" component={TimeTracking} />
+      <Route path="/admin/global-rules" component={GlobalRules} />
       <Route path="/zahlungen">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
       <Route path="/qr-rechnung">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
       <Route path="/404" component={NotFound} />

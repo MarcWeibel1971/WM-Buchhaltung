@@ -954,3 +954,16 @@
 - [x] Direkte Verbuchung aus Dokument-Detail heraus (approveTransaction Mutation)
 - [x] Automatische Vorbefüllung: Konten aus Kontierung-Tab, Betrag aus Belegdetails
 - [x] Status-Anzeige: Offen → Verbucht mit visueller Bestätigung
+
+## Feature: Zwei-Ebenen-Regelsystem (Globale KI-Regeln + Kundenspezifische Regeln)
+- [x] DB-Schema: scope Enum ("global"/"org") in booking_rules + globalDebitAccountNumber, globalCreditAccountNumber, categoryHint
+- [x] DB-Schema: organizationId bleibt für org-Regeln, globale Regeln haben scope="global"
+- [x] Backend: Matching-Logik angepasst – findMatchingRule: org-Regeln zuerst, globale als Fallback mit Account-Nummer-Auflösung
+- [x] Backend: Beim Verbuchen mit manueller Korrektur: kundenspezifische Regel lernen (wie bisher)
+- [x] Backend: Admin-Endpunkte (globalRulesRouter): list, listWithStats, create, update, delete, promoteToGlobal
+- [x] Backend: Training-Workflow – Admin kann Testkunden-Regeln zu globalen Regeln hochstufen
+- [x] Frontend: Admin-Bereich /admin/global-rules mit separater Ansicht für globale KI-Regeln
+- [x] Frontend: Globale Regeln für normale Kunden nicht sichtbar (Sidebar adminOnly, Settings filtert scope!="global")
+- [x] Frontend: Admin kann kundenspezifische Regel zu globaler Regel hochstufen (promoteToGlobal)
+- [x] Frontend: Übersicht mit Scope-Badge (Global/Org), Kategorie-Hint, Statistiken
+- [x] Tests: 12 Vitest-Tests für Zwei-Ebenen-Matching, Scope-Filterung, Account-Resolution, Admin-Sichtbarkeit

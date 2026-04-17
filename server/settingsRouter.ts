@@ -11,7 +11,7 @@ import {
   openingBalances, journalEntries, journalLines, fiscalYears, templates
 } from "../drizzle/schema";
 import { storagePut } from "./storage";
-import { and, eq, asc, desc, sql } from "drizzle-orm";
+import { and, eq, asc, desc, sql, or } from "drizzle-orm";
 
 // ─── Company Settings ─────────────────────────────────────────────────────────
 
@@ -454,9 +454,15 @@ export const settingsRouter = router({
   getBookingRules: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error('Database not available');
+    // Lade org-spezifische Regeln + globale Regeln (für Admin-Anzeige)
     const rules = await db.select().from(bookingRules)
-      .where(eq(bookingRules.organizationId, ctx.organizationId))
-      .orderBy(desc(bookingRules.priority), desc(bookingRules.usageCount));
+      .where(
+        or(
+          eq(bookingRules.organizationId, ctx.organizationId),
+          eq(bookingRules.scope, "global")
+        )
+      )
+      .orderBy(desc(bookingRules.scope), desc(bookingRules.priority), desc(bookingRules.usageCount));
     // Enrich with account names (scoped to this org)
     const accs = await db.select({ id: accounts.id, number: accounts.number, name: accounts.name })
       .from(accounts)

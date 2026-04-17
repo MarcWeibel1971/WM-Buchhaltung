@@ -1129,7 +1129,9 @@ function BookingRulesTab() {
     });
   };
 
-  const filtered = (rules ?? []).filter(r =>
+  // Nur kundenspezifische Regeln anzeigen (globale Regeln sind im Admin-Bereich)
+  const orgRules = (rules ?? []).filter((r: any) => r.scope !== "global");
+  const filtered = orgRules.filter(r =>
     !search || r.counterpartyPattern.toLowerCase().includes(search.toLowerCase()) ||
     (r.bookingTextTemplate ?? "").toLowerCase().includes(search.toLowerCase())
   );
@@ -1142,7 +1144,7 @@ function BookingRulesTab() {
         <div>
           <h1 className="text-2xl font-bold">Buchungsregeln</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {(rules ?? []).length} gelernte Regeln – automatische Kategorisierung von Bankbuchungen
+            {orgRules.length} mandantenspezifische Regeln – automatische Kategorisierung von Bankbuchungen
           </p>
         </div>
         <Input

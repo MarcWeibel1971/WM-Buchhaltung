@@ -16,13 +16,17 @@ import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useLocation } from "wouter";
 
-const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  invoice_in:  { label: "Eingangsrechnung",  icon: <ArrowDownToLine className="w-3.5 h-3.5" />, color: "text-red-600 bg-red-50" },
-  invoice_out: { label: "Ausgangsrechnung",  icon: <ArrowUpFromLine className="w-3.5 h-3.5" />, color: "text-green-600 bg-green-50" },
-  receipt:     { label: "Quittung",           icon: <Receipt className="w-3.5 h-3.5" />,         color: "text-blue-600 bg-blue-50" },
-  bank_statement: { label: "Kontoauszug",    icon: <Building2 className="w-3.5 h-3.5" />,        color: "text-purple-600 bg-purple-50" },
-  credit_card_statement: { label: "KK-Abrechnung", icon: <CreditCard className="w-3.5 h-3.5" />, color: "text-orange-600 bg-orange-50" },
-  other:       { label: "Sonstiges",          icon: <StickyNote className="w-3.5 h-3.5" />,      color: "text-gray-600 bg-gray-50" },
+const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string; border: string }> = {
+  // Rechnungen (Eingang + Ausgang) → Blau
+  invoice_in:  { label: "Eingangsrechnung",  icon: <ArrowDownToLine className="w-3.5 h-3.5" />, color: "text-blue-700 bg-blue-50",   border: "border-l-4 border-l-blue-400" },
+  invoice_out: { label: "Ausgangsrechnung",  icon: <ArrowUpFromLine className="w-3.5 h-3.5" />, color: "text-blue-600 bg-blue-50",   border: "border-l-4 border-l-blue-300" },
+  // Kreditkartenabrechnungen → Lila
+  credit_card_statement: { label: "KK-Abrechnung", icon: <CreditCard className="w-3.5 h-3.5" />, color: "text-purple-700 bg-purple-50", border: "border-l-4 border-l-purple-500" },
+  // Barbelege / Quittungen → Grün
+  receipt:     { label: "Barbelegung",       icon: <Receipt className="w-3.5 h-3.5" />,         color: "text-emerald-700 bg-emerald-50", border: "border-l-4 border-l-emerald-500" },
+  // Kontoauszüge → Grau-Blau
+  bank_statement: { label: "Kontoauszug",    icon: <Building2 className="w-3.5 h-3.5" />,        color: "text-slate-600 bg-slate-50",  border: "border-l-4 border-l-slate-400" },
+  other:       { label: "Sonstiges",          icon: <StickyNote className="w-3.5 h-3.5" />,      color: "text-gray-600 bg-gray-50",   border: "border-l-4 border-l-gray-300" },
 };
 
 const MATCH_STATUS_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
@@ -214,47 +218,58 @@ export default function Documents() {
     archived: allDocs.filter(d => d.documentType === "other").length,
   };
 
+  // Count unmatched docs that could be matched
+  const unmatchedCount = stats.unmatched;
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold">Dokumente</h2>
-          <p className="text-sm text-muted-foreground">Belege, Rechnungen und Quittungen zentral verwalten</p>
+          <h2 className="text-xl font-bold">Belege</h2>
+          <p className="text-sm text-muted-foreground">Rechnungen, Kreditkartenabrechnungen und Barbelege zentral verwalten</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => autoMatchMutation.mutate({ threshold: 50 })}
-          disabled={autoMatchMutation.isPending}
-          className="gap-2"
-        >
-          {autoMatchMutation.isPending ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          Auto-Match
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            if (confirm(`Alle Dokumente neu analysieren? Dies kann einige Minuten dauern.`)) {
-              batchReanalyzeMutation.mutate();
-            }
-          }}
-          disabled={batchReanalyzeMutation.isPending}
-          className="gap-2"
-        >
-          {batchReanalyzeMutation.isPending ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          Alle neu analysieren
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (confirm(`Alle Belege neu analysieren? Dies kann einige Minuten dauern.`)) {
+                batchReanalyzeMutation.mutate();
+              }
+            }}
+            disabled={batchReanalyzeMutation.isPending}
+            className="gap-2 text-xs"
+          >
+            {batchReanalyzeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Neu analysieren
+          </Button>
+        </div>
       </div>
+
+      {/* Prominenter Abgleichen-Banner wenn ungematchte Belege vorhanden */}
+      {unmatchedCount > 0 && (
+        <div className="flex items-center justify-between gap-4 bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/30 rounded-xl px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/15 rounded-lg">
+              <Link2 className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <p className="font-semibold text-sm">{unmatchedCount} Beleg{unmatchedCount !== 1 ? "e" : ""} noch nicht mit Banktransaktionen abgeglichen</p>
+              <p className="text-xs text-muted-foreground">KI sucht automatisch passende Transaktionen nach Betrag, Gegenpartei und Datum</p>
+            </div>
+          </div>
+          <Button
+            onClick={() => autoMatchMutation.mutate({ threshold: 50 })}
+            disabled={autoMatchMutation.isPending}
+            className="gap-2 shrink-0"
+            size="default"
+          >
+            {autoMatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {autoMatchMutation.isPending ? "Abgleiche..." : "Jetzt abgleichen"}
+          </Button>
+        </div>
+      )}
 
       {/* KI-Fortschrittsanzeige */}
       {(autoMatchMutation.isPending || batchReanalyzeMutation.isPending) && (
@@ -308,12 +323,12 @@ export default function Documents() {
 
       {/* Upload Zone */}
       <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-        <h3 className="font-semibold mb-3">Neues Dokument hochladen</h3>
+        <h3 className="font-semibold mb-3">Neuen Beleg hochladen</h3>
         <DocumentUpload onUploaded={handleUploaded} fiscalYear={fiscalYear} />
         <p className="text-xs text-muted-foreground mt-2">
           Die KI analysiert den Beleg automatisch und extrahiert Betrag, Gegenpartei und Datum.
-          Dokumente werden automatisch dem Geschäftsjahr <strong>GJ {fiscalYear}</strong> zugewiesen.
-          Klicken Sie «Auto-Match» um Dokumente automatisch mit Banktransaktionen zu verknüpfen.
+          Belege werden automatisch dem Geschäftsjahr <strong>GJ {fiscalYear}</strong> zugewiesen.
+          Nutzen Sie den «Jetzt abgleichen»-Button oben um Belege automatisch mit Banktransaktionen zu verknüpfen.
         </p>
       </div>
 
@@ -403,7 +418,7 @@ export default function Documents() {
               return (
                 <div
                   key={doc.id}
-                  className="group flex items-start gap-3 p-4 hover:bg-muted/40 transition-colors cursor-pointer border-l-2 border-l-transparent hover:border-l-primary"
+                  className={`group flex items-start gap-3 p-4 hover:bg-muted/40 transition-colors cursor-pointer ${typeInfo.border}`}
                   onClick={() => navigate(`/documents/${doc.id}`)}
                 >
                   {/* Thumbnail */}

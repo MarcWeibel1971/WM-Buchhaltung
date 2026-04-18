@@ -124,9 +124,8 @@ export default function BankImport() {
   const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
   const { data: importAutomation } = trpc.importAutomation.get.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
-  // For pending transactions: show all (no fiscal year filter) if current year is open
-  // For matched/all: filter by fiscal year as usual
-  const txFiscalYear = (statusFilter === "pending" && isCurrentYearOpen) ? undefined : (fiscalYear || undefined);
+  // Always filter by selected fiscal year (consistent across all views)
+  const txFiscalYear = fiscalYear || undefined;
   const { data: transactions, refetch: refetchTxs } = trpc.bankImport.getTransactionsByStatus.useQuery(
     { status: statusFilter, bankAccountId: pendingFilter, fiscalYear: txFiscalYear }
   );
@@ -354,13 +353,24 @@ export default function BankImport() {
     if (!parsed.length) { toast.error("Keine Transaktionen erkannt. Bitte CAMT.053, MT940 oder CSV hochladen."); setImporting(false); return; }
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "unknown";
     const fileType = ext === "xml" ? "CAMT.053" : ext === "sta" || ext === "mt940" ? "MT940" : ext === "csv" || ext === "txt" ? "CSV" : ext;
-    // Auto-detect fiscal year from first transaction date
+    // Check fiscal year from first transaction date
     const firstDate = parsed[0]?.transactionDate;
     if (firstDate) {
       const txYear = parseInt(String(firstDate).substring(0, 4), 10);
-      if (!isNaN(txYear) && txYear !== fiscalYear) {
+      if (!isNaN(txYear)) {
         const yearInfo = fiscalYearInfos.find(fy => fy.year === txYear);
-        if (!yearInfo || !yearInfo.isClosed) {
+        if (!yearInfo) {
+          toast.error(`Kein Geschäftsjahr ${txYear} vorhanden. Bitte zuerst unter Abschluss → Jahresabschluss das Geschäftsjahr ${txYear} eröffnen.`);
+          setImporting(false);
+          return;
+        }
+        if (yearInfo.isClosed) {
+          toast.error(`Das Geschäftsjahr ${txYear} ist geschlossen. Import nicht möglich.`);
+          setImporting(false);
+          return;
+        }
+        // Switch to the correct fiscal year
+        if (txYear !== fiscalYear) {
           setFiscalYear(txYear);
           toast.info(`Geschäftsjahr auf ${txYear} gewechselt`);
         }
@@ -380,13 +390,21 @@ export default function BankImport() {
       if (!resp.ok) throw new Error(result.error ?? "PDF-Verarbeitung fehlgeschlagen");
       if (!result.transactions?.length) { toast.error("Keine Transaktionen im PDF erkannt"); return; }
       toast.info(`${result.totalExtracted} Transaktionen aus PDF extrahiert. Importiere...`);
-      // Auto-detect fiscal year from first transaction date in PDF
+      // Check fiscal year from first transaction date in PDF
       const firstPdfDate = result.transactions[0]?.transactionDate;
       if (firstPdfDate) {
         const txYear = parseInt(String(firstPdfDate).substring(0, 4), 10);
-        if (!isNaN(txYear) && txYear !== fiscalYear) {
+        if (!isNaN(txYear)) {
           const yearInfo = fiscalYearInfos.find(fy => fy.year === txYear);
-          if (!yearInfo || !yearInfo.isClosed) {
+          if (!yearInfo) {
+            toast.error(`Kein Geschäftsjahr ${txYear} vorhanden. Bitte zuerst unter Abschluss → Jahresabschluss das Geschäftsjahr ${txYear} eröffnen.`);
+            return;
+          }
+          if (yearInfo.isClosed) {
+            toast.error(`Das Geschäftsjahr ${txYear} ist geschlossen. Import nicht möglich.`);
+            return;
+          }
+          if (txYear !== fiscalYear) {
             setFiscalYear(txYear);
             toast.info(`Geschäftsjahr auf ${txYear} gewechselt`);
           }

@@ -155,7 +155,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
     }
 
     // Determine document type: use explicit form value, or AI-detected type, or fallback to "other"
-    const VALID_DOC_TYPES = ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"];
+    const VALID_DOC_TYPES = ["invoice_in", "invoice_out", "receipt", "bank_statement", "credit_card_statement", "other"];
     let detectedDocType = "other";
     if (documentType && VALID_DOC_TYPES.includes(documentType)) {
       detectedDocType = documentType;

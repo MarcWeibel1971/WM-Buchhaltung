@@ -1163,3 +1163,16 @@
 - [x] Frontend: Link im Admin-Bereich der Sidebar zu diesem Tab
 - [x] BankImport: Nach Upload die Einstellungen laden und nur aktivierte Aktionen ausführen
 - [ ] BankImport: Visuelle Anzeige welche Aktionen beim letzten Import ausgeführt wurden (optional)
+
+## Feature: Bankimport GJ-Pflicht und GJ-Filter
+
+- [x] Bankimport: Beim Import prüfen ob passendes GJ geöffnet ist; wenn nicht → Fehlermeldung mit Hinweis GJ zu eröffnen
+- [x] Bankimport: Ausstehende Transaktionen immer nach gewähltem GJ filtern (nicht mehr "alle pending anzeigen")
+- [x] Bankimport: GJ-Wechsel beim Upload nur wenn Ziel-GJ geöffnet ist (kein auto-switch zu geschlossenem GJ)
+
+## Feature: Belege-Seite Verbesserungen
+
+- [x] Belege: "Dokumente" → "Belege" umbenennen (Seitenname, Sidebar, Header)
+- [x] Belege: Prominenter "Abgleichen"-Banner wenn ungematchte Belege vorhanden (oben, mit Anzahl)
+- [x] Belege: Farbliche Unterscheidung der Dokumentkategorien (Rechnungen=blau, Kreditkartenabrechnungen=lila, Barbelege=grün)
+- [x] Backend: credit_card_statement zu VALID_DOC_TYPES hinzugefügt (wurde vorher als 'other' gespeichert)

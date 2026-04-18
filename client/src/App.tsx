@@ -157,6 +157,8 @@ function AppRouter() {
       <Route path="/vat" component={VatPage} />
       <Route path="/year-end" component={YearEnd} />
       <Route path="/settings" component={Settings} />
+      <Route path="/einstellungen" component={Settings} />
+      <Route path="/einstellungen/:tab" component={Settings} />
       <Route path="/accounts" component={Accounts} />
       <Route path="/admin/global-rules" component={GlobalRules} />
 

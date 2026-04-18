@@ -79,11 +79,28 @@ const INSURANCE_COLORS: Record<string, string> = {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Settings() {
-  // Support ?tab=subscription for Stripe redirect
+  // Support ?tab=subscription for Stripe redirect + /einstellungen/:tab path segments
   const initialTab = (() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab");
     if (tab && TABS.some(t => t.id === tab)) return tab as TabId;
+    // Support /einstellungen/bankkonten → tab "bank"
+    const pathSegment = window.location.pathname.split("/").pop();
+    const pathTabMap: Record<string, TabId> = {
+      bankkonten: "bank",
+      kontenplan: "chartOfAccounts",
+      mitarbeiter: "employees",
+      versicherungen: "insurance",
+      buchungsregeln: "rules",
+      eroeffnungssalden: "opening",
+      abschreibungen: "depreciation",
+      lieferanten: "suppliers",
+      kunden: "customers",
+      vorlagen: "templates",
+      datenschutz: "dsg",
+      abonnement: "subscription",
+    };
+    if (pathSegment && pathTabMap[pathSegment]) return pathTabMap[pathSegment];
     return "company" as TabId;
   })();
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);

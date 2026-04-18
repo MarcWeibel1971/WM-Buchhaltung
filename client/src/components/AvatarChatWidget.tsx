@@ -180,7 +180,6 @@ export default function AvatarChatWidget() {
 
   // tRPC
   const avatarChatMutation = trpc.avatarChat.chat.useMutation();
-  const transcribeVoiceMutation = trpc.avatarChat.transcribeVoice.useMutation();
 
   // Auto-scroll
   useEffect(() => {
@@ -363,21 +362,19 @@ export default function AvatarChatWidget() {
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
 
         try {
-          // Upload audio for transcription
+          // Send audio DIRECTLY to transcription endpoint (no S3 roundtrip)
           const formData = new FormData();
           formData.append("audio", blob, "recording.webm");
-          const uploadRes = await fetch("/api/upload/voice", { method: "POST", body: formData });
-          if (!uploadRes.ok) throw new Error("Upload failed");
-          const { url: audioUrl } = await uploadRes.json();
+          const transcribeRes = await fetch("/api/upload/transcribe", { method: "POST", body: formData });
+          if (!transcribeRes.ok) {
+            const errData = await transcribeRes.json().catch(() => ({ error: "Unbekannter Fehler" }));
+            throw new Error(errData.error ?? "Transkription fehlgeschlagen");
+          }
+          const { text } = await transcribeRes.json() as { text: string };
 
-          const transcribeResult = await transcribeVoiceMutation.mutateAsync({
-            audioUrl,
-            language: "de",
-          });
-
-          if (transcribeResult.text?.trim()) {
+          if (text?.trim()) {
             setVadStatus("sending");
-            await sendMessage(transcribeResult.text.trim());
+            await sendMessage(text.trim());
           }
         } catch (err) {
           console.error("Transcription error:", err);
@@ -431,7 +428,7 @@ export default function AvatarChatWidget() {
       setIsListening(false);
       setVadStatus("idle");
     }
-  }, [isListening, stopListening, sendMessage, transcribeVoiceMutation]);
+  }, [isListening, stopListening, sendMessage]);
 
   // Cleanup on unmount
   useEffect(() => {

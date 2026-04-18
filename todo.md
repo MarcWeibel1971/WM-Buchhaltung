@@ -1130,3 +1130,7 @@
 - [x] CSS-Avatar: professioneller Berater mit grauem Haar, Brille, Jacket, Krawatte, Lip-Sync
 - [x] VAD-Mikrofon implementiert: automatisches Senden nach 1.5s Stille (kein manuelles Stop nötig)
 - [x] AudioContext.decodeAudioData für robuste ElevenLabs-Wiedergabe
+
+## Bugfix: Zahlungsstatus "Mit Banktransaktion verknüpft" falsch angezeigt
+- [x] DocumentDetail Zahlung-Tab: "Mit Banktransaktion verknüpft" nur anzeigen wenn bankTransactionId tatsächlich gesetzt ist
+- [x] Sprach-Transkription: direkter /api/upload/transcribe Endpunkt ohne S3-Umweg implementiert

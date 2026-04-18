@@ -922,15 +922,18 @@ export default function DocumentDetail() {
               {/* Payment Status */}
               <div className="bg-card border border-border rounded-xl p-4">
                 <h3 className="font-semibold text-sm mb-2">Zahlungsstatus</h3>
-                {doc.matchStatus === "matched" || doc.matchStatus === "manual" ? (
+                {(doc.matchStatus === "matched" || doc.matchStatus === "manual") && doc.bankTransactionId ? (
                   <div className="flex items-center gap-2 text-green-700">
                     <CheckCircle2 className="w-5 h-5" />
                     <span className="text-sm font-medium">Mit Banktransaktion verknüpft</span>
-                    {doc.bankTransactionId && (
-                      <Badge variant="outline" className="text-xs ml-1">
-                        Txn #{doc.bankTransactionId}
-                      </Badge>
-                    )}
+                    <Badge variant="outline" className="text-xs ml-1">
+                      Txn #{doc.bankTransactionId}
+                    </Badge>
+                  </div>
+                ) : (doc.matchStatus === "matched" || doc.matchStatus === "manual") && !doc.bankTransactionId ? (
+                  <div className="flex items-center gap-2 text-green-700">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span className="text-sm font-medium">Verbucht (ohne Banktransaktion)</span>
                   </div>
                 ) : doc.matchStatus === "pain001" ? (
                   <div className="flex items-center gap-2 text-blue-700">

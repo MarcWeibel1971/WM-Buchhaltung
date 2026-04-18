@@ -658,3 +658,57 @@ uploadRouter.post("/voice", audioUpload.single("audio"), async (req, res) => {
     return res.status(500).json({ error: err.message ?? "Audio-Upload fehlgeschlagen" });
   }
 });
+
+// ─── POST /api/upload/transcribe ──────────────────────────────────────────────
+// Accepts audio files and transcribes them DIRECTLY via Whisper API (no S3 roundtrip)
+uploadRouter.post("/transcribe", audioUpload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Keine Audio-Datei hochgeladen" });
+    }
+
+    const { ENV } = await import("./_core/env.js");
+
+    const ext = req.file.mimetype.includes("webm") ? "webm"
+      : req.file.mimetype.includes("wav") ? "wav"
+      : req.file.mimetype.includes("ogg") ? "ogg"
+      : req.file.mimetype.includes("mp4") || req.file.mimetype.includes("m4a") ? "m4a"
+      : "mp3";
+
+    // Build multipart form for Whisper API
+    const formData = new FormData();
+    const audioBlob = new Blob([new Uint8Array(req.file.buffer)], { type: req.file.mimetype });
+    formData.append("file", audioBlob, `audio.${ext}`);
+    formData.append("model", "whisper-1");
+    formData.append("response_format", "json");
+    formData.append("language", "de");
+    formData.append("prompt", "Buchhaltung Schweiz MWST Buchung Konto");
+
+    const baseUrl = ENV.forgeApiUrl.endsWith("/") ? ENV.forgeApiUrl : `${ENV.forgeApiUrl}/`;
+    const whisperUrl = new URL("v1/audio/transcriptions", baseUrl).toString();
+
+    console.log("[Transcribe] Sending audio to Whisper:", whisperUrl, "size:", req.file.size);
+
+    const response = await fetch(whisperUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${ENV.forgeApiKey}`,
+        "Accept-Encoding": "identity",
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      console.error("[Transcribe] Whisper error:", response.status, errorText);
+      return res.status(500).json({ error: `Transkription fehlgeschlagen: ${response.status} ${errorText}` });
+    }
+
+    const result = await response.json() as { text: string };
+    console.log("[Transcribe] Result:", result.text?.substring(0, 100));
+    return res.json({ text: result.text ?? "" });
+  } catch (err: any) {
+    console.error("[Transcribe] Error:", err);
+    return res.status(500).json({ error: err.message ?? "Transkription fehlgeschlagen" });
+  }
+});

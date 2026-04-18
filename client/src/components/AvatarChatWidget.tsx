@@ -169,14 +169,9 @@ export default function AvatarChatWidget() {
   const conversationHistoryRef = useRef<{ role: string; content: string }[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  // VAD refs
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const vadAnalyserRef = useRef<AnalyserNode | null>(null);
-  const vadStreamRef = useRef<MediaStream | null>(null);
-  const vadAnimFrameRef = useRef<number | null>(null);
-  const hasSpeechRef = useRef(false);
+  // Speech Recognition refs
+  const recognitionRef = useRef<any>(null);
+  const recognitionActiveRef = useRef(false);
 
   // tRPC
   const avatarChatMutation = trpc.avatarChat.chat.useMutation();
@@ -299,132 +294,69 @@ export default function AvatarChatWidget() {
   // ── VAD Microphone ────────────────────────────────────────────────────────
 
   const stopListening = useCallback(() => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (vadAnimFrameRef.current) cancelAnimationFrame(vadAnimFrameRef.current);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+    if (recognitionRef.current && recognitionActiveRef.current) {
+      recognitionActiveRef.current = false;
+      try { recognitionRef.current.stop(); } catch (_) {}
     }
-    if (vadStreamRef.current) {
-      vadStreamRef.current.getTracks().forEach((t) => t.stop());
-      vadStreamRef.current = null;
-    }
-    vadAnalyserRef.current = null;
     setIsListening(false);
     setVadStatus("idle");
-    hasSpeechRef.current = false;
   }, []);
 
-  const startListening = useCallback(async () => {
+  const startListening = useCallback(() => {
     if (isListening) {
       stopListening();
       return;
     }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      vadStreamRef.current = stream;
+    // Use Web Speech API (SpeechRecognition) – works directly in browser, no upload needed
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.error("SpeechRecognition not supported in this browser");
+      setVadStatus("idle");
+      return;
+    }
 
-      // Set up AudioContext for VAD
-      if (!audioContextRef.current || audioContextRef.current.state === "closed") {
-        audioContextRef.current = new AudioContext();
-      }
-      const ctx = audioContextRef.current;
-      if (ctx.state === "suspended") await ctx.resume();
+    const recognition = new SpeechRecognition();
+    recognition.lang = "de-CH";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    recognitionRef.current = recognition;
+    recognitionActiveRef.current = true;
 
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.8;
-      vadAnalyserRef.current = analyser;
-
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      // MediaRecorder for capturing audio
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-      const recorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorderRef.current = recorder;
-      audioChunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        if (!hasSpeechRef.current || audioChunksRef.current.length === 0) {
-          setVadStatus("idle");
-          setIsListening(false);
-          return;
-        }
-
-        setVadStatus("processing");
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
-
-        try {
-          // Send audio DIRECTLY to transcription endpoint (no S3 roundtrip)
-          const formData = new FormData();
-          formData.append("audio", blob, "recording.webm");
-          const transcribeRes = await fetch("/api/upload/transcribe", { method: "POST", body: formData });
-          if (!transcribeRes.ok) {
-            const errData = await transcribeRes.json().catch(() => ({ error: "Unbekannter Fehler" }));
-            throw new Error(errData.error ?? "Transkription fehlgeschlagen");
-          }
-          const { text } = await transcribeRes.json() as { text: string };
-
-          if (text?.trim()) {
-            setVadStatus("sending");
-            await sendMessage(text.trim());
-          }
-        } catch (err) {
-          console.error("Transcription error:", err);
-        } finally {
-          setVadStatus("idle");
-          setIsListening(false);
-          hasSpeechRef.current = false;
-        }
-      };
-
-      recorder.start(100); // collect data every 100ms
+    recognition.onstart = () => {
       setIsListening(true);
       setVadStatus("listening");
-      hasSpeechRef.current = false;
+    };
 
-      // VAD loop: detect speech and silence
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const SPEECH_THRESHOLD = 20; // RMS threshold for speech detection
-      const SILENCE_DURATION = 1500; // ms of silence before sending
-
-      const checkAudio = () => {
-        if (!vadAnalyserRef.current) return;
-        analyser.getByteFrequencyData(dataArray);
-
-        // Calculate RMS
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i];
-        const rms = Math.sqrt(sum / dataArray.length);
-
-        if (rms > SPEECH_THRESHOLD) {
-          // Speech detected
-          hasSpeechRef.current = true;
-          if (silenceTimerRef.current) {
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = null;
-          }
-        } else if (hasSpeechRef.current && !silenceTimerRef.current) {
-          // Silence after speech – start countdown
-          silenceTimerRef.current = setTimeout(() => {
-            silenceTimerRef.current = null;
-            stopListening();
-          }, SILENCE_DURATION);
+    recognition.onresult = (event: any) => {
+      const last = event.results[event.results.length - 1];
+      if (last.isFinal) {
+        const transcript = last[0].transcript.trim();
+        if (transcript) {
+          setVadStatus("sending");
+          sendMessage(transcript);
         }
+      }
+    };
 
-        vadAnimFrameRef.current = requestAnimationFrame(checkAudio);
-      };
+    recognition.onerror = (event: any) => {
+      console.error("SpeechRecognition error:", event.error);
+      recognitionActiveRef.current = false;
+      setIsListening(false);
+      setVadStatus("idle");
+    };
 
-      vadAnimFrameRef.current = requestAnimationFrame(checkAudio);
+    recognition.onend = () => {
+      recognitionActiveRef.current = false;
+      setIsListening(false);
+      setVadStatus("idle");
+    };
+
+    try {
+      recognition.start();
     } catch (err) {
-      console.error("Microphone error:", err);
+      console.error("SpeechRecognition start error:", err);
       setIsListening(false);
       setVadStatus("idle");
     }

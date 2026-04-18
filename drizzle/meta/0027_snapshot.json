@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "28b5dc9e-1ee1-41e1-a858-71b0f74a0a22",
-  "prevId": "9b7d8cf2-70db-4a0b-bca5-745746fe981c",
+  "id": "46cb0ac1-f446-4d29-8f11-7eaaf520d0aa",
+  "prevId": "2eefeae1-cb3d-41a5-8bba-15748de251a6",
   "tables": {
     "accounts": {
       "name": "accounts",
@@ -611,6 +611,35 @@
           "notNull": true,
           "autoincrement": false,
           "default": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "enum('global','org')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'org'"
+        },
+        "globalDebitAccountNumber": {
+          "name": "globalDebitAccountNumber",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "globalCreditAccountNumber": {
+          "name": "globalCreditAccountNumber",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "categoryHint": {
+          "name": "categoryHint",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "createdAt": {
           "name": "createdAt",
@@ -1341,7 +1370,7 @@
         },
         "documentType": {
           "name": "documentType",
-          "type": "enum('invoice_in','invoice_out','receipt','bank_statement','other')",
+          "type": "enum('invoice_in','invoice_out','receipt','bank_statement','credit_card_statement','other')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,

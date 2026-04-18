@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+  "id": "9b7d8cf2-70db-4a0b-bca5-745746fe981c",
   "prevId": "60e6c30e-1ee6-4225-8932-463c69f38bd2",
   "tables": {
     "accounts": {
@@ -2989,78 +2989,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "reminderLevel1Days": {
-          "name": "reminderLevel1Days",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 15
-        },
-        "reminderLevel1Fee": {
-          "name": "reminderLevel1Fee",
-          "type": "decimal(15,2)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'0'"
-        },
-        "reminderLevel1Grace": {
-          "name": "reminderLevel1Grace",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 10
-        },
-        "reminderLevel2Days": {
-          "name": "reminderLevel2Days",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 30
-        },
-        "reminderLevel2Fee": {
-          "name": "reminderLevel2Fee",
-          "type": "decimal(15,2)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'20'"
-        },
-        "reminderLevel2Grace": {
-          "name": "reminderLevel2Grace",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 10
-        },
-        "reminderLevel3Days": {
-          "name": "reminderLevel3Days",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 60
-        },
-        "reminderLevel3Fee": {
-          "name": "reminderLevel3Fee",
-          "type": "decimal(15,2)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'40'"
-        },
-        "reminderLevel3Grace": {
-          "name": "reminderLevel3Grace",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 7
-        },
         "isActive": {
           "name": "isActive",
           "type": "boolean",
@@ -4138,6 +4066,42 @@
         "currentOrganizationId": {
           "name": "currentOrganizationId",
           "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "passwordHash": {
+          "name": "passwordHash",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "emailVerified": {
+          "name": "emailVerified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "emailVerifyToken": {
+          "name": "emailVerifyToken",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "passwordResetToken": {
+          "name": "passwordResetToken",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "passwordResetExpiry": {
+          "name": "passwordResetExpiry",
+          "type": "timestamp",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

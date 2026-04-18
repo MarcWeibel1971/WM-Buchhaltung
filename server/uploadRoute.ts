@@ -62,21 +62,34 @@ uploadRouter.post("/document", upload.single("file"), async (req, res) => {
               content: `Du bist ein Schweizer Buchhalter. Extrahiere aus dem Beleg folgende Informationen als JSON:
 {
   "documentDate": "YYYY-MM-DD oder null",
+  "dueDate": "YYYY-MM-DD oder null (Fälligkeitsdatum / Zahlungsfrist)",
+  "invoiceNumber": "Rechnungsnummer/Belegnummer oder null",
   "totalAmount": Zahl oder null,
+  "netAmount": Zahl oder null (Nettobetrag ohne MWST),
   "vatAmount": Zahl oder null,
   "vatRate": Zahl (z.B. 8.1) oder null,
   "currency": "CHF" oder andere,
   "counterparty": "Firmenname oder Person",
+  "counterpartyUid": "UID-Nummer (z.B. CHE-123.456.789) oder null",
+  "counterpartyVatNumber": "MWST-Nummer oder null",
+  "counterpartyStreet": "Strasse und Hausnummer oder null",
+  "counterpartyZipCode": "PLZ oder null",
+  "counterpartyCity": "Ort oder null",
+  "counterpartyCountry": "Land oder null (Standard: Schweiz)",
   "counterpartyIban": "IBAN oder null",
+  "qrReference": "QR-Referenz (26-27 stellig numerisch) oder SCOR-Referenz (RF...) oder null",
+  "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
   "referenceNumber": "Referenznummer oder null",
   "description": "Kurzbeschreibung des Belegs (max 100 Zeichen)",
   "documentType": Einer der folgenden Werte (WICHTIG – wähle den passendsten!):
-    - "invoice_in" = Eingangsrechnung (Rechnung von einem Lieferanten AN uns, z.B. Hostpoint, Gewerbe-Treuhand, Mobility, AXA, Velokurier etc.)
+    - "invoice_in" = Eingangsrechnung (Rechnung von einem Lieferanten AN uns, z.B. Hostpoint, Gewerbe-Treuhand, Mobility, AXA Versicherung, Velokurier etc.)
     - "invoice_out" = Ausgangsrechnung (Rechnung VON uns an einen Kunden)
     - "receipt" = Quittung/Kassenbeleg (Barbelege, Kassenbons)
-    - "bank_statement" = Kontoauszug/Kreditkartenabrechnung (VISA, Bankauszug, Kreditkartenabrechnung)
+    - "bank_statement" = Kontoauszug einer Bank (Bankauszug, Kontobewegungen)
+    - "credit_card_statement" = Kreditkartenabrechnung (VISA, Mastercard, Raiffeisen Kreditkarte, Viseca – enthält einzelne Kreditkarten-Positionen mit Datum/Betrag/Details = Sammelbuchung!)
     - "other" = nur wenn keiner der obigen Typen passt
-  Hinweis: Die meisten Belege in einer KMU-Buchhaltung sind Eingangsrechnungen ("invoice_in") oder Kreditkartenabrechnungen ("bank_statement").
+  WICHTIG: Kreditkartenabrechnungen (Viseca, VISA, Mastercard) sind KEINE Kontoauszüge! Sie enthalten einzelne Positionen und müssen als "credit_card_statement" klassifiziert werden.
+  Hinweis: Die meisten Belege in einer KMU-Buchhaltung sind Eingangsrechnungen ("invoice_in").
   "suggestedAccount": "Kontonummer aus Schweizer KMU-Kontenrahmen oder null",
   "rawText": "Vollständiger extrahierter Text des Belegs"
 }
@@ -99,19 +112,30 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
                 type: "object",
                 properties: {
                   documentDate: { type: ["string", "null"] },
+                  dueDate: { type: ["string", "null"] },
+                  invoiceNumber: { type: ["string", "null"] },
                   totalAmount: { type: ["number", "null"] },
+                  netAmount: { type: ["number", "null"] },
                   vatAmount: { type: ["number", "null"] },
                   vatRate: { type: ["number", "null"] },
                   currency: { type: ["string", "null"] },
                   counterparty: { type: ["string", "null"] },
+                  counterpartyUid: { type: ["string", "null"] },
+                  counterpartyVatNumber: { type: ["string", "null"] },
+                  counterpartyStreet: { type: ["string", "null"] },
+                  counterpartyZipCode: { type: ["string", "null"] },
+                  counterpartyCity: { type: ["string", "null"] },
+                  counterpartyCountry: { type: ["string", "null"] },
                   counterpartyIban: { type: ["string", "null"] },
+                  qrReference: { type: ["string", "null"] },
+                  paymentMethod: { type: ["string", "null"] },
                   referenceNumber: { type: ["string", "null"] },
                   description: { type: ["string", "null"] },
                   documentType: { type: ["string", "null"] },
                   suggestedAccount: { type: ["string", "null"] },
                   rawText: { type: ["string", "null"] },
                 },
-                required: ["documentDate", "totalAmount", "vatAmount", "vatRate", "currency", "counterparty", "counterpartyIban", "referenceNumber", "description", "documentType", "suggestedAccount", "rawText"],
+                required: ["documentDate", "dueDate", "invoiceNumber", "totalAmount", "netAmount", "vatAmount", "vatRate", "currency", "counterparty", "counterpartyUid", "counterpartyVatNumber", "counterpartyStreet", "counterpartyZipCode", "counterpartyCity", "counterpartyCountry", "counterpartyIban", "qrReference", "paymentMethod", "referenceNumber", "description", "documentType", "suggestedAccount", "rawText"],
                 additionalProperties: false,
               },
             },
@@ -360,6 +384,126 @@ Antworte NUR mit JSON: { "transactions": [...], "accountNumber": "IBAN", "statem
     });
   } catch (err: any) {
     console.error("[PDF Bank Import] Error:", err);
+    return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
+  }
+});
+
+// ─── PDF Chart of Accounts Import ──────────────────────────────────────────────
+const chartPdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Nur PDF- oder Bild-Dateien erlaubt"));
+  },
+});
+
+uploadRouter.post("/chart-of-accounts-pdf", chartPdfUpload.single("file"), async (req, res) => {
+  let user;
+  try {
+    user = await sdk.authenticateRequest(req as any);
+  } catch {
+    return res.status(401).json({ error: "Nicht authentifiziert" });
+  }
+
+  if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
+
+  try {
+    // Upload to S3 to get a URL for LLM processing
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "pdf";
+    const fileKey = `chart-of-accounts/${user.id}-${nanoid()}.${ext}`;
+    const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
+
+    const isPdf = req.file.mimetype === "application/pdf";
+    const isImage = req.file.mimetype.startsWith("image/");
+
+    // Extract chart of accounts via LLM
+    const extractResp = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `Du bist ein Schweizer Buchhalter und extrahierst einen Kontenplan aus einem Dokument.
+Extrahiere ALLE Konten (keine Gruppen/Überschriften, nur buchbare Konten mit 4-stelliger Nummer).
+Jedes Konto hat:
+- number: Kontonummer als String (z.B. "1000", "4000")
+- name: Kontobezeichnung (z.B. "Kasse", "Materialaufwand")
+- accountType: Einer von: "asset" (Aktiv, 1000-1999), "liability" (Passiv, 2000-2799), "equity" (Eigenkapital, 2800-2999 und 9000+), "revenue" (Ertrag, 3000-3999), "expense" (Aufwand, 4000-8999)
+
+Regeln:
+- Nur Konten mit mindestens 4-stelliger Nummer extrahieren (keine Gruppen wie 1, 10, 100)
+- Kontonummern müssen numerisch sein
+- Ignoriere Gruppenüberschriften, Summenzeilen und Leerzeilen
+- Wenn das Dokument Spalten wie "Soll" oder "Haben" mit Beträgen hat, ignoriere die Beträge
+
+Antworte NUR mit JSON: { "accounts": [...], "totalFound": number, "documentTitle": "string oder null" }`,
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text" as const, text: "Extrahiere alle Konten aus diesem Kontenplan:" },
+            isPdf
+              ? { type: "file_url" as const, file_url: { url: fileUrl, mime_type: "application/pdf" as const } }
+              : { type: "image_url" as const, image_url: { url: fileUrl, detail: "high" as const } },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "chart_of_accounts_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              accounts: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    number: { type: "string" },
+                    name: { type: "string" },
+                    accountType: { type: "string", enum: ["asset", "liability", "equity", "revenue", "expense"] },
+                  },
+                  required: ["number", "name", "accountType"],
+                  additionalProperties: false,
+                },
+              },
+              totalFound: { type: "number" },
+              documentTitle: { type: ["string", "null"] },
+            },
+            required: ["accounts", "totalFound", "documentTitle"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const msgContent = extractResp.choices[0]?.message?.content;
+    if (!msgContent) return res.status(500).json({ error: "KI-Extraktion fehlgeschlagen" });
+
+    const parsed = typeof msgContent === "string" ? JSON.parse(msgContent) : msgContent;
+
+    // Validate and clean accounts
+    const accounts = (parsed.accounts ?? [])
+      .filter((a: any) => {
+        const num = parseInt(a.number);
+        return !isNaN(num) && num >= 1000 && a.name && a.name.trim().length > 0;
+      })
+      .map((a: any) => ({
+        number: String(a.number).trim(),
+        name: String(a.name).trim(),
+        accountType: a.accountType || "expense",
+      }));
+
+    return res.json({
+      success: true,
+      accounts,
+      totalFound: accounts.length,
+      documentTitle: parsed.documentTitle ?? null,
+    });
+  } catch (err: any) {
+    console.error("[PDF Chart Import] Error:", err);
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
   }
 });

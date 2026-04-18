@@ -1,0 +1,1 @@
+ALTER TABLE `documents` MODIFY COLUMN `documentType` enum('invoice_in','invoice_out','receipt','bank_statement','credit_card_statement','other') NOT NULL DEFAULT 'other';

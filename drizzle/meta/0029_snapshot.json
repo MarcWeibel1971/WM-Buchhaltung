@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "28b5dc9e-1ee1-41e1-a858-71b0f74a0a22",
-  "prevId": "9b7d8cf2-70db-4a0b-bca5-745746fe981c",
+  "id": "d4e5f6a7-b8c9-4012-bcde-f01234567890",
+  "prevId": "c3d4e5f6-a7b8-4901-abcd-ef0123456789",
   "tables": {
     "accounts": {
       "name": "accounts",
@@ -612,6 +612,35 @@
           "autoincrement": false,
           "default": true
         },
+        "scope": {
+          "name": "scope",
+          "type": "enum('global','org')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'org'"
+        },
+        "globalDebitAccountNumber": {
+          "name": "globalDebitAccountNumber",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "globalCreditAccountNumber": {
+          "name": "globalCreditAccountNumber",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "categoryHint": {
+          "name": "categoryHint",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "createdAt": {
           "name": "createdAt",
           "type": "timestamp",
@@ -868,8 +897,7 @@
           "type": "varchar(10)",
           "primaryKey": false,
           "notNull": false,
-          "autoincrement": false,
-          "default": "'mw'"
+          "autoincrement": false
         },
         "status": {
           "name": "status",
@@ -1341,7 +1369,7 @@
         },
         "documentType": {
           "name": "documentType",
-          "type": "enum('invoice_in','invoice_out','receipt','bank_statement','other')",
+          "type": "enum('invoice_in','invoice_out','receipt','bank_statement','credit_card_statement','other')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
@@ -2989,6 +3017,18 @@
           "notNull": false,
           "autoincrement": false
         },
+        "reminderLevel1Days": { "name": "reminderLevel1Days", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 15 },
+        "reminderLevel1Fee": { "name": "reminderLevel1Fee", "type": "decimal(15,2)", "primaryKey": false, "notNull": true, "autoincrement": false, "default": "'0'" },
+        "reminderLevel1Grace": { "name": "reminderLevel1Grace", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 10 },
+        "reminderLevel2Days": { "name": "reminderLevel2Days", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 30 },
+        "reminderLevel2Fee": { "name": "reminderLevel2Fee", "type": "decimal(15,2)", "primaryKey": false, "notNull": true, "autoincrement": false, "default": "'20'" },
+        "reminderLevel2Grace": { "name": "reminderLevel2Grace", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 10 },
+        "reminderLevel3Days": { "name": "reminderLevel3Days", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 60 },
+        "reminderLevel3Fee": { "name": "reminderLevel3Fee", "type": "decimal(15,2)", "primaryKey": false, "notNull": true, "autoincrement": false, "default": "'40'" },
+        "reminderLevel3Grace": { "name": "reminderLevel3Grace", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 7 },
+        "defaultBankAccountId": { "name": "defaultBankAccountId", "type": "int", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "creditCardClearingAccountId": { "name": "creditCardClearingAccountId", "type": "int", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "defaultSalaryExpenseAccountId": { "name": "defaultSalaryExpenseAccountId", "type": "int", "primaryKey": false, "notNull": false, "autoincrement": false },
         "isActive": {
           "name": "isActive",
           "type": "boolean",

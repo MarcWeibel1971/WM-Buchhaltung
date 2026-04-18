@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { parseStatement } from "../../../shared/bankParser";
+import { useFiscalYear } from "@/contexts/FiscalYearContext";
 
 function formatCHF(val: string | number) {
   const n = typeof val === "string" ? parseFloat(val) : val;
@@ -101,9 +102,10 @@ export default function BankImport() {
     }
   }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { fiscalYear } = useFiscalYear();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   const { data: transactions, refetch: refetchTxs } = trpc.bankImport.getTransactionsByStatus.useQuery(
-    { status: statusFilter, bankAccountId: pendingFilter }
+    { status: statusFilter, bankAccountId: pendingFilter, fiscalYear: fiscalYear || undefined }
   );
   const { data: accounts } = trpc.accounts.list.useQuery();
   const { data: allDocs } = trpc.documents.list.useQuery({ limit: 500 });

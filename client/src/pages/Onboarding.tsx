@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Loader2, Building2, CheckCircle2, LogOut, ArrowLeft } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Loader2, Building2, CheckCircle2, LogOut, ArrowLeft, Search } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -38,16 +38,79 @@ export default function Onboarding() {
     initialFiscalYear: new Date().getFullYear(),
   });
 
+  // UID Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [selectedFromSearch, setSelectedFromSearch] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounced search query
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  const { data: searchResults, isLoading: isSearching } = trpc.uidSearch.search.useQuery(
+    { name: debouncedQuery },
+    { enabled: debouncedQuery.length >= 3 }
+  );
+
+  // Debounce the search input
+  const handleNameChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    setForm((prev) => ({ ...prev, name: value }));
+    setSelectedFromSearch(false);
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (value.length >= 3) {
+      debounceRef.current = setTimeout(() => {
+        setDebouncedQuery(value);
+        setShowDropdown(true);
+      }, 400);
+    } else {
+      setShowDropdown(false);
+      setDebouncedQuery("");
+    }
+  }, []);
+
+  // Select a company from search results
+  const handleSelectCompany = useCallback((company: NonNullable<typeof searchResults>[number]) => {
+    setForm((prev) => ({
+      ...prev,
+      name: company.name,
+      legalForm: company.legalForm || prev.legalForm,
+      uid: company.uidFormatted || prev.uid,
+      street: company.street || prev.street,
+      zipCode: company.zipCode || prev.zipCode,
+      city: company.town || prev.city,
+      canton: company.canton || prev.canton,
+      vatNumber: company.vatStatus === "active" ? company.vatNumber : prev.vatNumber,
+    }));
+    setSearchQuery(company.name);
+    setSelectedFromSearch(true);
+    setShowDropdown(false);
+    toast.success(`Daten von "${company.name}" aus dem Handelsregister übernommen`);
+  }, []);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const createMutation = trpc.organizations.create.useMutation({
     onSuccess: async (data) => {
       toast.success(`Organisation "${data.name}" angelegt`);
-      // Auth + Orgs neu laden, damit das Layout / der Guard die neue Org findet
       await Promise.all([
         utils.auth.me.invalidate(),
         utils.organizations.listMine.invalidate(),
         utils.organizations.getCurrent.invalidate(),
       ]);
-      // Kurzes Delay für die Query-Invalidierung, dann Reload
       setTimeout(() => window.location.href = "/", 500);
     },
     onError: (err) => {
@@ -114,25 +177,80 @@ export default function Onboarding() {
           <CardHeader>
             <CardTitle>Neue Organisation</CardTitle>
             <CardDescription>
-              Sie können später weitere Firmen hinzufügen oder diese Daten in den
-              Einstellungen anpassen.
+              Geben Sie den Firmennamen ein – die Daten werden automatisch aus dem
+              Schweizer Handelsregister geladen.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Firma */}
+              {/* Firma mit Handelsregister-Suche */}
               <div className="space-y-4">
-                <div>
+                <div className="relative" ref={dropdownRef}>
                   <Label htmlFor="name">Firmenname *</Label>
-                  <Input
-                    id="name"
-                    value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    placeholder="Meine Firma AG"
-                    required
-                    autoFocus
-                  />
+                  <div className="relative">
+                    <Input
+                      ref={inputRef}
+                      id="name"
+                      value={searchQuery}
+                      onChange={(e) => handleNameChange(e.target.value)}
+                      onFocus={() => {
+                        if (searchResults && searchResults.length > 0 && !selectedFromSearch) {
+                          setShowDropdown(true);
+                        }
+                      }}
+                      placeholder="Firmenname eingeben (z.B. Muster AG)"
+                      required
+                      autoFocus
+                      autoComplete="off"
+                    />
+                    {isSearching && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
+                  {!selectedFromSearch && searchQuery.length >= 3 && (
+                    <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                      <Search className="h-3 w-3" />
+                      Suche im Schweizer Handelsregister...
+                    </p>
+                  )}
+                  {selectedFromSearch && (
+                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Daten aus dem Handelsregister übernommen
+                    </p>
+                  )}
+
+                  {/* Search Results Dropdown */}
+                  {showDropdown && searchResults && searchResults.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                      {searchResults.map((company, idx) => (
+                        <button
+                          key={`${company.uid}-${idx}`}
+                          type="button"
+                          className="w-full text-left px-3 py-2.5 hover:bg-accent hover:text-accent-foreground transition-colors border-b border-border/50 last:border-0"
+                          onClick={() => handleSelectCompany(company)}
+                        >
+                          <div className="font-medium text-sm">{company.name}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {company.uidFormatted}
+                            {company.town && ` · ${company.zipCode} ${company.town}`}
+                            {company.legalForm && company.legalForm !== "Andere" && ` · ${company.legalForm}`}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showDropdown && searchResults && searchResults.length === 0 && debouncedQuery.length >= 3 && !isSearching && (
+                    <div className="absolute z-50 w-full mt-1 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg p-3">
+                      <p className="text-sm text-muted-foreground text-center">
+                        Keine Firma gefunden. Sie können die Daten manuell eingeben.
+                      </p>
+                    </div>
+                  )}
                 </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label htmlFor="legalForm">Rechtsform</Label>
@@ -282,7 +400,9 @@ export default function Onboarding() {
                   <Input
                     id="website"
                     value={form.website}
-                    onChange={(e) => setForm({ ...form, website: e.target.value })}
+                    onChange={(e) =>
+                      setForm({ ...form, website: e.target.value })
+                    }
                   />
                 </div>
               </div>

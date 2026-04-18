@@ -121,6 +121,30 @@ export const userOrganizations = mysqlTable("user_organizations", {
 export type UserOrganization = typeof userOrganizations.$inferSelect;
 export type InsertUserOrganization = typeof userOrganizations.$inferInsert;
 
+// ─── Subscriptions (Stripe Abo) ──────────────────────────────────────────────
+export const subscriptions = mysqlTable("subscriptions", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  userId: int("userId").notNull(),
+  // Stripe IDs
+  stripeCustomerId: varchar("stripeCustomerId", { length: 255 }).notNull(),
+  stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }),
+  // Plan: starter | professional | enterprise
+  plan: mysqlEnum("plan", ["starter", "professional", "enterprise"]).default("starter").notNull(),
+  // Status: trialing | active | past_due | canceled | unpaid
+  status: mysqlEnum("status", ["trialing", "active", "past_due", "canceled", "unpaid", "incomplete"]).default("trialing").notNull(),
+  // Billing period
+  currentPeriodStart: timestamp("currentPeriodStart"),
+  currentPeriodEnd: timestamp("currentPeriodEnd"),
+  cancelAtPeriodEnd: boolean("cancelAtPeriodEnd").default(false).notNull(),
+  // Trial
+  trialEnd: timestamp("trialEnd"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = typeof subscriptions.$inferInsert;
+
 // ─── Accounts (Kontenplan) ────────────────────────────────────────────────────
 export const accounts = mysqlTable(
   "accounts",
@@ -542,7 +566,7 @@ export const documents = mysqlTable("documents", {
   // File size in bytes
   fileSize: int("fileSize").notNull(),
   // Document type
-  documentType: mysqlEnum("documentType", ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"]).default("other").notNull(),
+  documentType: mysqlEnum("documentType", ["invoice_in", "invoice_out", "receipt", "bank_statement", "credit_card_statement", "other"]).default("other").notNull(),
   // Optional link to journal entry
   journalEntryId: int("journalEntryId"),
   // Optional link to bank transaction
@@ -593,6 +617,16 @@ export const bookingRules = mysqlTable("booking_rules", {
   source: mysqlEnum("source", ["manual", "ai"]).default("manual").notNull(),
   // Is this rule active?
   isActive: boolean("isActive").default(true).notNull(),
+  // ─── Two-Level Rule System ────────────────────────────────────────────────
+  // Scope: "global" = system-wide base rule (trained by admin, applies to all orgs)
+  //        "org"    = org-specific rule (learned from this org's corrections, has priority)
+  scope: mysqlEnum("scope", ["global", "org"]).default("org").notNull(),
+  // Global account mapping: for global rules, store generic account NUMBER (not org-specific ID)
+  // When matching, the system resolves the number to the org's actual account ID
+  globalDebitAccountNumber: varchar("globalDebitAccountNumber", { length: 20 }),
+  globalCreditAccountNumber: varchar("globalCreditAccountNumber", { length: 20 }),
+  // Optional: category hint for global rules (e.g., "Versicherungen", "Telekommunikation")
+  categoryHint: varchar("categoryHint", { length: 200 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

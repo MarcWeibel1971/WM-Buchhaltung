@@ -27,6 +27,7 @@ import Payroll from "./pages/Payroll";
 import Reports from "./pages/Reports";
 import VatPage from "./pages/Vat";
 import Documents from "./pages/Documents";
+import DocumentDetail from "./pages/DocumentDetail";
 import Settings from "./pages/Settings";
 import YearEnd from "./pages/YearEnd";
 import QrBillGenerator from "./pages/QrBillGenerator";
@@ -35,6 +36,7 @@ import TimeTracking from "./pages/TimeTracking";
 import Onboarding from "./pages/Onboarding";
 import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
+import GlobalRules from "./pages/GlobalRules";
 import Layout from "./components/Layout";
 
 /**
@@ -131,6 +133,7 @@ function AppRouter() {
       <Route path="/reports" component={Reports} />
       <Route path="/accounts">{() => { window.location.replace("/reports"); return null; }}</Route>
       <Route path="/vat" component={VatPage} />
+      <Route path="/documents/:id" component={DocumentDetail} />
       <Route path="/documents" component={Documents} />
       <Route path="/settings" component={Settings} />
       <Route path="/year-end" component={YearEnd} />
@@ -139,6 +142,7 @@ function AppRouter() {
       <Route path="/rechnungen" component={Invoices} />
       <Route path="/mahnwesen" component={OpenPositions} />
       <Route path="/time-tracking" component={TimeTracking} />
+      <Route path="/admin/global-rules" component={GlobalRules} />
       <Route path="/zahlungen">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
       <Route path="/qr-rechnung">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
       <Route path="/404" component={NotFound} />

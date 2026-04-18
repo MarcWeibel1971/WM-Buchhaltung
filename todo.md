@@ -883,3 +883,92 @@
 - [x] Landing Page /landing muss auch für eingeloggte User erreichbar sein (kein Redirect zum Onboarding)
 - [x] Logout-Funktion muss auf der published Site funktionieren (nicht nur Manus OAuth)
 - [x] Nach Logout → Redirect auf Landing Page
+
+## Feature: Stripe-Bezahlfunktion
+- [x] Stripe-Feature via webdev_add_feature einrichten (Dependencies, Webhooks, Scaffold)
+- [x] Stripe API-Keys konfigurieren (Secret Key, Publishable Key, Webhook Secret)
+- [x] DB-Schema: subscriptions-Tabelle (stripeCustomerId, stripeSubscriptionId, plan, status, currentPeriodEnd)
+- [x] Backend: Stripe Checkout Session erstellen (pro Plan: Starter/Professional/Enterprise)
+- [x] Backend: Stripe Webhook Handler (checkout.session.completed, invoice.paid, customer.subscription.updated/deleted)
+- [x] Backend: Kundenportal-Session erstellen (Abo verwalten, kündigen, Zahlungsmethode ändern)
+- [x] Backend: Abo-Status-Abfrage (aktueller Plan, Ablaufdatum, Status)
+- [x] Frontend: Pricing-Seite mit echten Stripe Checkout-Buttons verbinden
+- [x] Frontend: Abo-Status im Dashboard/Settings anzeigen (aktueller Plan, nächste Zahlung)
+- [x] Frontend: "Abo verwalten" Button → Stripe Kundenportal
+- [ ] Feature-Gating: Funktionen je nach Plan einschränken (z.B. Anzahl Firmen, Lohnbuchhaltung)
+- [ ] Tests: Vitest für Stripe Webhook-Verarbeitung und Abo-Status-Logik
+- [x] Stripe Checkout: CHF als Währung fixieren (nicht EUR)
+- [x] Stripe Webhook: Registrierung und Handler für Abo-Status-Updates
+- [ ] Stripe Dashboard: Firmennamen auf KLAX setzen
+
+## Bugfix: GitHub Actions CI
+- [x] CI: "Multiple versions of pnpm specified" – packageManager in package.json und PNPM_VERSION in ci.yml synchronisieren
+
+## Feature: Zefix-Integration (Handelsregister-Autofill)
+- [x] Backend: tRPC-Endpunkt für Zefix/UID-Suche (SOAP API)
+- [x] Frontend: Onboarding-Formular mit Autocomplete-Dropdown
+- [x] Autofill: Firmenname, Rechtsform, UID, Adresse, MWST-Nr. automatisch abfüllen
+- [x] Autofill: Kanton korrekt aus UID-Daten übernommen
+
+## Feature: Beleganalyse Detailansicht (Kontera-Style)
+- [x] Frontend: Beleg-Detailansicht mit PDF/Bild-Vorschau links und editierbaren Feldern rechts
+- [x] Frontend: Tabs/Schritte wie Kontera (Kontakt, Belegdetails, Kontierung, Zahlung)
+- [x] Frontend: Kontakt-Sektion: Firmenname, UID, MWST-Nr., Strasse, PLZ, Ort, Land (aus AI-Extraktion)
+- [x] Frontend: Belegdetails-Sektion: Belegnummer, Belegdatum, Fälligkeitsdatum, Beschreibung, Betrag, MWST
+- [x] Frontend: Kontierung-Sektion: Konto-Vorschlag (Auto-Learn hat Priorität, LLM als Fallback), Steuersatz, Brutto
+- [x] Frontend: Zahlungs-Sektion: IBAN, QR-Referenz, Zahlungsart, Betrag, Währung, Empfänger-Details
+- [x] Frontend: Beleg-Liste mit Thumbnail, Datum, Kontakt, Kontierung, Betrag (wie Kontera Übersicht)
+- [x] Backend: Erweiterte AI-Extraktion für alle Kontera-Felder (Fälligkeitsdatum, QR-Referenz, Zahlungsart etc.)
+- [x] Integration: Auto-Learn Kontierung bleibt bestehen, LLM-Vorschlag nur als Fallback
+
+## Bugfix + Feature: Kontoplan-Import (Excel + PDF)
+- [x] Bugfix: Excel-Kontoplan-Import funktioniert nicht – Spalten mit Sternchen ("Nummer*", "Name*") werden jetzt erkannt, Gruppen-Zeilen gefiltert, Kontoart-Spalte wird genutzt
+- [x] Feature: PDF-Kontoplan-Import als zusätzliche Option anbieten (LLM-basierte Extraktion)
+- [x] Frontend: Import-Dialog mit Excel/CSV und PDF/Bild Buttons, KI-Ladeindikator
+- [x] Tests: 20 Vitest-Tests für Kontoplan-Import-Logik (getCol, mapAccountType, parseRow, Borgas-Simulation)
+
+## Bugfixes Benutzer-Feedback (Runde 2)
+- [x] UX: Visueller Klick-Hinweis in Dokumentenliste (Hover-Effekt, Cursor-Pointer, Chevron-Icon)
+- [x] Bug: Manuelles Verknüpfen zeigt Transaktionen von WM statt vom aktuellen Mandanten (orgId-Filter hinzugefügt)
+- [x] Bug: Dokument-Detail (Split-Panel) zeigt kein Konto obwohl Bankimport das Konto erkannt hat – Konto-Vorschlag aus Matching + matched Txn übernommen
+- [x] Bug: Dateiname im Dokument-Detail und Bankimport unterschiedlich – abgleichen
+- [x] Bug: Kreditkartenabrechnung wird als "Kontoauszug" erkannt statt "Kreditkartenabrechnung" – credit_card_statement als neuer Typ
+- [x] Bug: Bankimport GJ-Filter zeigt bei GJ 2024 auch Transaktionen von 2025 – fiscalYear-Filter in Query implementiert
+
+## Batch Re-Analyse bestehender Dokumente
+- [x] Backend: Endpunkt zum Neu-Analysieren aller bestehenden Dokumente (batchReanalyze mit credit_card_statement Erkennung)
+- [x] Frontend: Button "Alle neu analysieren" in Dokumente-Seite
+
+## Bug 6: Automatische Kategorie-Zuordnung beim Kontoplan-Import
+- [x] Backend/Frontend: Beim Import eines individuellen Kontenplans Konten automatisch einer Kategorie zuordnen (Aktiven, Passiven, Aufwand, Ertrag)
+- [x] Intelligente Zuordnung basierend auf Kontonummer-Bereiche (1xxx=Aktiven, 2xxx=Passiven, 3xxx=Ertrag, 4-6xxx=Aufwand etc.) – autoCategory() mit Schweizer KMU-Kontenrahmen
+
+## Feature: Drag & Drop für Konten in Einstellungen
+- [x] Frontend: Konten per Drag & Drop verschieben/umordnen (wie bei Eröffnungssaldi) – SortableAccountRow/SortableAccountList
+- [x] Backend: Konto-Reihenfolge und Kategorie-Zuordnung speichern – updateAccountSortOrder mit category/subCategory
+- [x] Frontend: Konten zwischen Kategorien verschieben können – Kategorie-Dropdown im Drag-Modus
+
+## Feature: Verbuchen-Tab in Dokument-Detailansicht
+- [x] Neuer Tab "Verbuchen" in DocumentDetail (nur sichtbar wenn Dokument mit Transaktion verknüpft)
+- [x] Verbuchen-Tab zeigt: verknüpfte Transaktion, Soll-/Haben-Konto, Betrag, Buchungstext, Status
+- [x] Direkte Verbuchung aus Dokument-Detail heraus (approveTransaction Mutation)
+- [x] Automatische Vorbefüllung: Konten aus Kontierung-Tab, Betrag aus Belegdetails
+- [x] Status-Anzeige: Offen → Verbucht mit visueller Bestätigung
+
+## Feature: Zwei-Ebenen-Regelsystem (Globale KI-Regeln + Kundenspezifische Regeln)
+- [x] DB-Schema: scope Enum ("global"/"org") in booking_rules + globalDebitAccountNumber, globalCreditAccountNumber, categoryHint
+- [x] DB-Schema: organizationId bleibt für org-Regeln, globale Regeln haben scope="global"
+- [x] Backend: Matching-Logik angepasst – findMatchingRule: org-Regeln zuerst, globale als Fallback mit Account-Nummer-Auflösung
+- [x] Backend: Beim Verbuchen mit manueller Korrektur: kundenspezifische Regel lernen (wie bisher)
+- [x] Backend: Admin-Endpunkte (globalRulesRouter): list, listWithStats, create, update, delete, promoteToGlobal
+- [x] Backend: Training-Workflow – Admin kann Testkunden-Regeln zu globalen Regeln hochstufen
+- [x] Frontend: Admin-Bereich /admin/global-rules mit separater Ansicht für globale KI-Regeln
+- [x] Frontend: Globale Regeln für normale Kunden nicht sichtbar (Sidebar adminOnly, Settings filtert scope!="global")
+- [x] Frontend: Admin kann kundenspezifische Regel zu globaler Regel hochstufen (promoteToGlobal)
+- [x] Frontend: Übersicht mit Scope-Badge (Global/Org), Kategorie-Hint, Statistiken
+- [x] Tests: 12 Vitest-Tests für Zwei-Ebenen-Matching, Scope-Filterung, Account-Resolution, Admin-Sichtbarkeit
+
+## Bug: Inkonsistente Kontovorschläge zwischen Kontierung-Tab, Verbuchen-Tab und Bankimport
+- [x] Verbuchen-Tab: Soll/Haben-Konten aus Kontierung-Tab (bookingSuggestion) übernehmen, nicht aus Transaktion
+- [x] Verbuchen-Tab: Bankkonto aus linkedBankAccount verwenden
+- [x] Konsistenz: Kontierung-Tab und Verbuchen-Tab zeigen gleichen Kontovorschlag (bookingSuggestion hat Priorität)

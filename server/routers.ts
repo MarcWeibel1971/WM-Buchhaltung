@@ -20,6 +20,7 @@ import {
 } from "./db";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, organizations } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
+import { globalRulesRouter } from "./globalRulesRouter";
 import { yearEndRouter } from "./yearEndRouter";
 import { qrBillRouter } from "./qrBillRouter";
 import { dsgRouter } from "./dsgRouter";
@@ -30,6 +31,8 @@ import { organizationsRouter } from "./organizationsRouter";
 import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
 import { remindersRouter } from "./remindersRouter";
+import { stripeRouter } from "./stripeRouter";
+import { searchCompanies } from "./uidSearch";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -791,9 +794,9 @@ const bankImportRouter = router({
     .query(({ input, ctx }) => getPendingBankTransactions(ctx.organizationId, input.bankAccountId)),
 
   getTransactionsByStatus: orgProcedure
-    .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional() }))
+    .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional(), fiscalYear: z.number().optional() }))
     .query(async ({ input, ctx }) => {
-      const txs = await getBankTransactionsByStatus(ctx.organizationId, input.status, input.bankAccountId);
+      const txs = await getBankTransactionsByStatus(ctx.organizationId, input.status, input.bankAccountId, input.fiscalYear);
       // For transfer transactions, enrich with partner bank account name and accounting account IDs
       const db = await getDb();
       if (!db) return txs;
@@ -1774,12 +1777,13 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       search: z.string().optional(),
       limit: z.number().default(50),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { bankTransactions: txns, bankAccounts: ba, accounts: accts } = await import("../drizzle/schema");
       const { and, eq: eqOp, or, like, desc: descOp, isNull } = await import("drizzle-orm");
       const conditions: any[] = [
+        eqOp(txns.organizationId, ctx.organizationId),
         eqOp(txns.status, 'pending'),
         or(
           isNull(txns.matchedDocumentId),
@@ -3535,6 +3539,427 @@ const documentsRouter = router({
       return rows;
     }),
 
+  // Get a single document by ID with full details
+  getById: orgProcedure
+    .input(z.object({ documentId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs, suppliers: suppliersTbl, accounts: acctsTbl } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      let metadata = null;
+      if (doc.aiMetadata) {
+        try { metadata = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
+      }
+      // Load linked supplier if exists
+      let supplier = null;
+      if (doc.supplierId) {
+        const [s] = await db.select().from(suppliersTbl).where(eqOp(suppliersTbl.id, doc.supplierId));
+        if (s) supplier = s;
+      }
+      // Get booking suggestion: Auto-Learn rule has PRIORITY, then matched Txn, then LLM suggestion
+      let bookingSuggestion: { accountId: number | null; accountNumber: string | null; accountName: string | null; source: string; vatRate: number | null; bookingText: string | null } | null = null;
+      const counterpartyName = metadata?.counterparty || supplier?.name;
+      
+      // 1. Try Auto-Learn rule (highest priority)
+      if (counterpartyName) {
+        const rule = await findMatchingRule(ctx.organizationId, counterpartyName);
+        if (rule) {
+          let acctName = null;
+          let acctNumber = null;
+          const acctId = rule.debitAccountId || rule.creditAccountId;
+          if (acctId) {
+            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, acctId));
+            if (acct) { acctName = acct.name; acctNumber = acct.number; }
+          }
+          bookingSuggestion = {
+            accountId: acctId || null,
+            accountNumber: acctNumber,
+            accountName: acctName,
+            source: 'auto_learn',
+            vatRate: rule.vatRate ? Number(rule.vatRate) : null,
+            bookingText: rule.bookingTextTemplate || null,
+          };
+        }
+      }
+      
+      // 2. Try matched bank transaction's account suggestion (if no auto-learn rule found)
+      if (!bookingSuggestion && doc.bankTransactionId) {
+        const { bankTransactions: txnsTbl } = await import("../drizzle/schema");
+        const [txn] = await db.select().from(txnsTbl).where(eqOp(txnsTbl.id, doc.bankTransactionId));
+        if (txn) {
+          const sugAcctId = txn.suggestedDebitAccountId || txn.suggestedCreditAccountId;
+          if (sugAcctId) {
+            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, sugAcctId));
+            if (acct) {
+              bookingSuggestion = {
+                accountId: acct.id,
+                accountNumber: acct.number,
+                accountName: acct.name,
+                source: 'bank_import',
+                vatRate: null,
+                bookingText: txn.suggestedBookingText || null,
+              };
+            }
+          }
+        }
+      }
+      
+      // 3. Also check via matchedDocumentId (reverse lookup: find txn that has this doc matched)
+      if (!bookingSuggestion) {
+        const { bankTransactions: txnsTbl } = await import("../drizzle/schema");
+        const [matchedTxn] = await db.select().from(txnsTbl).where(eqOp(txnsTbl.matchedDocumentId, doc.id));
+        if (matchedTxn) {
+          const sugAcctId = matchedTxn.suggestedDebitAccountId || matchedTxn.suggestedCreditAccountId;
+          if (sugAcctId) {
+            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, sugAcctId));
+            if (acct) {
+              bookingSuggestion = {
+                accountId: acct.id,
+                accountNumber: acct.number,
+                accountName: acct.name,
+                source: 'bank_import',
+                vatRate: null,
+                bookingText: matchedTxn.suggestedBookingText || null,
+              };
+            }
+          }
+        }
+      }
+      
+      // 4. LLM suggestion as final fallback
+      if (!bookingSuggestion && metadata?.suggestedAccount) {
+        const acctNum = String(metadata.suggestedAccount);
+        const acct = await getAccountByNumber(ctx.organizationId, acctNum);
+        bookingSuggestion = {
+          accountId: acct?.id || null,
+          accountNumber: acctNum,
+          accountName: acct?.name || null,
+          source: 'llm',
+          vatRate: metadata.vatRate || null,
+          bookingText: metadata.description || null,
+        };
+      }
+      
+      // 5. Load linked bank transaction details for "Verbuchen" tab
+      let linkedTransaction: {
+        id: number;
+        transactionDate: string;
+        description: string | null;
+        amount: string;
+        counterparty: string | null;
+        status: string;
+        journalEntryId: number | null;
+        suggestedDebitAccountId: number | null;
+        suggestedCreditAccountId: number | null;
+        suggestedBookingText: string | null;
+        bankAccountId: number | null;
+      } | null = null;
+      
+      // Check via bankTransactionId on document
+      if (doc.bankTransactionId) {
+        const { bankTransactions: txnsTbl2 } = await import("../drizzle/schema");
+        const [txn] = await db.select().from(txnsTbl2).where(eqOp(txnsTbl2.id, doc.bankTransactionId));
+        if (txn) linkedTransaction = {
+          id: txn.id,
+          transactionDate: txn.transactionDate as string,
+          description: txn.description,
+          amount: txn.amount as string,
+          counterparty: txn.counterparty,
+          status: txn.status,
+          journalEntryId: txn.journalEntryId,
+          suggestedDebitAccountId: txn.suggestedDebitAccountId,
+          suggestedCreditAccountId: txn.suggestedCreditAccountId,
+          suggestedBookingText: txn.suggestedBookingText,
+          bankAccountId: txn.bankAccountId,
+        };
+      }
+      // Also check reverse lookup
+      if (!linkedTransaction) {
+        const { bankTransactions: txnsTbl3 } = await import("../drizzle/schema");
+        const [matchedTxn2] = await db.select().from(txnsTbl3).where(eqOp(txnsTbl3.matchedDocumentId, doc.id));
+        if (matchedTxn2) linkedTransaction = {
+          id: matchedTxn2.id,
+          transactionDate: matchedTxn2.transactionDate as string,
+          description: matchedTxn2.description,
+          amount: matchedTxn2.amount as string,
+          counterparty: matchedTxn2.counterparty,
+          status: matchedTxn2.status,
+          journalEntryId: matchedTxn2.journalEntryId,
+          suggestedDebitAccountId: matchedTxn2.suggestedDebitAccountId,
+          suggestedCreditAccountId: matchedTxn2.suggestedCreditAccountId,
+          suggestedBookingText: matchedTxn2.suggestedBookingText,
+          bankAccountId: matchedTxn2.bankAccountId,
+        };
+      }
+      
+      // Load bank account info for the linked transaction
+      let linkedBankAccount: { id: number; accountId: number | null; name: string } | null = null;
+      if (linkedTransaction?.bankAccountId) {
+        const { bankAccounts: baTbl } = await import("../drizzle/schema");
+        const [ba] = await db.select().from(baTbl).where(eqOp(baTbl.id, linkedTransaction.bankAccountId));
+        if (ba) linkedBankAccount = { id: ba.id, accountId: ba.accountId, name: ba.bank || ba.name || `Konto ${ba.id}` };
+      }
+      
+      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount };
+    }),
+
+  // Update document metadata (user edits from detail view)
+  updateMetadata: orgProcedure
+    .input(z.object({
+      documentId: z.number(),
+      metadata: z.record(z.string(), z.any()).optional(),
+      notes: z.string().optional(),
+      documentType: z.string().optional(),
+      supplierId: z.number().nullable().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      
+      // Get current document
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+
+      const updates: Record<string, any> = {};
+
+      // Merge metadata: keep existing fields, overwrite with new values
+      if (input.metadata) {
+        let existing: any = {};
+        if (doc.aiMetadata) {
+          try { existing = JSON.parse(doc.aiMetadata); } catch { /* ignore */ }
+        }
+        const merged = { ...existing, ...input.metadata };
+        updates.aiMetadata = JSON.stringify(merged);
+      }
+
+      if (input.notes !== undefined) updates.notes = input.notes;
+      if (input.documentType !== undefined) updates.documentType = input.documentType;
+      if (input.supplierId !== undefined) updates.supplierId = input.supplierId;
+
+      if (Object.keys(updates).length > 0) {
+        await db.update(docs).set(updates).where(eqOp(docs.id, input.documentId));
+      }
+
+      // Return updated document
+      const [updated] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      return { success: true, document: updated };
+    }),
+
+  // Re-analyze a document with AI (re-extract metadata)
+  reanalyze: orgProcedure
+    .input(z.object({ documentId: z.number() }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+
+      const isPdf = doc.mimeType === "application/pdf";
+      const isImage = doc.mimeType.startsWith("image/");
+      if (!isPdf && !isImage) throw new TRPCError({ code: "BAD_REQUEST", message: "Nur PDF und Bilder können analysiert werden" });
+
+      const contentPart = isPdf
+        ? { type: "file_url" as const, file_url: { url: doc.s3Url, mime_type: "application/pdf" as const } }
+        : { type: "image_url" as const, image_url: { url: doc.s3Url, detail: "high" as const } };
+
+      const extractResp = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `Du bist ein Schweizer Buchhalter. Extrahiere aus dem Beleg folgende Informationen als JSON:
+{
+  "documentDate": "YYYY-MM-DD oder null",
+  "dueDate": "YYYY-MM-DD oder null (F\u00e4lligkeitsdatum / Zahlungsfrist)",
+  "invoiceNumber": "Rechnungsnummer/Belegnummer oder null",
+  "totalAmount": Zahl oder null,
+  "netAmount": Zahl oder null (Nettobetrag ohne MWST),
+  "vatAmount": Zahl oder null,
+  "vatRate": Zahl (z.B. 8.1) oder null,
+  "currency": "CHF" oder andere,
+  "counterparty": "Firmenname oder Person",
+  "counterpartyUid": "UID-Nummer (z.B. CHE-123.456.789) oder null",
+  "counterpartyVatNumber": "MWST-Nummer oder null",
+  "counterpartyStreet": "Strasse und Hausnummer oder null",
+  "counterpartyZipCode": "PLZ oder null",
+  "counterpartyCity": "Ort oder null",
+  "counterpartyCountry": "Land oder null (Standard: Schweiz)",
+  "counterpartyIban": "IBAN oder null",
+  "qrReference": "QR-Referenz oder SCOR-Referenz oder null",
+  "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
+  "referenceNumber": "Referenznummer oder null",
+  "description": "Kurzbeschreibung des Belegs (max 100 Zeichen)",
+  "documentType": "invoice_in | invoice_out | receipt | bank_statement | credit_card_statement | salary_slip | insurance | other",
+  "suggestedAccount": "Kontonummer aus Schweizer KMU-Kontenrahmen oder null (z.B. 6300 für Versicherungen, 5700 für Sozialversicherungsaufwand, 4000 für Materialaufwand)",
+  "rawText": "Vollst\u00e4ndiger extrahierter Text des Belegs"
+}
+Antworte NUR mit dem JSON-Objekt, ohne Erkl\u00e4rungen.`,
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text" as const, text: "Analysiere diesen Beleg:" },
+              contentPart,
+            ],
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "document_extraction",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                documentDate: { type: ["string", "null"] },
+                dueDate: { type: ["string", "null"] },
+                invoiceNumber: { type: ["string", "null"] },
+                totalAmount: { type: ["number", "null"] },
+                netAmount: { type: ["number", "null"] },
+                vatAmount: { type: ["number", "null"] },
+                vatRate: { type: ["number", "null"] },
+                currency: { type: ["string", "null"] },
+                counterparty: { type: ["string", "null"] },
+                counterpartyUid: { type: ["string", "null"] },
+                counterpartyVatNumber: { type: ["string", "null"] },
+                counterpartyStreet: { type: ["string", "null"] },
+                counterpartyZipCode: { type: ["string", "null"] },
+                counterpartyCity: { type: ["string", "null"] },
+                counterpartyCountry: { type: ["string", "null"] },
+                counterpartyIban: { type: ["string", "null"] },
+                qrReference: { type: ["string", "null"] },
+                paymentMethod: { type: ["string", "null"] },
+                referenceNumber: { type: ["string", "null"] },
+                description: { type: ["string", "null"] },
+                documentType: { type: ["string", "null"] },
+                suggestedAccount: { type: ["string", "null"] },
+                rawText: { type: ["string", "null"] },
+              },
+              required: ["documentDate", "dueDate", "invoiceNumber", "totalAmount", "netAmount", "vatAmount", "vatRate", "currency", "counterparty", "counterpartyUid", "counterpartyVatNumber", "counterpartyStreet", "counterpartyZipCode", "counterpartyCity", "counterpartyCountry", "counterpartyIban", "qrReference", "paymentMethod", "referenceNumber", "description", "documentType", "suggestedAccount", "rawText"],
+              additionalProperties: false,
+            },
+          },
+        },
+      });
+
+      const content = extractResp.choices[0]?.message?.content;
+      if (!content) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "KI-Analyse fehlgeschlagen" });
+
+      const aiMetadata = typeof content === "string" ? content : JSON.stringify(content);
+      let extractedText: string | null = null;
+      try {
+        const parsed = JSON.parse(aiMetadata);
+        extractedText = parsed.rawText ?? null;
+      } catch { /* ignore */ }
+
+      await db.update(docs).set({ aiMetadata, extractedText }).where(eqOp(docs.id, input.documentId));
+      const [updated] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      let metadata = null;
+      if (updated.aiMetadata) {
+        try { metadata = JSON.parse(updated.aiMetadata); } catch { /* ignore */ }
+      }
+      return { success: true, document: updated, metadata };
+    }),
+
+  // Batch re-analyze all documents for the current org
+  batchReanalyze: orgProcedure
+    .mutation(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const allDocs = await db.select().from(docs).where(eqOp(docs.organizationId, ctx.organizationId));
+      const results: { id: number; filename: string; success: boolean; error?: string }[] = [];
+      for (const doc of allDocs) {
+        const isPdf = doc.mimeType === "application/pdf";
+        const isImage = doc.mimeType.startsWith("image/");
+        if (!isPdf && !isImage) { results.push({ id: doc.id, filename: doc.filename, success: false, error: "Nicht analysierbar" }); continue; }
+        try {
+          const contentPart = isPdf
+            ? { type: "file_url" as const, file_url: { url: doc.s3Url, mime_type: "application/pdf" as const } }
+            : { type: "image_url" as const, image_url: { url: doc.s3Url, detail: "high" as const } };
+          const extractResp = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: `Du bist ein Schweizer Buchhalter. Extrahiere aus dem Beleg folgende Informationen als JSON:
+{
+  "documentDate": "YYYY-MM-DD oder null",
+  "dueDate": "YYYY-MM-DD oder null",
+  "invoiceNumber": "Rechnungsnummer oder null",
+  "totalAmount": Zahl oder null,
+  "netAmount": Zahl oder null,
+  "vatAmount": Zahl oder null,
+  "vatRate": Zahl oder null,
+  "currency": "CHF" oder andere,
+  "counterparty": "Firmenname oder Person",
+  "counterpartyUid": "UID-Nummer oder null",
+  "counterpartyVatNumber": "MWST-Nummer oder null",
+  "counterpartyStreet": "Strasse oder null",
+  "counterpartyZipCode": "PLZ oder null",
+  "counterpartyCity": "Ort oder null",
+  "counterpartyCountry": "Land oder null",
+  "counterpartyIban": "IBAN oder null",
+  "qrReference": "QR-Referenz oder null",
+  "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
+  "referenceNumber": "Referenznummer oder null",
+  "description": "Kurzbeschreibung (max 100 Zeichen)",
+  "documentType": "invoice_in | invoice_out | receipt | bank_statement | credit_card_statement | salary_slip | insurance | other",
+  "suggestedAccount": "Kontonummer oder null (z.B. 5700 Sozialversicherungsaufwand, 6300 Versicherungen, 4000 Materialaufwand)",
+  "rawText": "Vollst\u00e4ndiger extrahierter Text"
+}
+WICHTIG: Kreditkartenabrechnungen (Viseca, Mastercard, VISA) = credit_card_statement. Personenversicherung/UVG/BVG = insurance mit Konto 5700. Sachversicherungen = insurance mit Konto 6300.
+Antworte NUR mit dem JSON-Objekt.`,
+              },
+              { role: "user", content: [{ type: "text" as const, text: "Analysiere diesen Beleg:" }, contentPart] },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "document_extraction",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    documentDate: { type: ["string", "null"] }, dueDate: { type: ["string", "null"] },
+                    invoiceNumber: { type: ["string", "null"] }, totalAmount: { type: ["number", "null"] },
+                    netAmount: { type: ["number", "null"] }, vatAmount: { type: ["number", "null"] },
+                    vatRate: { type: ["number", "null"] }, currency: { type: ["string", "null"] },
+                    counterparty: { type: ["string", "null"] }, counterpartyUid: { type: ["string", "null"] },
+                    counterpartyVatNumber: { type: ["string", "null"] }, counterpartyStreet: { type: ["string", "null"] },
+                    counterpartyZipCode: { type: ["string", "null"] }, counterpartyCity: { type: ["string", "null"] },
+                    counterpartyCountry: { type: ["string", "null"] }, counterpartyIban: { type: ["string", "null"] },
+                    qrReference: { type: ["string", "null"] }, paymentMethod: { type: ["string", "null"] },
+                    referenceNumber: { type: ["string", "null"] }, description: { type: ["string", "null"] },
+                    documentType: { type: ["string", "null"] }, suggestedAccount: { type: ["string", "null"] },
+                    rawText: { type: ["string", "null"] },
+                  },
+                  required: ["documentDate", "dueDate", "invoiceNumber", "totalAmount", "netAmount", "vatAmount", "vatRate", "currency", "counterparty", "counterpartyUid", "counterpartyVatNumber", "counterpartyStreet", "counterpartyZipCode", "counterpartyCity", "counterpartyCountry", "counterpartyIban", "qrReference", "paymentMethod", "referenceNumber", "description", "documentType", "suggestedAccount", "rawText"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+          const content = extractResp.choices[0]?.message?.content;
+          if (!content) { results.push({ id: doc.id, filename: doc.filename, success: false, error: "Keine KI-Antwort" }); continue; }
+          const aiMetadata = typeof content === "string" ? content : JSON.stringify(content);
+          let extractedText: string | null = null;
+          try { const parsed = JSON.parse(aiMetadata); extractedText = parsed.rawText ?? null; } catch { /* ignore */ }
+          await db.update(docs).set({ aiMetadata, extractedText }).where(eqOp(docs.id, doc.id));
+          results.push({ id: doc.id, filename: doc.filename, success: true });
+        } catch (e: any) {
+          results.push({ id: doc.id, filename: doc.filename, success: false, error: e.message?.slice(0, 100) });
+        }
+      }
+      return { total: allDocs.length, success: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length, results };
+    }),
+
   // Manual match: link a document to a bank transaction
   manualMatch: orgProcedure
     .input(z.object({
@@ -3589,6 +4014,7 @@ export const appRouter = router({
   vat: vatRouter,
   documents: documentsRouter,
   settings: settingsRouter,
+  globalRules: globalRulesRouter,
   yearEnd: yearEndRouter,
   qrBill: qrBillRouter,
   dsg: dsgRouter,
@@ -3598,6 +4024,20 @@ export const appRouter = router({
   organizations: organizationsRouter,
   invoices: invoicesRouter,
   reminders: remindersRouter,
+  stripe: stripeRouter,
+  uidSearch: router({
+    search: publicProcedure
+      .input(z.object({ name: z.string().min(2).max(200) }))
+      .query(async ({ input }) => {
+        try {
+          const results = await searchCompanies(input.name, 10);
+          return results;
+        } catch (e) {
+          console.error("UID search error:", e);
+          return [];
+        }
+      }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

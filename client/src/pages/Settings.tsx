@@ -25,6 +25,7 @@ import {
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
   Bell, Wallet,
+  CreditCard, ExternalLink, CheckCircle, Crown,
 } from "lucide-react";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
@@ -55,6 +56,7 @@ const TABS = [
   { id: "reminders", label: "Mahnwesen", icon: Bell },
   { id: "accountMappings", label: "Standard-Konten", icon: Wallet },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
+  { id: "subscription", label: "Abonnement", icon: CreditCard },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -80,7 +82,14 @@ const INSURANCE_COLORS: Record<string, string> = {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<TabId>("company");
+  // Support ?tab=subscription for Stripe redirect
+  const initialTab = (() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab && TABS.some(t => t.id === tab)) return tab as TabId;
+    return "company" as TabId;
+  })();
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   return (
     <div className="flex h-full">
       {/* Sidebar */}
@@ -123,6 +132,7 @@ export default function Settings() {
         {activeTab === "reminders" && <RemindersTab />}
         {activeTab === "accountMappings" && <AccountMappingsTab />}
         {activeTab === "dsg" && <DsgTab />}
+        {activeTab === "subscription" && <SubscriptionTab />}
       </main>
     </div>
   );
@@ -1124,7 +1134,9 @@ function BookingRulesTab() {
     });
   };
 
-  const filtered = (rules ?? []).filter(r =>
+  // Nur kundenspezifische Regeln anzeigen (globale Regeln sind im Admin-Bereich)
+  const orgRules = (rules ?? []).filter((r: any) => r.scope !== "global");
+  const filtered = orgRules.filter(r =>
     !search || r.counterpartyPattern.toLowerCase().includes(search.toLowerCase()) ||
     (r.bookingTextTemplate ?? "").toLowerCase().includes(search.toLowerCase())
   );
@@ -1137,7 +1149,7 @@ function BookingRulesTab() {
         <div>
           <h1 className="text-2xl font-bold">Buchungsregeln</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {(rules ?? []).length} gelernte Regeln – automatische Kategorisierung von Bankbuchungen
+            {orgRules.length} mandantenspezifische Regeln – automatische Kategorisierung von Bankbuchungen
           </p>
         </div>
         <Input
@@ -2030,6 +2042,8 @@ function ChartOfAccountsTab() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [isPdfParsing, setIsPdfParsing] = useState(false);
 
   // DnD sensors
   const sensors = useSensors(
@@ -2291,6 +2305,36 @@ function ChartOfAccountsTab() {
                             {dragEnabled && (
                               <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab shrink-0" />
                             )}
+                            {/* Category move dropdown (only in drag mode) */}
+                            {dragEnabled && (
+                              <Select
+                                value={`${acc.category || "Ohne Kategorie"}::${acc.subCategory || "Allgemein"}`}
+                                onValueChange={(val) => {
+                                  const [newCat, newSub] = val.split("::");
+                                  reorderMut.mutate({
+                                    updates: [{
+                                      id: acc.id,
+                                      sortOrder: acc.sortOrder ?? 0,
+                                      category: newCat === "Ohne Kategorie" ? undefined : newCat,
+                                      subCategory: newSub === "Allgemein" ? undefined : newSub,
+                                    }],
+                                  });
+                                }}
+                              >
+                                <SelectTrigger className="w-44 h-7 text-xs">
+                                  <SelectValue placeholder="Kategorie" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {tree.flatMap((c: TreeCategory) =>
+                                    c.subCategories.map((s: TreeSubCategory) => (
+                                      <SelectItem key={s.key} value={s.key}>
+                                        {c.label} / {s.label}
+                                      </SelectItem>
+                                    ))
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            )}
                             {/* Account number */}
                             {editingId === acc.id ? (
                               <Input
@@ -2432,12 +2476,17 @@ function ChartOfAccountsTab() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Laden Sie eine Excel- oder CSV-Datei hoch. Die Datei muss mindestens die Spalten
-              "Nummer" (oder "Konto") und "Name" (oder "Bezeichnung") enthalten.
+              Laden Sie eine Excel-/CSV-Datei oder ein PDF mit dem Kontenplan hoch.
+              Bei Excel/CSV werden die Spalten "Nummer" und "Name" automatisch erkannt.
+              Bei PDF wird der Kontenplan per KI extrahiert.
             </p>
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-                <FileSpreadsheet className="h-4 w-4 mr-2" /> Datei wählen
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isPdfParsing}>
+                <FileSpreadsheet className="h-4 w-4 mr-2" /> Excel/CSV
+              </Button>
+              <Button variant="outline" onClick={() => pdfInputRef.current?.click()} disabled={isPdfParsing}>
+                {isPdfParsing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+                {isPdfParsing ? "KI analysiert..." : "PDF/Bild"}
               </Button>
               <input
                 ref={fileInputRef}
@@ -2453,26 +2502,189 @@ function ChartOfAccountsTab() {
                     const wb = XLSX.read(data);
                     const ws = wb.Sheets[wb.SheetNames[0]];
                     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+                    // Helper: find column value by trying multiple header variants (with/without *)
+                    const getCol = (r: Record<string, any>, ...keys: string[]) => {
+                      for (const k of keys) {
+                        if (r[k] !== undefined && r[k] !== null) return String(r[k]).trim();
+                        if (r[k + "*"] !== undefined && r[k + "*"] !== null) return String(r[k + "*"]).trim();
+                      }
+                      return "";
+                    };
+                    // Map Kontoart from file to internal type
+                    const mapAccountType = (kontoart: string, num: number): string => {
+                      const lower = kontoart.toLowerCase();
+                      if (lower === "aktiv" || lower === "aktiva" || lower === "asset") return "asset";
+                      if (lower === "passiv" || lower === "passiva" || lower === "liability") return "liability";
+                      if (lower === "aufwand" || lower === "expense") return "expense";
+                      if (lower === "ertrag" || lower === "revenue" || lower === "income") return "revenue";
+                      if (lower === "komplett" || lower === "equity" || lower === "eigenkapital") return "equity";
+                      // Fallback: determine from account number
+                      if (num >= 1000 && num < 2000) return "asset";
+                      if (num >= 2000 && num < 2800) return "liability";
+                      if (num >= 2800 && num < 3000) return "equity";
+                      if (num >= 3000 && num < 4000) return "revenue";
+                      if (num >= 4000 && num < 9000) return "expense";
+                      if (num >= 9000) return "equity";
+                      return "expense";
+                    };
+                    // Automatische Kategorie-Zuordnung nach Schweizer KMU-Kontenrahmen
+                    const autoCategory = (num: number): { category: string; subCategory: string } => {
+                      if (num >= 1000 && num < 1100) return { category: "Umlaufverm\u00f6gen", subCategory: "Fl\u00fcssige Mittel" };
+                      if (num >= 1100 && num < 1200) return { category: "Umlaufverm\u00f6gen", subCategory: "Kurzfristige Forderungen" };
+                      if (num >= 1200 && num < 1300) return { category: "Umlaufverm\u00f6gen", subCategory: "Vorr\u00e4te" };
+                      if (num >= 1300 && num < 1400) return { category: "Umlaufverm\u00f6gen", subCategory: "Aktive Rechnungsabgrenzung" };
+                      if (num >= 1400 && num < 1500) return { category: "Anlageverm\u00f6gen", subCategory: "Finanzanlagen" };
+                      if (num >= 1500 && num < 1600) return { category: "Anlageverm\u00f6gen", subCategory: "Mobile Sachanlagen" };
+                      if (num >= 1600 && num < 1700) return { category: "Anlageverm\u00f6gen", subCategory: "Immobile Sachanlagen" };
+                      if (num >= 1700 && num < 2000) return { category: "Anlageverm\u00f6gen", subCategory: "Immaterielle Anlagen" };
+                      if (num >= 2000 && num < 2100) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Verbindlichkeiten" };
+                      if (num >= 2100 && num < 2200) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Finanzverbindlichkeiten" };
+                      if (num >= 2200 && num < 2300) return { category: "Kurzfristiges Fremdkapital", subCategory: "Passive Rechnungsabgrenzung" };
+                      if (num >= 2300 && num < 2400) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige R\u00fcckstellungen" };
+                      if (num >= 2400 && num < 2500) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige Finanzverbindlichkeiten" };
+                      if (num >= 2500 && num < 2600) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige R\u00fcckstellungen" };
+                      if (num >= 2600 && num < 2800) return { category: "Langfristiges Fremdkapital", subCategory: "\u00dcbrige langfristige Verbindlichkeiten" };
+                      if (num >= 2800 && num < 2900) return { category: "Eigenkapital", subCategory: "Grund-/Stammkapital" };
+                      if (num >= 2900 && num < 3000) return { category: "Eigenkapital", subCategory: "Reserven / Gewinnvortrag" };
+                      if (num >= 3000 && num < 3200) return { category: "Betriebsertrag", subCategory: "Produktionsertrag" };
+                      if (num >= 3200 && num < 3400) return { category: "Betriebsertrag", subCategory: "Handelsertrag" };
+                      if (num >= 3400 && num < 3600) return { category: "Betriebsertrag", subCategory: "Dienstleistungsertrag" };
+                      if (num >= 3600 && num < 3800) return { category: "Betriebsertrag", subCategory: "\u00dcbriger Ertrag" };
+                      if (num >= 3800 && num < 4000) return { category: "Betriebsertrag", subCategory: "Erl\u00f6sminderungen" };
+                      if (num >= 4000 && num < 4500) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Materialaufwand" };
+                      if (num >= 4500 && num < 5000) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Drittleistungen" };
+                      if (num >= 5000 && num < 5800) return { category: "Personalaufwand", subCategory: "L\u00f6hne und Geh\u00e4lter" };
+                      if (num >= 5800 && num < 6000) return { category: "Personalaufwand", subCategory: "Sozialversicherungsaufwand" };
+                      if (num >= 6000 && num < 6100) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Raumaufwand" };
+                      if (num >= 6100 && num < 6200) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Unterhalt und Reparaturen" };
+                      if (num >= 6200 && num < 6300) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Fahrzeugaufwand" };
+                      if (num >= 6300 && num < 6400) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Versicherungen" };
+                      if (num >= 6400 && num < 6500) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Energie und Entsorgung" };
+                      if (num >= 6500 && num < 6600) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Verwaltungsaufwand" };
+                      if (num >= 6600 && num < 6700) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Informatikaufwand" };
+                      if (num >= 6700 && num < 6800) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "\u00dcbriger Betriebsaufwand" };
+                      if (num >= 6800 && num < 6900) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Abschreibungen" };
+                      if (num >= 6900 && num < 7000) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Finanzaufwand" };
+                      if (num >= 7000 && num < 7500) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Ertrag" };
+                      if (num >= 7500 && num < 8000) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Aufwand" };
+                      if (num >= 8000 && num < 8500) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Ertrag" };
+                      if (num >= 8500 && num < 9000) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Aufwand" };
+                      if (num >= 9000) return { category: "Abschluss", subCategory: "Abschlusskonten" };
+                      return { category: "", subCategory: "" };
+                    };
                     const parsed = rows.map((r: Record<string, any>) => {
-                      const num = String(r["Nummer"] ?? r["Konto"] ?? r["Nr"] ?? r["number"] ?? "").trim();
-                      const name = String(r["Name"] ?? r["Bezeichnung"] ?? r["Kontoname"] ?? r["name"] ?? "").trim();
-                      const cat = String(r["Kategorie"] ?? r["category"] ?? "").trim() || undefined;
-                      const sub = String(r["Unterkategorie"] ?? r["subCategory"] ?? "").trim() || undefined;
-                      // Determine account type from number
+                      const num = getCol(r, "Nummer", "Konto", "Nr", "number", "Account", "Kontonummer");
+                      const name = getCol(r, "Name", "Bezeichnung", "Kontoname", "name", "Description");
+                      const kontoart = getCol(r, "Kontoart", "Typ", "Type", "accountType", "Art");
+                      const gruppe = getCol(r, "Gruppe", "Group", "Kategorie", "category");
                       const n = parseInt(num);
-                      let accountType: string = "expense";
-                      if (n >= 1000 && n < 2000) accountType = "asset";
-                      else if (n >= 2000 && n < 2800) accountType = "liability";
-                      else if (n >= 2800 && n < 3000) accountType = "equity";
-                      else if (n >= 3000 && n < 4000) accountType = "revenue";
-                      else if (n >= 4000 && n < 9000) accountType = "expense";
-                      else if (n >= 9000) accountType = "equity";
+                      // Skip group/header rows (numbers < 1000 are typically group headers)
+                      if (isNaN(n) || n < 1000) return null;
+                      // Skip rows explicitly marked as "Gruppe"
+                      if (kontoart.toLowerCase() === "gruppe" || kontoart.toLowerCase() === "group") return null;
+                      const accountType = mapAccountType(kontoart, n);
+                      // Auto-assign category from file or from number-based rules
+                      const fileCat = getCol(r, "Kategorie", "category");
+                      const fileSub = getCol(r, "Unterkategorie", "subCategory");
+                      const auto = autoCategory(n);
+                      const cat = fileCat || auto.category || undefined;
+                      const sub = fileSub || auto.subCategory || undefined;
                       return { number: num, name, accountType, category: cat, subCategory: sub };
-                    }).filter((a: any) => a.number && a.name);
+                    }).filter((a): a is NonNullable<typeof a> => a !== null && !!a.number && !!a.name);
                     setImportPreview(parsed);
                     toast.success(`${parsed.length} Konten aus Datei gelesen`);
                   } catch (err) {
                     toast.error("Fehler beim Lesen der Datei");
+                  }
+                  e.target.value = "";
+                }}
+              />
+              <input
+                ref={pdfInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setIsPdfParsing(true);
+                  try {
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    const resp = await fetch("/api/upload/chart-of-accounts-pdf", {
+                      method: "POST",
+                      body: formData,
+                    });
+                    if (!resp.ok) {
+                      const err = await resp.json().catch(() => ({}));
+                      throw new Error(err.error || "Upload fehlgeschlagen");
+                    }
+                    const result = await resp.json();
+                    // Reuse autoCategory for PDF-imported accounts
+                    const autoCatPdf = (num: number): { category: string; subCategory: string } => {
+                      if (num >= 1000 && num < 1100) return { category: "Umlaufverm\u00f6gen", subCategory: "Fl\u00fcssige Mittel" };
+                      if (num >= 1100 && num < 1200) return { category: "Umlaufverm\u00f6gen", subCategory: "Kurzfristige Forderungen" };
+                      if (num >= 1200 && num < 1300) return { category: "Umlaufverm\u00f6gen", subCategory: "Vorr\u00e4te" };
+                      if (num >= 1300 && num < 1400) return { category: "Umlaufverm\u00f6gen", subCategory: "Aktive Rechnungsabgrenzung" };
+                      if (num >= 1400 && num < 1500) return { category: "Anlageverm\u00f6gen", subCategory: "Finanzanlagen" };
+                      if (num >= 1500 && num < 1600) return { category: "Anlageverm\u00f6gen", subCategory: "Mobile Sachanlagen" };
+                      if (num >= 1600 && num < 1700) return { category: "Anlageverm\u00f6gen", subCategory: "Immobile Sachanlagen" };
+                      if (num >= 1700 && num < 2000) return { category: "Anlageverm\u00f6gen", subCategory: "Immaterielle Anlagen" };
+                      if (num >= 2000 && num < 2100) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Verbindlichkeiten" };
+                      if (num >= 2100 && num < 2200) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige Finanzverbindlichkeiten" };
+                      if (num >= 2200 && num < 2300) return { category: "Kurzfristiges Fremdkapital", subCategory: "Passive Rechnungsabgrenzung" };
+                      if (num >= 2300 && num < 2400) return { category: "Kurzfristiges Fremdkapital", subCategory: "Kurzfristige R\u00fcckstellungen" };
+                      if (num >= 2400 && num < 2500) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige Finanzverbindlichkeiten" };
+                      if (num >= 2500 && num < 2600) return { category: "Langfristiges Fremdkapital", subCategory: "Langfristige R\u00fcckstellungen" };
+                      if (num >= 2600 && num < 2800) return { category: "Langfristiges Fremdkapital", subCategory: "\u00dcbrige langfristige Verbindlichkeiten" };
+                      if (num >= 2800 && num < 2900) return { category: "Eigenkapital", subCategory: "Grund-/Stammkapital" };
+                      if (num >= 2900 && num < 3000) return { category: "Eigenkapital", subCategory: "Reserven / Gewinnvortrag" };
+                      if (num >= 3000 && num < 3200) return { category: "Betriebsertrag", subCategory: "Produktionsertrag" };
+                      if (num >= 3200 && num < 3400) return { category: "Betriebsertrag", subCategory: "Handelsertrag" };
+                      if (num >= 3400 && num < 3600) return { category: "Betriebsertrag", subCategory: "Dienstleistungsertrag" };
+                      if (num >= 3600 && num < 3800) return { category: "Betriebsertrag", subCategory: "\u00dcbriger Ertrag" };
+                      if (num >= 3800 && num < 4000) return { category: "Betriebsertrag", subCategory: "Erl\u00f6sminderungen" };
+                      if (num >= 4000 && num < 4500) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Materialaufwand" };
+                      if (num >= 4500 && num < 5000) return { category: "Aufwand f\u00fcr Material/Waren", subCategory: "Drittleistungen" };
+                      if (num >= 5000 && num < 5800) return { category: "Personalaufwand", subCategory: "L\u00f6hne und Geh\u00e4lter" };
+                      if (num >= 5800 && num < 6000) return { category: "Personalaufwand", subCategory: "Sozialversicherungsaufwand" };
+                      if (num >= 6000 && num < 6100) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Raumaufwand" };
+                      if (num >= 6100 && num < 6200) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Unterhalt und Reparaturen" };
+                      if (num >= 6200 && num < 6300) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Fahrzeugaufwand" };
+                      if (num >= 6300 && num < 6400) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Versicherungen" };
+                      if (num >= 6400 && num < 6500) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Energie und Entsorgung" };
+                      if (num >= 6500 && num < 6600) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Verwaltungsaufwand" };
+                      if (num >= 6600 && num < 6700) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Informatikaufwand" };
+                      if (num >= 6700 && num < 6800) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "\u00dcbriger Betriebsaufwand" };
+                      if (num >= 6800 && num < 6900) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Abschreibungen" };
+                      if (num >= 6900 && num < 7000) return { category: "\u00dcbriger Betriebsaufwand", subCategory: "Finanzaufwand" };
+                      if (num >= 7000 && num < 7500) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Ertrag" };
+                      if (num >= 7500 && num < 8000) return { category: "Betriebsfremder Aufwand/Ertrag", subCategory: "Betriebsfremder Aufwand" };
+                      if (num >= 8000 && num < 8500) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Ertrag" };
+                      if (num >= 8500 && num < 9000) return { category: "Ausserordentlicher Aufwand/Ertrag", subCategory: "Ausserordentlicher Aufwand" };
+                      if (num >= 9000) return { category: "Abschluss", subCategory: "Abschlusskonten" };
+                      return { category: "", subCategory: "" };
+                    };
+                    if (result.accounts && result.accounts.length > 0) {
+                      setImportPreview(result.accounts.map((a: any) => {
+                        const n = parseInt(a.number);
+                        const auto = autoCatPdf(isNaN(n) ? 0 : n);
+                        return {
+                          number: a.number,
+                          name: a.name,
+                          accountType: a.accountType,
+                          category: auto.category || undefined,
+                          subCategory: auto.subCategory || undefined,
+                        };
+                      }));
+                      toast.success(`${result.accounts.length} Konten per KI aus PDF extrahiert`);
+                    } else {
+                      toast.error("Keine Konten im PDF gefunden");
+                    }
+                  } catch (err: any) {
+                    toast.error(err.message || "PDF-Analyse fehlgeschlagen");
+                  } finally {
+                    setIsPdfParsing(false);
                   }
                   e.target.value = "";
                 }}
@@ -4484,6 +4696,208 @@ function AccountMappingsTab() {
           Speichern
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ─── Subscription Tab ─────────────────────────────────────────────────────────
+
+const PLAN_INFO = {
+  starter: {
+    name: "Starter",
+    description: "Für Einzelunternehmen",
+    priceChf: 29,
+    features: ["1 Firma", "Doppelte Buchhaltung", "QR-Rechnungen", "Bankimport", "MWST-Abrechnung"],
+  },
+  professional: {
+    name: "Professional",
+    description: "Für wachsende KMU",
+    priceChf: 59,
+    features: ["Bis 3 Firmen", "Alles aus Starter", "Lohnbuchhaltung", "KI-Buchungsvorschläge", "Dokumenten-Scan", "Kreditoren-Verwaltung"],
+  },
+  enterprise: {
+    name: "Enterprise",
+    description: "Für Treuhandgesellschaften",
+    priceChf: 99,
+    features: ["Unbegrenzte Firmen", "Alles aus Professional", "Zeiterfassung", "Mandanten-Verwaltung", "Prioritäts-Support", "Individuelle Anpassungen"],
+  },
+} as const;
+
+const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  trialing: { label: "Testphase", color: "bg-blue-100 text-blue-800" },
+  active: { label: "Aktiv", color: "bg-green-100 text-green-800" },
+  past_due: { label: "Zahlung ausstehend", color: "bg-yellow-100 text-yellow-800" },
+  canceled: { label: "Gekündigt", color: "bg-red-100 text-red-800" },
+  unpaid: { label: "Unbezahlt", color: "bg-red-100 text-red-800" },
+  incomplete: { label: "Unvollständig", color: "bg-gray-100 text-gray-800" },
+  none: { label: "Kein Abo", color: "bg-gray-100 text-gray-800" },
+};
+
+function SubscriptionTab() {
+  const subQuery = trpc.stripe.getSubscription.useQuery();
+  const createCheckout = trpc.stripe.createCheckout.useMutation();
+  const createPortal = trpc.stripe.createPortal.useMutation();
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+
+  const sub = subQuery.data;
+
+  const handleSelectPlan = async (plan: "starter" | "professional" | "enterprise") => {
+    setLoadingPlan(plan);
+    try {
+      const { url } = await createCheckout.mutateAsync({
+        plan,
+        origin: window.location.origin,
+      });
+      if (url) window.location.href = url;
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Erstellen der Checkout-Session");
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    try {
+      const { url } = await createPortal.mutateAsync({
+        returnUrl: `${window.location.origin}/settings?tab=subscription`,
+      });
+      if (url) window.location.href = url;
+    } catch (err: any) {
+      toast.error(err.message || "Fehler beim Öffnen des Kundenportals");
+    }
+  };
+
+  if (subQuery.isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const hasSubscription = sub && sub.status !== "none";
+  const statusInfo = STATUS_LABELS[sub?.status ?? "none"] ?? STATUS_LABELS.none;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-lg font-semibold">Abonnement</h3>
+        <p className="text-sm text-muted-foreground">Verwalten Sie Ihren KLAX-Plan und Ihre Zahlungsinformationen.</p>
+      </div>
+
+      {/* Current subscription status */}
+      {hasSubscription && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Crown className="h-5 w-5 text-amber-500" />
+                <div>
+                  <CardTitle className="text-base">
+                    {PLAN_INFO[sub.plan as keyof typeof PLAN_INFO]?.name ?? sub.plan} Plan
+                  </CardTitle>
+                  <CardDescription>
+                    CHF {PLAN_INFO[sub.plan as keyof typeof PLAN_INFO]?.priceChf ?? "?"}/Monat
+                  </CardDescription>
+                </div>
+              </div>
+              <Badge className={statusInfo.color}>{statusInfo.label}</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {sub.trialEnd && sub.status === "trialing" && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                Testphase endet am {new Date(sub.trialEnd).toLocaleDateString("de-CH")}
+              </div>
+            )}
+            {sub.currentPeriodEnd && sub.status === "active" && (
+              <div className="text-sm text-muted-foreground">
+                Nächste Zahlung am {new Date(sub.currentPeriodEnd).toLocaleDateString("de-CH")}
+              </div>
+            )}
+            {sub.cancelAtPeriodEnd && (
+              <div className="flex items-center gap-2 text-sm text-amber-600">
+                <AlertTriangle className="h-4 w-4" />
+                Abo wird zum Ende der Periode gekündigt
+              </div>
+            )}
+            <Button onClick={handleManageSubscription} disabled={createPortal.isPending} variant="outline">
+              {createPortal.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Wird geladen...</>
+              ) : (
+                <><ExternalLink className="h-4 w-4 mr-2" />Abo verwalten (Stripe)</>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Plan selection */}
+      <div>
+        <h4 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+          {hasSubscription ? "Plan wechseln" : "Plan wählen"}
+        </h4>
+        <div className="grid md:grid-cols-3 gap-4">
+          {(Object.entries(PLAN_INFO) as [string, typeof PLAN_INFO[keyof typeof PLAN_INFO]][]).map(([key, plan]) => {
+            const isCurrentPlan = hasSubscription && sub.plan === key;
+            return (
+              <Card key={key} className={`relative ${isCurrentPlan ? "border-primary border-2" : ""} ${key === "professional" ? "ring-1 ring-blue-200" : ""}`}>
+                {isCurrentPlan && (
+                  <div className="absolute -top-3 left-4">
+                    <Badge className="bg-primary text-primary-foreground">Aktueller Plan</Badge>
+                  </div>
+                )}
+                {key === "professional" && !isCurrentPlan && (
+                  <div className="absolute -top-3 right-4">
+                    <Badge className="bg-blue-600 text-white">Beliebt</Badge>
+                  </div>
+                )}
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">{plan.name}</CardTitle>
+                  <CardDescription>{plan.description}</CardDescription>
+                  <div className="mt-2">
+                    <span className="text-2xl font-bold">CHF {plan.priceChf}</span>
+                    <span className="text-muted-foreground text-sm">/Monat</span>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <ul className="space-y-2">
+                    {plan.features.map((f, i) => (
+                      <li key={i} className="flex items-center gap-2 text-sm">
+                        <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    className="w-full mt-4"
+                    variant={isCurrentPlan ? "outline" : key === "professional" ? "default" : "outline"}
+                    disabled={isCurrentPlan || loadingPlan === key}
+                    onClick={() => handleSelectPlan(key as "starter" | "professional" | "enterprise")}
+                  >
+                    {loadingPlan === key ? (
+                      <><Loader2 className="h-4 w-4 animate-spin mr-2" />Wird geladen...</>
+                    ) : isCurrentPlan ? (
+                      "Aktueller Plan"
+                    ) : hasSubscription ? (
+                      "Wechseln"
+                    ) : (
+                      "30 Tage kostenlos testen"
+                    )}
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Info text */}
+      <p className="text-xs text-muted-foreground">
+        Alle Preise in CHF, exkl. MWST. 30 Tage kostenlose Testphase bei Erstregistrierung.
+        Sie können Ihr Abo jederzeit über das Stripe-Kundenportal verwalten oder kündigen.
+      </p>
     </div>
   );
 }

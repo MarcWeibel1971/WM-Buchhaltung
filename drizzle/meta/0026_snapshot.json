@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "28b5dc9e-1ee1-41e1-a858-71b0f74a0a22",
-  "prevId": "9b7d8cf2-70db-4a0b-bca5-745746fe981c",
+  "id": "2eefeae1-cb3d-41a5-8bba-15748de251a6",
+  "prevId": "28b5dc9e-1ee1-41e1-a858-71b0f74a0a22",
   "tables": {
     "accounts": {
       "name": "accounts",
@@ -1341,7 +1341,7 @@
         },
         "documentType": {
           "name": "documentType",
-          "type": "enum('invoice_in','invoice_out','receipt','bank_statement','other')",
+          "type": "enum('invoice_in','invoice_out','receipt','bank_statement','credit_card_statement','other')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,

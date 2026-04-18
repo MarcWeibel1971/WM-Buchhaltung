@@ -1123,4 +1123,4 @@
 - [x] TTS: Browser Web Speech API als Fallback (ElevenLabs optional via ELEVENLABS_API_KEY)
 - [x] Lip-Sync: Audio-Analyse für Mundbewegung des Avatars (CSS-Fallback + WebAudio für ElevenLabs)
 - [x] App.tsx: AvatarChatWidget global einbinden (auf allen Seiten sichtbar)
-- [ ] ElevenLabs API-Key als Secret konfigurieren (optional, Browser-TTS als Fallback aktiv)
+- [x] ElevenLabs API-Key als Secret konfigurieren (ELEVENLABS_API_KEY gesetzt, Daniel-Stimme eleven_multilingual_v2)

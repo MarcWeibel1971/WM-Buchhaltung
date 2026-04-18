@@ -4096,7 +4096,8 @@ Antworte immer auf Deutsch. Halte Antworten prägnant (max. 3-4 Sätze), ausser 
       const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
       if (elevenLabsKey && reply) {
         try {
-          const voiceId = process.env.ELEVENLABS_VOICE_ID ?? 'pNInz6obpgDQGcFmaJgB'; // Adam voice
+          // Daniel: Steady Broadcaster – formal, professional, works well in German
+          const voiceId = process.env.ELEVENLABS_VOICE_ID ?? 'onwK4e9ZLuTAKqWW03F9';
           const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
             method: 'POST',
             headers: {
@@ -4106,7 +4107,7 @@ Antworte immer auf Deutsch. Halte Antworten prägnant (max. 3-4 Sätze), ausser 
             body: JSON.stringify({
               text: reply,
               model_id: 'eleven_multilingual_v2',
-              voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+              voice_settings: { stability: 0.6, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
             }),
           });
           if (ttsRes.ok) {

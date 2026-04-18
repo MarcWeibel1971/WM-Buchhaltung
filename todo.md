@@ -1134,3 +1134,6 @@
 ## Bugfix: Zahlungsstatus "Mit Banktransaktion verknüpft" falsch angezeigt
 - [x] DocumentDetail Zahlung-Tab: "Mit Banktransaktion verknüpft" nur anzeigen wenn bankTransactionId tatsächlich gesetzt ist
 - [x] Sprach-Transkription: direkter /api/upload/transcribe Endpunkt ohne S3-Umweg implementiert
+
+## Bugfix: BankImport Bankkonto-Auswahl
+- [x] BankImport: Bankkonto-Dropdown zeigt keine Bankkonten obwohl hinterlegt (isActive-Filter in getBankAccounts entfernt)

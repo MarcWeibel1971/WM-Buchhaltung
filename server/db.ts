@@ -455,15 +455,16 @@ export async function updateJournalEntryLines(entryId: number, lines: Array<{
 export async function getBankAccounts(orgId: number) {
   const db = await getDb();
   if (!db) return [];
+  // Note: isActive filter removed – MySQL tinyint boolean comparison can be unreliable.
+  // All bank accounts for this org are shown; inactive ones are managed via settings.
   return db.select({
     bankAccount: bankAccounts,
     account: accounts,
   }).from(bankAccounts)
     .innerJoin(accounts, eq(bankAccounts.accountId, accounts.id))
-    .where(and(
+    .where(
       eq(bankAccounts.organizationId, orgId),
-      eq(bankAccounts.isActive, true),
-    ));
+    );
 }
 
 export async function getPendingBankTransactions(orgId: number, bankAccountId?: number) {

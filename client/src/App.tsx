@@ -43,7 +43,7 @@ import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
 import GlobalRules from "./pages/GlobalRules";
 import Layout from "./components/Layout";
-import { AvatarChatWidget } from "./components/AvatarChatWidget";
+import AvatarChatWidget from "./components/AvatarChatWidget";
 import Accounts from "./pages/Accounts";
 
 /**

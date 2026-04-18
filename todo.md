@@ -1124,3 +1124,9 @@
 - [x] Lip-Sync: Audio-Analyse für Mundbewegung des Avatars (CSS-Fallback + WebAudio für ElevenLabs)
 - [x] App.tsx: AvatarChatWidget global einbinden (auf allen Seiten sichtbar)
 - [x] ElevenLabs API-Key als Secret konfigurieren (ELEVENLABS_API_KEY gesetzt, Daniel-Stimme eleven_multilingual_v2)
+
+## Bugfix: Avatar-Widget Absturz + Mikrofon
+- [x] Avatar-Absturz behoben: WebGL/Three.js entfernt, reiner CSS-Avatar (kein WebGL-Context-Loss mehr)
+- [x] CSS-Avatar: professioneller Berater mit grauem Haar, Brille, Jacket, Krawatte, Lip-Sync
+- [x] VAD-Mikrofon implementiert: automatisches Senden nach 1.5s Stille (kein manuelles Stop nötig)
+- [x] AudioContext.decodeAudioData für robuste ElevenLabs-Wiedergabe

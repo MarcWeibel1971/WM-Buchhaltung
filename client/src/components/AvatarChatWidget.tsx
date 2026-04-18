@@ -80,7 +80,7 @@ export function AvatarChatWidget() {
   const audioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const conversationHistoryRef = useRef<{ role: string; content: string }[]>([]);
 
-  const VRM_URL = "/manus-storage/advisor_avatar_c531768f.vrm";
+  const VRM_URL = "/manus-storage/advisor_avatar_v2_88dc24b8.vrm";
 
   // tRPC mutations
   const avatarChatMutation = trpc.avatarChat.chat.useMutation();

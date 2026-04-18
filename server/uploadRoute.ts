@@ -507,3 +507,123 @@ Antworte NUR mit JSON: { "accounts": [...], "totalFound": number, "documentTitle
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
   }
 });
+
+// ─── POST /api/upload/opening-balance-pdf ──────────────────────────────────────
+// Accepts a PDF or image of an opening balance sheet, extracts account balances via LLM
+const openingBalancePdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Nur PDF- oder Bild-Dateien erlaubt"));
+  },
+});
+
+uploadRouter.post("/opening-balance-pdf", openingBalancePdfUpload.single("file"), async (req, res) => {
+  let user;
+  try {
+    user = await sdk.authenticateRequest(req as any);
+  } catch {
+    return res.status(401).json({ error: "Nicht authentifiziert" });
+  }
+
+  if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
+
+  try {
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "pdf";
+    const fileKey = `opening-balances/${user.id}-${nanoid()}.${ext}`;
+    const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
+
+    const isPdf = req.file.mimetype === "application/pdf";
+
+    const extractResp = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `Du bist ein Schweizer Buchhalter und extrahierst Eröffnungssalden aus einer Bilanz oder Eröffnungsbilanz.
+Extrahiere ALLE Konten mit ihren Salden.
+Jedes Konto hat:
+- number: Kontonummer als String (z.B. "1000", "2000")
+- name: Kontobezeichnung (z.B. "Kasse", "Bankguthaben")
+- balance: Saldo als Zahl (immer positiv, auch für Passivkonten)
+- accountType: Einer von: "asset" (Aktiven, 1000-1999), "liability" (Fremdkapital, 2000-2799), "equity" (Eigenkapital, 2800-2999 und 9000+)
+
+Regeln:
+- Nur Konten mit Kontonummer extrahieren (mindestens 3-stellig)
+- Konten mit Saldo 0 können weggelassen werden
+- Ignoriere Summenzeilen und Gruppenüberschriften
+- Beträge in CHF, ohne Tausendertrennzeichen
+
+Antworte NUR mit JSON: { "balances": [...], "totalAssets": number, "totalLiabilities": number, "fiscalYear": "YYYY oder null" }`,
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text" as const, text: "Extrahiere alle Eröffnungssalden aus dieser Bilanz:" },
+            isPdf
+              ? { type: "file_url" as const, file_url: { url: fileUrl, mime_type: "application/pdf" as const } }
+              : { type: "image_url" as const, image_url: { url: fileUrl, detail: "high" as const } },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "opening_balance_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              balances: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    number: { type: "string" },
+                    name: { type: "string" },
+                    balance: { type: "number" },
+                    accountType: { type: "string", enum: ["asset", "liability", "equity"] },
+                  },
+                  required: ["number", "name", "balance", "accountType"],
+                  additionalProperties: false,
+                },
+              },
+              totalAssets: { type: "number" },
+              totalLiabilities: { type: "number" },
+              fiscalYear: { type: ["string", "null"] },
+            },
+            required: ["balances", "totalAssets", "totalLiabilities", "fiscalYear"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const msgContent = extractResp.choices[0]?.message?.content;
+    if (!msgContent) return res.status(500).json({ error: "KI-Extraktion fehlgeschlagen" });
+
+    const parsed = typeof msgContent === "string" ? JSON.parse(msgContent) : msgContent;
+
+    const balances = (parsed.balances ?? [])
+      .filter((b: any) => b.number && b.name && typeof b.balance === "number" && b.balance !== 0)
+      .map((b: any) => ({
+        number: String(b.number).trim(),
+        name: String(b.name).trim(),
+        balance: Math.abs(b.balance),
+        accountType: b.accountType || "asset",
+      }));
+
+    return res.json({
+      success: true,
+      balances,
+      totalFound: balances.length,
+      totalAssets: parsed.totalAssets ?? 0,
+      totalLiabilities: parsed.totalLiabilities ?? 0,
+      fiscalYear: parsed.fiscalYear ?? null,
+    });
+  } catch (err: any) {
+    console.error("[PDF Opening Balance Import] Error:", err);
+    return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
+  }
+});

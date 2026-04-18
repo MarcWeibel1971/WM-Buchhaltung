@@ -1070,3 +1070,38 @@
 
 ## QR-Rechnung PDF in Neue Rechnung
 - [x] Neue Rechnung: Button "Verbuchen & QR-Rechnung PDF" hinzufügen (Entwurf → Verbuchen → PDF öffnen in einem Schritt)
+
+## UX: Fortschrittsanzeige bei KI-Operationen und Importen
+- [x] Fortschrittsanzeige bei KI-Analyse von Belegen (Dokument-Upload + "Alle neu analysieren")
+- [x] Fortschrittsanzeige bei Bankimport (CAMT/MT940/CSV/PDF-Upload + KI-Kategorisierung)
+- [x] Fortschrittsanzeige bei Kreditkarten-PDF-Analyse
+- [x] Fortschrittsanzeige bei Auto-Match (Dokument-Matching)
+- [x] Fortschrittsanzeige bei Kontenplan-Import (Excel/CSV/PDF)
+
+## UX: Kontenplan-Import-Dialog verbessern
+- [x] Dialog-Höhe vergrössern (mehr Konten sichtbar im Vorschaufenster)
+- [x] Checkbox-Spalte hinzufügen: Alle auswählen / einzeln an-/abwählen
+- [x] Import-Button zeigt Anzahl ausgewählter Konten (nicht immer alle)
+- [x] "Alle auswählen" / "Alle abwählen" Toggle-Button
+
+## Feature: Kontenplan Kategorie-Verschiebung
+- [x] Kontenplan: Beim Bearbeiten eines Kontos Kategorie und Unterkategorie ändern können (Dropdown)
+- [ ] Kontenplan: Konto per Drag & Drop in andere Kategorie verschieben (wie Eröffnungssaldi) [offen - Dropdown bereits implementiert]
+
+## Feature: Eröffnungssaldi Import
+- [x] Eröffnungssaldi: Import-Button für Eröffnungsbilanz (PDF oder Excel/CSV)
+- [x] Eröffnungssaldi: KI-Extraktion aus PDF (Kontonummer + Saldo)
+- [x] Eröffnungssaldi: Excel/CSV-Parser (Spalten: Konto, Bezeichnung, Saldo)
+- [x] Eröffnungssaldi: Vorschaufenster mit Bulk-Auswahl (Checkbox, Alle/Keine)
+- [x] Eröffnungssaldi: Fortschrittsanzeige bei KI-Extraktion
+
+## Belege-Seite: Übersicht/Details-Toggle + Label-Klärung
+- [x] Zwischen Suche und Dokumentenliste: Toggle "Übersicht" / "Details" einbauen
+- [x] Übersicht-Modus: nur erste Zeile (Dateiname + Badges) sichtbar
+- [x] Details-Modus: auch zweite/dritte Zeile (Gegenpartei, Betrag, Datum, MWST, Beschreibung) sichtbar
+- [x] "Offen" Label umbenennen in "Nicht verbucht" (= noch kein Journal-Eintrag vorhanden)
+
+## Bugfix: Beleg-Status-Konsistenz
+- [x] Beim Zurücksetzen eines Journal-Eintrags (reset/revert): verknüpfte Belege-Status auch zurücksetzen (journalEntryId auf null)
+- [x] Beim Verbuchen: verknüpfte Belege-Status auf "verbucht" setzen (bereits vorhanden)
+- [x] DocumentDetail.tsx: Beleg-Status-Konsistenz durch journalEntryId-Clearing beim Revert sichergestellt

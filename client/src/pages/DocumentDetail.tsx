@@ -1102,6 +1102,15 @@ export default function DocumentDetail() {
                       )}
                       {hasLinkedTx ? 'Transaktion verbuchen' : 'Beleg direkt verbuchen'}
                     </Button>
+                    {isBooking && (
+                      <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                        <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-primary">Buchung wird erstellt...</p>
+                          <p className="text-xs text-muted-foreground">Journal-Eintrag wird angelegt. Bitte warten.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (

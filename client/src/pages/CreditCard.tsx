@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useRef } from "react";
-import { Upload, Check, FileText, CreditCard as CreditCardIcon, Trash2, Undo2, ChevronDown, ChevronRight } from "lucide-react";
+import { Upload, Check, FileText, CreditCard as CreditCardIcon, Trash2, Undo2, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -118,6 +118,15 @@ export default function CreditCard() {
           <Upload className="h-4 w-4" />
           {uploading ? "Wird verarbeitet..." : "PDF hochladen"}
         </Button>
+        {uploading && (
+          <div className="mt-3 flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+            <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-primary">KI liest Kreditkartenabrechnung...</p>
+              <p className="text-xs text-muted-foreground">Beträge und Positionen werden extrahiert. Bitte warten (15–30 Sek.).</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Statements list */}

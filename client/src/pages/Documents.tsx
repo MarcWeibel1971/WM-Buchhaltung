@@ -10,7 +10,7 @@ import {
   FileText, Image, Eye, Trash2, Search, Filter,
   Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
   Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2, Calendar,
-  Paperclip, ChevronRight, CreditCard
+  Paperclip, ChevronRight, CreditCard, LayoutList, AlignJustify
 } from "lucide-react";
 import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
@@ -26,9 +26,9 @@ const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; co
 };
 
 const MATCH_STATUS_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  matched:   { label: "Matched",   icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-green-700 bg-green-100 border-green-200" },
-  unmatched: { label: "Offen",     icon: <AlertCircle className="w-3.5 h-3.5" />,  color: "text-amber-700 bg-amber-50 border-amber-200" },
-  manual:    { label: "Manuell",   icon: <Link2 className="w-3.5 h-3.5" />,        color: "text-blue-700 bg-blue-50 border-blue-200" },
+  matched:   { label: "Verbucht / Matched",   icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-green-700 bg-green-100 border-green-200" },
+  unmatched: { label: "Nicht verbucht",        icon: <AlertCircle className="w-3.5 h-3.5" />,  color: "text-amber-700 bg-amber-50 border-amber-200" },
+  manual:    { label: "Manuell verknüpft",     icon: <Link2 className="w-3.5 h-3.5" />,        color: "text-blue-700 bg-blue-50 border-blue-200" },
 };
 
 function formatBytes(bytes: number) {
@@ -64,6 +64,7 @@ export default function Documents() {
   const [search, setSearch] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [sidebarFilter, setSidebarFilter] = useState<string | null>(urlFilter);
+  const [viewMode, setViewMode] = useState<"compact" | "detail">("detail");
   
   // Update filters when URL changes (sidebar navigation)
   useEffect(() => {
@@ -255,6 +256,20 @@ export default function Documents() {
         </Button>
       </div>
 
+      {/* KI-Fortschrittsanzeige */}
+      {(autoMatchMutation.isPending || batchReanalyzeMutation.isPending) && (
+        <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+          <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-primary">
+              {autoMatchMutation.isPending && "KI sucht passende Belege und Transaktionen..."}
+              {batchReanalyzeMutation.isPending && "KI analysiert alle Dokumente neu..."}
+            </p>
+            <p className="text-xs text-muted-foreground">Bitte warten, dies kann einige Sekunden dauern.</p>
+          </div>
+        </div>
+      )}
+
       {/* Filter-Kacheln */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
@@ -302,8 +317,8 @@ export default function Documents() {
         </p>
       </div>
 
-      {/* Filter & Search */}
-      <div className="flex flex-col sm:flex-row gap-3">
+      {/* Filter & Search + View Toggle */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -329,17 +344,40 @@ export default function Documents() {
           </SelectContent>
         </Select>
         <Select value={filterMatch} onValueChange={setFilterMatch}>
-          <SelectTrigger className="w-full sm:w-40">
+          <SelectTrigger className="w-full sm:w-44">
             <Link2 className="w-4 h-4 mr-2 text-muted-foreground" />
-            <SelectValue placeholder="Match-Status" />
+            <SelectValue placeholder="Buchungsstatus" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle Status</SelectItem>
-            <SelectItem value="matched">Matched</SelectItem>
-            <SelectItem value="unmatched">Offen</SelectItem>
-            <SelectItem value="manual">Manuell</SelectItem>
+            <SelectItem value="matched">Verbucht / Matched</SelectItem>
+            <SelectItem value="unmatched">Nicht verbucht</SelectItem>
+            <SelectItem value="manual">Manuell verknüpft</SelectItem>
           </SelectContent>
         </Select>
+        {/* View Mode Toggle */}
+        <div className="flex border border-border rounded-lg overflow-hidden flex-shrink-0">
+          <button
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
+              viewMode === "compact" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"
+            }`}
+            onClick={() => setViewMode("compact")}
+            title="Übersicht: nur erste Zeile"
+          >
+            <LayoutList className="w-3.5 h-3.5" />
+            Übersicht
+          </button>
+          <button
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors border-l border-border ${
+              viewMode === "detail" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"
+            }`}
+            onClick={() => setViewMode("detail")}
+            title="Details: alle Zeilen"
+          >
+            <AlignJustify className="w-3.5 h-3.5" />
+            Details
+          </button>
+        </div>
       </div>
 
       {/* Document List */}
@@ -406,8 +444,8 @@ export default function Documents() {
                       )}
                     </div>
 
-                    {/* AI-extracted info */}
-                    {meta && (
+                    {/* AI-extracted info – only in detail mode */}
+                    {viewMode === "detail" && meta && (
                       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
                         {meta.counterparty && <span>Gegenpartei: <span className="text-foreground font-medium">{meta.counterparty}</span></span>}
                         {meta.totalAmount != null && <span>Betrag: <span className="text-foreground font-medium">CHF {formatCHF(Number(meta.totalAmount))}</span></span>}
@@ -417,9 +455,11 @@ export default function Documents() {
                       </div>
                     )}
 
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {formatBytes(doc.fileSize)} · {formatDate(doc.createdAt)}
-                    </div>
+                    {viewMode === "detail" && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {formatBytes(doc.fileSize)} · {formatDate(doc.createdAt)}
+                      </div>
+                    )}
                   </div>
 
                   {/* Fiscal Year Select */}

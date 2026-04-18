@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -602,6 +602,24 @@ export default function BankImport() {
         <p className="text-xs text-muted-foreground">
           Unterstützte Formate: CAMT.053 (XML), MT940 (.sta), CSV (Semikolon-getrennt), PDF (KI-Extraktion)
         </p>
+
+        {/* Import progress indicators */}
+        {(importing || importingPdf || categorizeMutation.isPending || bookingTextMutation.isPending || refreshMutation.isPending || bulkApproveMutation.isPending) && (
+          <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+            <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-primary">
+                {importing && "Datei wird importiert..."}
+                {importingPdf && "KI liest PDF-Kontoauszug..."}
+                {categorizeMutation.isPending && "KI kategorisiert Transaktionen..."}
+                {bookingTextMutation.isPending && "Buchungstexte werden generiert..."}
+                {refreshMutation.isPending && "Buchungsregeln werden angewendet..."}
+                {bulkApproveMutation.isPending && "Transaktionen werden verbucht..."}
+              </p>
+              <p className="text-xs text-muted-foreground">Bitte warten, dies kann einige Sekunden dauern.</p>
+            </div>
+          </div>
+        )}
 
         {/* Last import info */}
         {selectedBankAccountId && lastImport && (

@@ -1308,6 +1308,95 @@ function OpeningBalancesTab() {
   const [addCategory, setAddCategory] = useState("");
   const [localOrder, setLocalOrder] = useState<{ assets: number[]; liabilities: number[] }>({ assets: [], liabilities: [] });
 
+  // Import state
+  const [showImport, setShowImport] = useState(false);
+  const [isImportParsing, setIsImportParsing] = useState(false);
+  const [importPreview, setImportPreview] = useState<Array<{ number: string; name: string; balance: number; accountType: string }>>([]);
+  const [selectedImportIds, setSelectedImportIds] = useState<Set<number>>(new Set());
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const importPdfFileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFile = async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (["pdf", "jpg", "jpeg", "png", "webp"].includes(ext)) {
+      // PDF/Image: use LLM extraction
+      setIsImportParsing(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const resp = await fetch("/api/upload/opening-balance-pdf", { method: "POST", body: formData, credentials: "include" });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error ?? "Upload fehlgeschlagen");
+        const preview = result.balances ?? [];
+        setImportPreview(preview);
+        setSelectedImportIds(new Set(preview.map((_: any, i: number) => i)));
+        if (preview.length === 0) toast.warning("Keine Salden gefunden");
+        else toast.success(`${preview.length} Konten extrahiert`);
+      } catch (e: any) {
+        toast.error(e.message);
+      } finally {
+        setIsImportParsing(false);
+      }
+    } else if (["csv", "xlsx", "xls"].includes(ext)) {
+      // Excel/CSV: parse client-side
+      setIsImportParsing(true);
+      try {
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        const sep = lines[0]?.includes(";") ? ";" : ",";
+        const headers = lines[0]?.split(sep).map(h => h.trim().toLowerCase().replace(/"/g, "")) ?? [];
+        const numIdx = headers.findIndex(h => ["nummer", "konto", "kontonummer", "number"].includes(h));
+        const nameIdx = headers.findIndex(h => ["bezeichnung", "name", "kontoname"].includes(h));
+        const balIdx = headers.findIndex(h => ["saldo", "betrag", "balance", "amount", "soll"].includes(h));
+        if (numIdx === -1 || balIdx === -1) {
+          toast.error("Spalten 'Nummer' und 'Saldo' nicht gefunden. Bitte Spaltenüberschriften prüfen.");
+          return;
+        }
+        const preview: Array<{ number: string; name: string; balance: number; accountType: string }> = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(sep).map(c => c.trim().replace(/"/g, ""));
+          const num = cols[numIdx]?.trim();
+          const bal = parseFloat(cols[balIdx]?.replace(/[^0-9.\-]/g, "") ?? "0");
+          if (!num || isNaN(bal) || bal === 0) continue;
+          const numInt = parseInt(num);
+          let accountType = "asset";
+          if (numInt >= 2000 && numInt <= 2799) accountType = "liability";
+          else if (numInt >= 2800) accountType = "equity";
+          preview.push({ number: num, name: nameIdx >= 0 ? cols[nameIdx] : num, balance: Math.abs(bal), accountType });
+        }
+        setImportPreview(preview);
+        setSelectedImportIds(new Set(preview.map((_, i) => i)));
+        if (preview.length === 0) toast.warning("Keine Salden gefunden");
+        else toast.success(`${preview.length} Konten gelesen`);
+      } catch (e: any) {
+        toast.error(e.message);
+      } finally {
+        setIsImportParsing(false);
+      }
+    } else {
+      toast.error("Bitte PDF, Bild oder CSV/Excel hochladen");
+    }
+  };
+
+  const applyImport = () => {
+    const selected = importPreview.filter((_, i) => selectedImportIds.has(i));
+    // Match by account number to existing accounts
+    const newBalances = { ...localBalances };
+    let matched = 0;
+    for (const item of selected) {
+      const acc = rows?.find(r => r.accountNumber === item.number);
+      if (acc) {
+        newBalances[acc.accountId] = String(item.balance);
+        matched++;
+      }
+    }
+    setLocalBalances(newBalances);
+    setIsDirty(true);
+    setShowImport(false);
+    toast.success(`${matched} von ${selected.length} Salden übernommen. Bitte speichern.`);
+    if (matched < selected.length) toast.warning(`${selected.length - matched} Konten nicht im Kontenplan gefunden (Nummer prüfen).`);
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor)
@@ -1473,6 +1562,9 @@ function OpeningBalancesTab() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => { setImportPreview([]); setSelectedImportIds(new Set()); setShowImport(true); }}>
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAddAccount(true)}>
             <Plus className="h-4 w-4 mr-1" /> Neues Konto
           </Button>
@@ -1582,6 +1674,138 @@ function OpeningBalancesTab() {
             <Button onClick={handleAddAccount} disabled={createAccountMut.isPending}>
               {createAccountMut.isPending ? "Erstellen..." : "Erstellen"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Dialog */}
+      <Dialog open={showImport} onOpenChange={open => { setShowImport(open); if (!open) setImportPreview([]); }}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Eröffnungssalden importieren</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Laden Sie eine Bilanz als PDF/Bild (KI-Extraktion) oder als CSV/Excel-Datei hoch.
+              CSV/Excel muss Spalten "Nummer" und "Saldo" enthalten.
+            </p>
+          </DialogHeader>
+
+          {/* Upload area */}
+          {importPreview.length === 0 && (
+            <div className="space-y-3 py-2">
+              {isImportParsing ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">KI analysiert die Bilanz...</p>
+                  <p className="text-xs text-muted-foreground">Dies kann 15–30 Sekunden dauern</p>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
+                    onClick={() => importFileRef.current?.click()}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleImportFile(f); }}
+                  >
+                    <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm font-medium">PDF, Bild oder CSV/Excel hier ablegen</p>
+                    <p className="text-xs text-muted-foreground mt-1">PDF/JPG/PNG → KI-Extraktion &nbsp;|&nbsp; CSV/XLSX → direkt einlesen</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" className="flex-1" onClick={() => importFileRef.current?.click()}>
+                      <FileSpreadsheet className="h-4 w-4 mr-2" /> CSV / Excel hochladen
+                    </Button>
+                    <Button variant="outline" className="flex-1" onClick={() => importPdfFileRef.current?.click()}>
+                      <FileText className="h-4 w-4 mr-2" /> PDF / Bild hochladen (KI)
+                    </Button>
+                  </div>
+                  <input ref={importFileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
+                  <input ref={importPdfFileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Preview table */}
+          {importPreview.length > 0 && (
+            <div className="flex flex-col flex-1 min-h-0">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium">{importPreview.length} Konten gefunden – {selectedImportIds.size} ausgewählt</p>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setSelectedImportIds(new Set(importPreview.map((_, i) => i)))}>
+                    Alle auswählen
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setSelectedImportIds(new Set())}>
+                    Alle abwählen
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => { setImportPreview([]); setSelectedImportIds(new Set()); }}>
+                    Neue Datei
+                  </Button>
+                </div>
+              </div>
+              <div className="overflow-auto flex-1 border border-border rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                    <tr>
+                      <th className="w-8 px-3 py-2">
+                        <input type="checkbox"
+                          checked={selectedImportIds.size === importPreview.length}
+                          onChange={e => setSelectedImportIds(e.target.checked ? new Set(importPreview.map((_, i) => i)) : new Set())}
+                          className="rounded"
+                        />
+                      </th>
+                      <th className="text-left px-3 py-2 font-medium">Nr.</th>
+                      <th className="text-left px-3 py-2 font-medium">Bezeichnung</th>
+                      <th className="text-left px-3 py-2 font-medium">Typ</th>
+                      <th className="text-right px-3 py-2 font-medium">Saldo CHF</th>
+                      <th className="text-left px-3 py-2 font-medium">Im Kontenplan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.map((item, i) => {
+                      const inPlan = rows?.some(r => r.accountNumber === item.number);
+                      return (
+                        <tr key={i} className={`border-t border-border ${selectedImportIds.has(i) ? "bg-primary/5" : ""}`}>
+                          <td className="px-3 py-1.5">
+                            <input type="checkbox" checked={selectedImportIds.has(i)}
+                              onChange={e => setSelectedImportIds(prev => { const s = new Set(prev); e.target.checked ? s.add(i) : s.delete(i); return s; })}
+                              className="rounded"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-xs">{item.number}</td>
+                          <td className="px-3 py-1.5">{item.name}</td>
+                          <td className="px-3 py-1.5">
+                            <Badge variant="outline" className="text-xs">
+                              {item.accountType === "asset" ? "Aktiven" : item.accountType === "liability" ? "Fremdkapital" : "Eigenkapital"}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono">
+                            {new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2 }).format(item.balance)}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            {inPlan
+                              ? <span className="text-green-600 text-xs">✓ Vorhanden</span>
+                              : <span className="text-amber-600 text-xs">⚠ Nicht gefunden</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="mt-3">
+            <Button variant="outline" onClick={() => setShowImport(false)}>Abbrechen</Button>
+            {importPreview.length > 0 && (
+              <Button onClick={applyImport} disabled={selectedImportIds.size === 0}>
+                <Upload className="h-4 w-4 mr-2" />
+                {selectedImportIds.size} Salden übernehmen
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2064,6 +2288,8 @@ function ChartOfAccountsTab() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editNumber, setEditNumber] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [editSubCategory, setEditSubCategory] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showKmuConfirm, setShowKmuConfirm] = useState(false);
@@ -2075,6 +2301,8 @@ function ChartOfAccountsTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const [isPdfParsing, setIsPdfParsing] = useState(false);
+  const [selectedImportIds, setSelectedImportIds] = useState<Set<number>>(new Set());
+  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
 
   // DnD sensors
   const sensors = useSensors(
@@ -2204,6 +2432,8 @@ function ChartOfAccountsTab() {
     setEditingId(acc.id);
     setEditName(acc.name);
     setEditNumber(acc.number);
+    setEditCategory(acc.category || "");
+    setEditSubCategory(acc.subCategory || "");
   };
 
   const saveEdit = (acc: AccountRow) => {
@@ -2218,6 +2448,8 @@ function ChartOfAccountsTab() {
       id: acc.id,
       name: editName !== acc.name ? editName : undefined,
       number: editNumber !== acc.number ? editNumber : undefined,
+      category: editCategory !== (acc.category || "") ? (editCategory || null) : undefined,
+      subCategory: editSubCategory !== (acc.subCategory || "") ? (editSubCategory || null) : undefined,
     });
     setEditingId(null);
   };
@@ -2462,6 +2694,31 @@ function ChartOfAccountsTab() {
                               <span className="flex-1 truncate">{acc.name}</span>
                             )}
 
+                            {/* Category + SubCategory selectors (only in edit mode) */}
+                            {editingId === acc.id && (
+                              <>
+                                <Select value={editCategory} onValueChange={val => { setEditCategory(val); setEditSubCategory(""); }}>
+                                  <SelectTrigger className="w-40 h-7 text-xs">
+                                    <SelectValue placeholder="Kategorie..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {["Umlaufvermögen","Anlagevermögen","Fremdkapital","Eigenkapital",
+                                      "Drittaufwand","Personalaufwand","Mietaufwand","Zinsaufwand",
+                                      "Unterhalt und Reparatur","Abschreibungen","Versicherungen",
+                                      "Betriebs- und Hilfsmaterial","Verwaltungsaufwand","Werbeaufwand",
+                                      "\u00dcbriger Aufwand","Dienstleistungsertrag","Kapitalertrag","\u00dcbriger Ertrag"
+                                    ].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  value={editSubCategory}
+                                  onChange={e => setEditSubCategory(e.target.value)}
+                                  className="w-36 h-7 text-xs"
+                                  placeholder="Unterkategorie..."
+                                />
+                              </>
+                            )}
+
                             {/* Account type badge */}
                             <Badge variant="outline" className="text-xs shrink-0">
                               {ACCOUNT_TYPE_LABELS[acc.accountType] || acc.accountType}
@@ -2612,7 +2869,7 @@ function ChartOfAccountsTab() {
 
       {/* Import Dialog */}
       <Dialog open={showImport} onOpenChange={setShowImport}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Kontenplan importieren</DialogTitle>
           </DialogHeader>
@@ -2622,6 +2879,16 @@ function ChartOfAccountsTab() {
               Bei Excel/CSV werden die Spalten "Nummer" und "Name" automatisch erkannt.
               Bei PDF wird der Kontenplan per KI extrahiert.
             </p>
+            {/* PDF progress indicator */}
+            {isPdfParsing && (
+              <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-primary">KI analysiert PDF...</p>
+                  <p className="text-xs text-muted-foreground">{pdfProgress || "Kontenplan wird extrahiert, bitte warten..."}</p>
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
               <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isPdfParsing}>
                 <FileSpreadsheet className="h-4 w-4 mr-2" /> Excel/CSV
@@ -2734,6 +3001,7 @@ function ChartOfAccountsTab() {
                       return { number: num, name, accountType, category: cat, subCategory: sub };
                     }).filter((a): a is NonNullable<typeof a> => a !== null && !!a.number && !!a.name);
                     setImportPreview(parsed);
+                    setSelectedImportIds(new Set(parsed.map((_, i) => i)));
                     toast.success(`${parsed.length} Konten aus Datei gelesen`);
                   } catch (err) {
                     toast.error("Fehler beim Lesen der Datei");
@@ -2847,41 +3115,100 @@ function ChartOfAccountsTab() {
               </p>
             )}
             {importPreview.length > 0 && (
-              <div className="border rounded-lg max-h-64 overflow-y-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nr.</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Typ</TableHead>
-                      <TableHead>Kategorie</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {importPreview.slice(0, 50).map((a, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="font-mono text-xs">{a.number}</TableCell>
-                        <TableCell className="text-sm">{a.name}</TableCell>
-                        <TableCell><Badge variant="outline" className="text-xs">{ACCOUNT_TYPE_LABELS[a.accountType] || a.accountType}</Badge></TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{a.category || "-"}</TableCell>
+              <div className="space-y-2">
+                {/* Select all / deselect all toolbar */}
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-border cursor-pointer"
+                      checked={selectedImportIds.size === importPreview.length}
+                      ref={(el) => { if (el) el.indeterminate = selectedImportIds.size > 0 && selectedImportIds.size < importPreview.length; }}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedImportIds(new Set(importPreview.map((_, i) => i)));
+                        } else {
+                          setSelectedImportIds(new Set());
+                        }
+                      }}
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      {selectedImportIds.size === importPreview.length
+                        ? `Alle ${importPreview.length} Konten ausgewählt`
+                        : `${selectedImportIds.size} von ${importPreview.length} ausgewählt`}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className="text-xs text-primary underline hover:no-underline"
+                      onClick={() => setSelectedImportIds(new Set(importPreview.map((_, i) => i)))}
+                    >Alle</button>
+                    <button
+                      className="text-xs text-muted-foreground underline hover:no-underline"
+                      onClick={() => setSelectedImportIds(new Set())}
+                    >Keine</button>
+                  </div>
+                </div>
+                {/* Preview table – tall, scrollable */}
+                <div className="border rounded-lg overflow-y-auto" style={{ maxHeight: "55vh" }}>
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-card z-10">
+                      <TableRow>
+                        <TableHead className="w-8"></TableHead>
+                        <TableHead className="w-16">Nr.</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead className="w-24">Typ</TableHead>
+                        <TableHead>Kategorie</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {importPreview.length > 50 && (
-                  <p className="text-xs text-muted-foreground p-2 text-center">... und {importPreview.length - 50} weitere</p>
-                )}
+                    </TableHeader>
+                    <TableBody>
+                      {importPreview.map((a, i) => (
+                        <TableRow
+                          key={i}
+                          className={`cursor-pointer transition-colors ${
+                            selectedImportIds.has(i) ? "bg-primary/5" : "opacity-50"
+                          }`}
+                          onClick={() => {
+                            const next = new Set(selectedImportIds);
+                            if (next.has(i)) next.delete(i); else next.add(i);
+                            setSelectedImportIds(next);
+                          }}
+                        >
+                          <TableCell className="py-1.5" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-border cursor-pointer"
+                              checked={selectedImportIds.has(i)}
+                              onChange={() => {
+                                const next = new Set(selectedImportIds);
+                                if (next.has(i)) next.delete(i); else next.add(i);
+                                setSelectedImportIds(next);
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="font-mono text-xs py-1.5">{a.number}</TableCell>
+                          <TableCell className="text-sm py-1.5">{a.name}</TableCell>
+                          <TableCell className="py-1.5"><Badge variant="outline" className="text-xs">{ACCOUNT_TYPE_LABELS[a.accountType] || a.accountType}</Badge></TableCell>
+                          <TableCell className="text-xs text-muted-foreground py-1.5">{a.category || "-"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowImport(false); setImportPreview([]); }}>Abbrechen</Button>
+            <Button variant="outline" onClick={() => { setShowImport(false); setImportPreview([]); setSelectedImportIds(new Set()); setPdfProgress(null); }}>Abbrechen</Button>
             <Button
-              onClick={() => bulkImportMut.mutate({ accounts: importPreview as any, mode: importMode })}
-              disabled={importPreview.length === 0 || bulkImportMut.isPending}
+              onClick={() => {
+                const selected = importPreview.filter((_, i) => selectedImportIds.has(i));
+                bulkImportMut.mutate({ accounts: selected as any, mode: importMode });
+              }}
+              disabled={selectedImportIds.size === 0 || bulkImportMut.isPending}
             >
               {bulkImportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
-              {importPreview.length} Konten importieren
+              {selectedImportIds.size} von {importPreview.length} Konten importieren
             </Button>
           </DialogFooter>
         </DialogContent>

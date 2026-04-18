@@ -291,6 +291,10 @@ const journalRouter = router({
       await db.update(journalEntries)
         .set({ status: "pending", approvedBy: null, approvedAt: null })
         .where(eq(journalEntries.id, input.entryId));
+      // Also clear journalEntryId from linked documents so they no longer show as "verbucht"
+      await db.update(documents)
+        .set({ journalEntryId: null, matchStatus: "unmatched" })
+        .where(eq(documents.journalEntryId, input.entryId));
       return { success: true };
     }),
 
@@ -360,6 +364,10 @@ const journalRouter = router({
         await db.update(journalEntries)
           .set({ status: "pending", approvedBy: null, approvedAt: null })
           .where(eq(journalEntries.id, id));
+        // Also clear journalEntryId from linked documents
+        await db.update(documents)
+          .set({ journalEntryId: null, matchStatus: "unmatched" })
+          .where(eq(documents.journalEntryId, id));
         reverted++;
       }
       return { reverted, skipped };

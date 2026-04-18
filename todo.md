@@ -1136,4 +1136,4 @@
 - [x] Sprach-Transkription: direkter /api/upload/transcribe Endpunkt ohne S3-Umweg implementiert
 
 ## Bugfix: BankImport Bankkonto-Auswahl
-- [x] BankImport: Bankkonto-Dropdown zeigt keine Bankkonten obwohl hinterlegt (isActive-Filter in getBankAccounts entfernt)
+- [x] BankImport: Bankkonto-Dropdown zeigt keine Bankkonten obwohl hinterlegt (INNER JOIN → LEFT JOIN, fehlende accounts-Einträge für accountId 210001-210003)

@@ -455,13 +455,13 @@ export async function updateJournalEntryLines(entryId: number, lines: Array<{
 export async function getBankAccounts(orgId: number) {
   const db = await getDb();
   if (!db) return [];
-  // Note: isActive filter removed – MySQL tinyint boolean comparison can be unreliable.
-  // All bank accounts for this org are shown; inactive ones are managed via settings.
+  // Note: LEFT JOIN used so bank accounts without a linked account entry still appear.
+  // INNER JOIN would silently drop bank accounts if the linked account was deleted.
   return db.select({
     bankAccount: bankAccounts,
     account: accounts,
   }).from(bankAccounts)
-    .innerJoin(accounts, eq(bankAccounts.accountId, accounts.id))
+    .leftJoin(accounts, eq(bankAccounts.accountId, accounts.id))
     .where(
       eq(bankAccounts.organizationId, orgId),
     );

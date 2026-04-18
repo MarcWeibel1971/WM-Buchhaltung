@@ -565,7 +565,7 @@ export default function BankImport() {
                 )}
                 {bankAccounts?.map(ba => (
                   <SelectItem key={ba.bankAccount.id} value={String(ba.bankAccount.id)}>
-                    {ba.bankAccount.name} ({ba.account.number}){ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
+                    {ba.bankAccount.name}{ba.account ? ` (${ba.account.number})` : ""}{ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1044,8 +1044,8 @@ export default function BankImport() {
             const collectiveBalanced = collectiveDiff < 0.005;
             // Find the bank account for this transaction
             const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
-            const bankAccountLabel = txBankAccount ? `${txBankAccount.account.number} ${txBankAccount.account.name}` : "Bankkonto";
-            const bankAccountId = txBankAccount?.account.id;
+            const bankAccountLabel = txBankAccount ? `${txBankAccount.account?.number ?? ''} ${txBankAccount.account?.name ?? txBankAccount.bankAccount.name}`.trim() : "Bankkonto";
+            const bankAccountId = txBankAccount?.account?.id ?? txBankAccount?.bankAccount.accountId;
 
             const handleCollectiveApprove = () => {
               if (!editTx || !bankAccountId) return;
@@ -1379,7 +1379,7 @@ export default function BankImport() {
                   const txAmount = Math.abs(parseFloat(editTx.amount));
                   const isIncoming = parseFloat(editTx.amount) > 0;
                   const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
-                  const bankAccountId = txBankAccount?.account.id;
+                  const bankAccountId = txBankAccount?.account?.id ?? txBankAccount?.bankAccount.accountId;
                   if (!bankAccountId) { toast.error("Bankkonto nicht gefunden"); return; }
                   const collectiveSum = collectiveLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
                   if (Math.abs(txAmount - collectiveSum) >= 0.005) { toast.error("Differenz muss 0 sein"); return; }

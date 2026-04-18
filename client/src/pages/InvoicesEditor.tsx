@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Plus, Trash2, Send, CheckCircle2, Loader2, FileDown, Mail } from "lucide-react";
+import { Plus, Trash2, Send, CheckCircle2, Loader2, FileDown, Mail, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -127,13 +127,14 @@ export default function InvoiceEditor(props: {
     onSuccess: () => { toast.success("Entwurf aktualisiert"); props.onSaved(); },
     onError: (e) => toast.error(e.message),
   });
+  const [issuingWithPdf, setIssuingWithPdf] = useState(false);
   const issueMut = trpc.invoices.issue.useMutation({
-    onSuccess: (r) => {
+    onSuccess: async (r) => {
       toast.success(`Rechnung ${r.invoiceNumber} verbucht`);
       utils.invoices.list.invalidate();
       utils.invoices.getById.invalidate();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => { setIssuingWithPdf(false); toast.error(e.message); },
   });
   const pdfMut = trpc.invoices.generatePdf.useMutation({
     onSuccess: (r) => {
@@ -197,6 +198,26 @@ export default function InvoiceEditor(props: {
   const handleIssue = () => {
     if (!props.invoiceId) return;
     issueMut.mutate({ id: props.invoiceId });
+  };
+
+  // Verbuchen + sofort QR-PDF öffnen
+  const handleIssueAndPdf = async () => {
+    if (!props.invoiceId) return;
+    setIssuingWithPdf(true);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        issueMut.mutate({ id: props.invoiceId! }, {
+          onSuccess: () => resolve(),
+          onError: (e) => reject(e),
+        });
+      });
+      // Nach Verbuchen sofort PDF generieren
+      pdfMut.mutate({ id: props.invoiceId!, regenerate: true });
+    } catch {
+      // Fehler bereits durch issueMut.onError gemeldet
+    } finally {
+      setIssuingWithPdf(false);
+    }
   };
 
   const addItem = () => setItems([...items, emptyItem(items.length + 1)]);
@@ -470,16 +491,30 @@ export default function InvoiceEditor(props: {
             </Button>
           )}
           {isEdit && currentStatus === "draft" && (
-            <Button
-              onClick={handleIssue}
-              disabled={issueMut.isPending}
-            >
-              {issueMut.isPending ? (
-                <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Verbuchen…</>
-              ) : (
-                <><Send className="h-4 w-4 mr-1" /> Verbuchen &amp; Nummer vergeben</>
-              )}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={handleIssue}
+                disabled={issueMut.isPending || issuingWithPdf}
+              >
+                {issueMut.isPending && !issuingWithPdf ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Verbuchen…</>
+                ) : (
+                  <><Send className="h-4 w-4 mr-1" /> Verbuchen</>
+                )}
+              </Button>
+              <Button
+                onClick={handleIssueAndPdf}
+                disabled={issueMut.isPending || pdfMut.isPending || issuingWithPdf}
+                className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {issuingWithPdf || pdfMut.isPending ? (
+                  <><Loader2 className="h-4 w-4 animate-spin" /> QR-PDF wird erstellt…</>
+                ) : (
+                  <><QrCode className="h-4 w-4" /> Verbuchen &amp; QR-Rechnung PDF</>
+                )}
+              </Button>
+            </>
           )}
           {isEdit && props.invoiceId != null && existing.data && existing.data.status !== "draft" && (
             <>

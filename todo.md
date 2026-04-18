@@ -1057,3 +1057,16 @@
 
 ## UX: Bankimport - Hinweis wenn keine Bankkonten erfasst
 - [x] Wenn bankAccounts leer ist: Hinweis + Link zu Einstellungen → Bankkonten anzeigen
+
+## UX: Sidebar vereinfachen + Filter-Kacheln
+- [x] Sidebar: Unterpunkte bei Belege entfernen (nur "Alle Belege" bleibt als Einstieg)
+- [x] Sidebar: Unterpunkte bei Bank entfernen (nur "Banktransaktionen" bleibt)
+- [x] Sidebar: Unterpunkte bei Freigaben entfernen (nur "Freigaben" bleibt)
+- [x] Belege-Seite: Farbige Filter-Kacheln oben (Alle, Neu, KI verarbeitet, Zu prüfen, Gematcht, Archiv)
+- [x] Bank-Seite: Farbige Filter-Kacheln oben (Alle, Ungematchte, Gematchte, Importe)
+- [x] Freigaben-Seite: Farbige Filter-Kacheln oben (Bereit, Mit Warnungen, Manuell, Verbucht)
+- [ ] Rechnungen-Unterpunkte bleiben in Sidebar (echte Seiten)
+- [ ] Berichte-Unterpunkte bleiben in Sidebar (echte Seiten)
+
+## QR-Rechnung PDF in Neue Rechnung
+- [x] Neue Rechnung: Button "Verbuchen & QR-Rechnung PDF" hinzufügen (Entwurf → Verbuchen → PDF öffnen in einem Schritt)

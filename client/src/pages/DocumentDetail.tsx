@@ -1122,7 +1122,7 @@ export default function DocumentDetail() {
                     variant="outline"
                     size="sm"
                     className="mt-3 gap-1.5"
-                    onClick={() => navigate("/journal")}
+                    onClick={() => navigate("/freigaben?filter=booked")}
                   >
                     <ArrowRight className="w-4 h-4" />
                     Im Journal anzeigen

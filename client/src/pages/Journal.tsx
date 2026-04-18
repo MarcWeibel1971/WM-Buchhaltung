@@ -2,7 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet, Clock, CheckCircle, XCircle, BookOpen } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -84,6 +84,18 @@ export default function Journal() {
 
   const { data, refetch } = trpc.journal.list.useQuery(filters);
   const { data: accounts } = trpc.accounts.list.useQuery();
+
+  // Stats for filter tiles – fetch all statuses
+  const { data: allData } = trpc.journal.list.useQuery({ fiscalYear, limit: 9999 });
+  const journalStats = useMemo(() => {
+    const all = allData?.entries ?? [];
+    return {
+      total: allData?.total ?? 0,
+      pending: all.filter((e: any) => e.status === "pending").length,
+      approved: all.filter((e: any) => e.status === "approved").length,
+      rejected: all.filter((e: any) => e.status === "rejected").length,
+    };
+  }, [allData]);
   const { data: entryDetail } = trpc.journal.getWithLines.useQuery(
     { entryId: expandedId! },
     { enabled: expandedId !== null }
@@ -278,29 +290,44 @@ export default function Journal() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Suchen..."
-            value={search}
-            onChange={e => { setSearch(e.target.value); setOffset(0); }}
-            className="pl-9"
-          />
-        </div>
-        <Select value={status} onValueChange={v => { setStatus(v); setOffset(0); }}>
-          <SelectTrigger className="w-40">
-            <Filter className="h-4 w-4 mr-2" />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle Status</SelectItem>
-            <SelectItem value="pending">Ausstehend</SelectItem>
-            <SelectItem value="approved">Genehmigt</SelectItem>
-            <SelectItem value="rejected">Abgelehnt</SelectItem>
-          </SelectContent>
-        </Select>
+      {/* Filter-Kacheln */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { key: "all",      label: "Alle Buchungen",        count: journalStats.total,    accent: "from-slate-500 to-slate-600",  light: "bg-slate-50 border-slate-200 text-slate-700",  icon: <BookOpen className="w-5 h-5" /> },
+          { key: "pending",  label: "Bereit zur Freigabe",   count: journalStats.pending,  accent: "from-amber-500 to-orange-500", light: "bg-amber-50 border-amber-200 text-amber-700",  icon: <Clock className="w-5 h-5" /> },
+          { key: "approved", label: "Verbucht / Genehmigt",  count: journalStats.approved, accent: "from-green-500 to-emerald-600",light: "bg-green-50 border-green-200 text-green-700",  icon: <CheckCircle className="w-5 h-5" /> },
+          { key: "rejected", label: "Abgelehnt",              count: journalStats.rejected, accent: "from-red-500 to-rose-600",     light: "bg-red-50 border-red-200 text-red-700",        icon: <XCircle className="w-5 h-5" /> },
+        ].map(tile => {
+          const isActive = status === tile.key;
+          return (
+            <button
+              key={tile.key}
+              onClick={() => { setStatus(tile.key); setOffset(0); }}
+              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left ${
+                isActive
+                  ? `bg-gradient-to-br ${tile.accent} text-white border-transparent shadow-lg scale-[1.02]`
+                  : `${tile.light} border-transparent hover:border-current hover:shadow-md`
+              }`}
+            >
+              <div className={`mb-2 p-2 rounded-lg ${ isActive ? "bg-white/20" : "bg-white shadow-sm" }`}>
+                <span className={isActive ? "text-white" : ""}>{tile.icon}</span>
+              </div>
+              <div className={`text-2xl font-bold leading-none mb-1 ${ isActive ? "text-white" : "" }`}>{tile.count}</div>
+              <div className={`text-xs font-medium leading-tight ${ isActive ? "text-white/90" : "" }`}>{tile.label}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Suchen..."
+          value={search}
+          onChange={e => { setSearch(e.target.value); setOffset(0); }}
+          className="pl-9"
+        />
       </div>
 
       {/* Bulk Action Bar */}

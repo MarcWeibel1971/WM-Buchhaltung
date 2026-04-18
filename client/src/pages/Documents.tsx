@@ -207,6 +207,10 @@ export default function Documents() {
     matched: allDocs.filter(d => (d as any).matchStatus === "matched" || (d as any).matchStatus === "manual").length,
     unmatched: allDocs.filter(d => (d as any).matchStatus === "unmatched" || !(d as any).matchStatus).length,
     invoice_in: allDocs.filter(d => d.documentType === "invoice_in").length,
+    newDocs: allDocs.filter(d => { const ms = (d as any).matchStatus ?? "unmatched"; const hasAi = !!(d as any).aiMetadata; return !hasAi && ms !== "matched" && ms !== "manual"; }).length,
+    aiProcessed: allDocs.filter(d => { const ms = (d as any).matchStatus ?? "unmatched"; const hasAi = !!(d as any).aiMetadata; return hasAi && ms !== "matched" && ms !== "manual"; }).length,
+    review: allDocs.filter(d => { const ms = (d as any).matchStatus ?? "unmatched"; const hasAi = !!(d as any).aiMetadata; return ms === "unmatched" && hasAi; }).length,
+    archived: allDocs.filter(d => d.documentType === "other").length,
   };
 
   return (
@@ -251,19 +255,40 @@ export default function Documents() {
         </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Filter-Kacheln */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: "Gesamt", value: stats.total, color: "text-foreground" },
-          { label: "Matched", value: stats.matched, color: "text-green-600" },
-          { label: "Offen", value: stats.unmatched, color: "text-amber-600" },
-          { label: "Eingangsrechnungen", value: stats.invoice_in, color: "text-red-600" },
-        ].map(s => (
-          <div key={s.label} className="bg-card border border-border rounded-xl p-4 shadow-sm">
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-            <p className={`text-2xl font-bold mt-1 ${s.color}`}>{s.value}</p>
-          </div>
-        ))}
+          { key: null,           label: "Alle Belege",        count: stats.total,       accent: "from-slate-500 to-slate-600",   light: "bg-slate-50 border-slate-200 text-slate-700",   icon: <FileText className="w-5 h-5" /> },
+          { key: "new",          label: "Neu hochgeladen",    count: stats.newDocs,     accent: "from-blue-500 to-blue-600",     light: "bg-blue-50 border-blue-200 text-blue-700",      icon: <ArrowDownToLine className="w-5 h-5" /> },
+          { key: "ai-processed", label: "KI verarbeitet",     count: stats.aiProcessed, accent: "from-purple-500 to-purple-600", light: "bg-purple-50 border-purple-200 text-purple-700", icon: <RefreshCw className="w-5 h-5" /> },
+          { key: "review",       label: "Zu prüfen",          count: stats.review,      accent: "from-amber-500 to-orange-500",  light: "bg-amber-50 border-amber-200 text-amber-700",   icon: <Eye className="w-5 h-5" /> },
+          { key: "matched",      label: "Verbucht",           count: stats.matched,     accent: "from-green-500 to-emerald-600", light: "bg-green-50 border-green-200 text-green-700",   icon: <CheckCircle2 className="w-5 h-5" /> },
+          { key: "archived",     label: "Archiv",             count: stats.archived,    accent: "from-gray-400 to-gray-500",     light: "bg-gray-50 border-gray-200 text-gray-600",      icon: <StickyNote className="w-5 h-5" /> },
+        ].map(tile => {
+          const isActive = sidebarFilter === tile.key;
+          return (
+            <button
+              key={String(tile.key)}
+              onClick={() => {
+                setSidebarFilter(tile.key);
+                if (!tile.key) { setFilterMatch("all"); setFilterType("all"); }
+                else if (tile.key === "matched") setFilterMatch("matched");
+                else if (tile.key === "new" || tile.key === "review") setFilterMatch("unmatched");
+              }}
+              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left ${
+                isActive
+                  ? `bg-gradient-to-br ${tile.accent} text-white border-transparent shadow-lg scale-[1.02]`
+                  : `${tile.light} border-transparent hover:border-current hover:shadow-md`
+              }`}
+            >
+              <div className={`mb-2 p-2 rounded-lg ${ isActive ? "bg-white/20" : "bg-white shadow-sm" }`}>
+                <span className={isActive ? "text-white" : ""}>{tile.icon}</span>
+              </div>
+              <div className={`text-2xl font-bold leading-none mb-1 ${ isActive ? "text-white" : "" }`}>{tile.count}</div>
+              <div className={`text-xs font-medium leading-tight ${ isActive ? "text-white/90" : "" }`}>{tile.label}</div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Upload Zone */}

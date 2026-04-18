@@ -105,27 +105,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const NAV_ITEMS: NavItem[] = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard" },
     { href: "/inbox", icon: Inbox, label: "Inbox", badge: totalInbox > 0 ? totalInbox : undefined },
-    { href: "/belege", icon: FileText, label: "Belege", separator: true, badge: newDocs > 0 ? newDocs : undefined, children: [
-      { href: "/belege", icon: List, label: "Alle Belege" },
-      { href: "/belege?filter=new", icon: Upload, label: "Neu hochgeladen" },
-      { href: "/belege?filter=ai-processed", icon: Sparkles, label: "Von KI verarbeitet" },
-      { href: "/belege?filter=review", icon: Eye, label: "Zu prüfen" },
-      { href: "/belege?filter=matched", icon: Link2, label: "Gematcht" },
-      { href: "/belege?filter=archived", icon: Archive, label: "Archiv" },
-    ]},
-    { href: "/bank", icon: Building2, label: "Bank", badge: pendingBankTx > 0 ? pendingBankTx : undefined, children: [
-      { href: "/bank", icon: ArrowLeftRight, label: "Banktransaktionen" },
-      { href: "/bank?tab=import", icon: Upload, label: "Importe" },
-      { href: "/bank?tab=unmatched", icon: AlertCircle, label: "Ungematchte" },
-      { href: "/bank?tab=matched", icon: CheckCircle, label: "Gematchte" },
-      { href: "/bank?tab=accounts", icon: CreditCard, label: "Konten & Karten" },
-    ]},
-    { href: "/freigaben", icon: CheckSquare, label: "Freigaben", badge: pendingEntries > 0 ? pendingEntries : undefined, children: [
-      { href: "/freigaben", icon: FileCheck, label: "Bereit zur Genehmigung" },
-      { href: "/freigaben?filter=warnings", icon: AlertTriangle, label: "Mit Warnungen" },
-      { href: "/freigaben?filter=manual", icon: BookOpen, label: "Manuell angepasst" },
-      { href: "/freigaben?filter=booked", icon: CheckCircle, label: "Verbucht" },
-    ]},
+    { href: "/belege", icon: FileText, label: "Belege", separator: true, badge: newDocs > 0 ? newDocs : undefined },
+    { href: "/bank", icon: Building2, label: "Bank", badge: pendingBankTx > 0 ? pendingBankTx : undefined },
+    { href: "/freigaben", icon: CheckSquare, label: "Freigaben", badge: pendingEntries > 0 ? pendingEntries : undefined },
     { href: "/rechnungen", icon: Receipt, label: "Rechnungen", separator: true, children: [
       { href: "/rechnungen", icon: FileText, label: "Ausgangsrechnungen" },
       { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },

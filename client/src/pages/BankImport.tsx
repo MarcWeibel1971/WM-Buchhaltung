@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -499,11 +499,51 @@ export default function BankImport() {
   const isPending = statusFilter === "pending";
   const isMatched = statusFilter === "matched";
 
+  // Stats for filter tiles
+  const { data: allTransactions } = trpc.bankImport.getTransactionsByStatus.useQuery(
+    { status: "all", bankAccountId: undefined, fiscalYear: fiscalYear || undefined }
+  );
+  const txStats = {
+    total: (allTransactions ?? []).length,
+    pending: (allTransactions ?? []).filter(tx => tx.status === "pending").length,
+    matched: (allTransactions ?? []).filter(tx => tx.status === "matched").length,
+    ignored: (allTransactions ?? []).filter(tx => tx.status === "ignored").length,
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div>
         <h2 className="text-xl font-bold">Bankimport</h2>
         <p className="text-sm text-muted-foreground">CAMT.053, MT940, CSV oder PDF importieren</p>
+      </div>
+
+      {/* Filter-Kacheln */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { key: "all",     label: "Alle Transaktionen", count: txStats.total,   accent: "from-slate-500 to-slate-600",  light: "bg-slate-50 border-slate-200 text-slate-700",  icon: <ArrowLeftRight className="w-5 h-5" /> },
+          { key: "pending", label: "Ausstehend",          count: txStats.pending, accent: "from-amber-500 to-orange-500", light: "bg-amber-50 border-amber-200 text-amber-700",  icon: <Clock className="w-5 h-5" /> },
+          { key: "matched", label: "Verbucht",             count: txStats.matched, accent: "from-green-500 to-emerald-600",light: "bg-green-50 border-green-200 text-green-700",  icon: <CheckCircle className="w-5 h-5" /> },
+          { key: "ignored", label: "Ignoriert",            count: txStats.ignored, accent: "from-gray-400 to-gray-500",   light: "bg-gray-50 border-gray-200 text-gray-600",    icon: <EyeOff className="w-5 h-5" /> },
+        ].map(tile => {
+          const isActive = statusFilter === tile.key;
+          return (
+            <button
+              key={tile.key}
+              onClick={() => { setStatusFilter(tile.key as any); setSelectedTxIds(new Set()); }}
+              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left ${
+                isActive
+                  ? `bg-gradient-to-br ${tile.accent} text-white border-transparent shadow-lg scale-[1.02]`
+                  : `${tile.light} border-transparent hover:border-current hover:shadow-md`
+              }`}
+            >
+              <div className={`mb-2 p-2 rounded-lg ${ isActive ? "bg-white/20" : "bg-white shadow-sm" }`}>
+                <span className={isActive ? "text-white" : ""}>{tile.icon}</span>
+              </div>
+              <div className={`text-2xl font-bold leading-none mb-1 ${ isActive ? "text-white" : "" }`}>{tile.count}</div>
+              <div className={`text-xs font-medium leading-tight ${ isActive ? "text-white/90" : "" }`}>{tile.label}</div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Import section */}

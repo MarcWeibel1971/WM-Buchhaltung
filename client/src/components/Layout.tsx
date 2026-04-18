@@ -7,7 +7,7 @@ import {
   Brain, ShieldCheck, Upload, Sparkles, Search, Eye,
   Link2, Archive, CreditCard, ArrowLeftRight, Wallet,
   AlertTriangle, Users, BookOpen, PieChart, List,
-  FileCheck, AlertCircle, CheckCircle, Banknote
+  FileCheck, AlertCircle, CheckCircle, Banknote, Bot
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
@@ -131,6 +131,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     ]},
     { href: "/admin", icon: Brain, label: "Admin", adminOnly: true, children: [
       { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln" },
+      { href: "/settings?tab=avatar", icon: Bot, label: "Avatar-Chatbot" },
     ]},
   ];
 

@@ -1137,3 +1137,19 @@
 
 ## Bugfix: BankImport Bankkonto-Auswahl
 - [x] BankImport: Bankkonto-Dropdown zeigt keine Bankkonten obwohl hinterlegt (INNER JOIN → LEFT JOIN, fehlende accounts-Einträge für accountId 210001-210003)
+
+## Feature: Avatar-Chatbot Einstellungen (Admin)
+- [x] DB: avatar_settings Tabelle (organizationId, language, style, customPrompt, voiceId, maxSentences) – Schema erstellt und migriert
+- [x] Backend: avatarSettings.get und avatarSettings.upsert tRPC-Prozeduren (orgProcedure)
+- [x] Admin-UI: AvatarSettingsTab in Settings.tsx (Tab "Avatar-Chatbot")
+- [x] Avatar-Chat: Einstellungen aus DB laden (maxSentences, customPrompt, avatarName, voiceId) und in System-Prompt einbauen
+
+## Bugfix: Bankimport zeigt 0 Transaktionen
+- [x] Bankimport: 46 ungematchte Transaktionen in DB vorhanden, aber Bankimport zeigt 0 Transaktionen – GJ-Filter für ausstehende Transaktionen entfernt (getBankTransactionsByStatus)
+
+## Feature: Geschäftsjahr-Konsistenz
+- [x] Bankimport: Ausstehende Transaktionen ohne GJ-Filter anzeigen (alle pending immer sichtbar)
+- [x] Bankimport: Beim Upload automatisch GJ wechseln basierend auf Transaktionsdatum (auto-switch + Warnung bei geschlossenem GJ)
+- [x] Alle Ansichten: Konsistenter GJ-Wechsel über FiscalYearContext (isOpen, fiscalYearInfos exportiert)
+- [x] Layout.tsx: GJ-Selector markiert geschlossene Jahre visuell (Schloss-Icon)
+- [x] AvatarSettingsTab: Komponente in Settings.tsx implementiert

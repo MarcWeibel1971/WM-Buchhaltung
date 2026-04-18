@@ -1127,3 +1127,25 @@ export const invoiceReminders = mysqlTable(
 );
 export type InvoiceReminder = typeof invoiceReminders.$inferSelect;
 export type InsertInvoiceReminder = typeof invoiceReminders.$inferInsert;
+
+// ─── Avatar Chatbot Settings ──────────────────────────────────────────────────
+export const avatarSettings = mysqlTable("avatar_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull().unique(),
+  // Response language: de-CH, de-DE, en-US, fr-CH, it-CH
+  language: varchar("language", { length: 10 }).default("de-CH").notNull(),
+  // Response style: concise (1-2 Sätze), balanced (3-4 Sätze), detailed (ausführlich)
+  style: mysqlEnum("style", ["concise", "balanced", "detailed"]).default("concise").notNull(),
+  // Max sentences override (1-10)
+  maxSentences: int("maxSentences").default(2).notNull(),
+  // Custom system prompt addition (appended after base prompt)
+  customPrompt: text("customPrompt"),
+  // ElevenLabs voice ID override
+  voiceId: varchar("voiceId", { length: 100 }),
+  // Avatar name shown in widget
+  avatarName: varchar("avatarName", { length: 100 }).default("Berater").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AvatarSettings = typeof avatarSettings.$inferSelect;
+export type InsertAvatarSettings = typeof avatarSettings.$inferInsert;

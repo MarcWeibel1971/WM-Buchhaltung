@@ -121,10 +121,13 @@ export default function BankImport() {
     }
   }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { fiscalYear } = useFiscalYear();
+  const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
+  // For pending transactions: show all (no fiscal year filter) if current year is open
+  // For matched/all: filter by fiscal year as usual
+  const txFiscalYear = (statusFilter === "pending" && isCurrentYearOpen) ? undefined : (fiscalYear || undefined);
   const { data: transactions, refetch: refetchTxs } = trpc.bankImport.getTransactionsByStatus.useQuery(
-    { status: statusFilter, bankAccountId: pendingFilter, fiscalYear: fiscalYear || undefined }
+    { status: statusFilter, bankAccountId: pendingFilter, fiscalYear: txFiscalYear }
   );
   const { data: accounts } = trpc.accounts.list.useQuery();
   const { data: allDocs } = trpc.documents.list.useQuery({ limit: 500 });
@@ -328,8 +331,20 @@ export default function BankImport() {
     if (!parsed.length) { toast.error("Keine Transaktionen erkannt. Bitte CAMT.053, MT940 oder CSV hochladen."); setImporting(false); return; }
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "unknown";
     const fileType = ext === "xml" ? "CAMT.053" : ext === "sta" || ext === "mt940" ? "MT940" : ext === "csv" || ext === "txt" ? "CSV" : ext;
+    // Auto-detect fiscal year from first transaction date
+    const firstDate = parsed[0]?.transactionDate;
+    if (firstDate) {
+      const txYear = parseInt(String(firstDate).substring(0, 4), 10);
+      if (!isNaN(txYear) && txYear !== fiscalYear) {
+        const yearInfo = fiscalYearInfos.find(fy => fy.year === txYear);
+        if (!yearInfo || !yearInfo.isClosed) {
+          setFiscalYear(txYear);
+          toast.info(`Geschäftsjahr auf ${txYear} gewechselt`);
+        }
+      }
+    }
     importMutation.mutate({ bankAccountId: selectedBankAccountId, transactions: parsed, filename: file.name, fileType });
-  }, [selectedBankAccountId, importMutation]);
+  }, [selectedBankAccountId, importMutation, fiscalYear, fiscalYearInfos, setFiscalYear]);
 
   const handlePdfUpload = useCallback(async (file: File) => {
     if (!selectedBankAccountId) { toast.error("Bitte zuerst ein Bankkonto auswählen"); return; }
@@ -342,6 +357,18 @@ export default function BankImport() {
       if (!resp.ok) throw new Error(result.error ?? "PDF-Verarbeitung fehlgeschlagen");
       if (!result.transactions?.length) { toast.error("Keine Transaktionen im PDF erkannt"); return; }
       toast.info(`${result.totalExtracted} Transaktionen aus PDF extrahiert. Importiere...`);
+      // Auto-detect fiscal year from first transaction date in PDF
+      const firstPdfDate = result.transactions[0]?.transactionDate;
+      if (firstPdfDate) {
+        const txYear = parseInt(String(firstPdfDate).substring(0, 4), 10);
+        if (!isNaN(txYear) && txYear !== fiscalYear) {
+          const yearInfo = fiscalYearInfos.find(fy => fy.year === txYear);
+          if (!yearInfo || !yearInfo.isClosed) {
+            setFiscalYear(txYear);
+            toast.info(`Geschäftsjahr auf ${txYear} gewechselt`);
+          }
+        }
+      }
       importMutation.mutate({
         bankAccountId: selectedBankAccountId,
         transactions: result.transactions,
@@ -516,6 +543,14 @@ export default function BankImport() {
         <h2 className="text-xl font-bold">Bankimport</h2>
         <p className="text-sm text-muted-foreground">CAMT.053, MT940, CSV oder PDF importieren</p>
       </div>
+
+      {/* Warnung: Geschäftsjahr geschlossen */}
+      {!isCurrentYearOpen && (
+        <div className="flex items-center gap-3 bg-amber-50 border border-amber-300 text-amber-800 rounded-lg px-4 py-3 text-sm">
+          <span className="text-amber-500 text-lg">⚠️</span>
+          <span>Das Geschäftsjahr <strong>{fiscalYear}</strong> ist geschlossen. Ausstehende Transaktionen werden nicht angezeigt und neue Buchungen sind nicht möglich.</span>
+        </div>
+      )}
 
       {/* Filter-Kacheln */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -24,8 +24,9 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
-  CreditCard, ExternalLink, CheckCircle, Crown, Undo2,
+  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot,
 } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -54,6 +55,7 @@ const TABS = [
   { id: "templates", label: "Vorlagen", icon: FileStack },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
   { id: "subscription", label: "Abonnement", icon: CreditCard },
+  { id: "avatar", label: "Avatar-Chatbot", icon: Bot },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -145,6 +147,7 @@ export default function Settings() {
         {activeTab === "templates" && <TemplatesTab />}
         {activeTab === "dsg" && <DsgTab />}
         {activeTab === "subscription" && <SubscriptionTab />}
+        {activeTab === "avatar" && <AvatarSettingsTab />}
       </main>
     </div>
   );
@@ -5048,6 +5051,142 @@ function SubscriptionTab() {
         Alle Preise in CHF, exkl. MWST. 30 Tage kostenlose Testphase bei Erstregistrierung.
         Sie können Ihr Abo jederzeit über das Stripe-Kundenportal verwalten oder kündigen.
       </p>
+    </div>
+  );
+}
+
+// ─── Avatar Settings Tab ──────────────────────────────────────────────────────
+
+function AvatarSettingsTab() {
+  const { data: settings, isLoading } = trpc.avatarSettings.get.useQuery();
+  const utils = trpc.useUtils();
+  const saveMutation = trpc.avatarSettings.save.useMutation({
+    onSuccess: () => {
+      toast.success("Avatar-Einstellungen gespeichert");
+      utils.avatarSettings.get.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const [language, setLanguage] = useState("de-CH");
+  const [style, setStyle] = useState<"concise" | "balanced" | "detailed">("concise");
+  const [maxSentences, setMaxSentences] = useState(2);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [avatarName, setAvatarName] = useState("Berater");
+
+  useEffect(() => {
+    if (settings) {
+      setLanguage(settings.language ?? "de-CH");
+      setStyle((settings.style as any) ?? "concise");
+      setMaxSentences(settings.maxSentences ?? 2);
+      setCustomPrompt(settings.customPrompt ?? "");
+      setAvatarName(settings.avatarName ?? "Berater");
+    }
+  }, [settings]);
+
+  const handleSave = () => {
+    saveMutation.mutate({ language, style, maxSentences, customPrompt, avatarName });
+  };
+
+  if (isLoading) return <div className="py-8 text-center text-muted-foreground text-sm">Lädt...</div>;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <h3 className="text-base font-semibold mb-1">Avatar-Chatbot Einstellungen</h3>
+        <p className="text-sm text-muted-foreground">Konfigurieren Sie Stil und Sprache des KI-Beraters. Nur Administratoren können diese Einstellungen ändern.</p>
+      </div>
+
+      <div className="grid gap-5">
+        {/* Avatar Name */}
+        <div className="space-y-1.5">
+          <Label>Name des Beraters</Label>
+          <Input
+            value={avatarName}
+            onChange={e => setAvatarName(e.target.value)}
+            placeholder="z.B. Marc, Berater, Assistent"
+          />
+        </div>
+
+        {/* Sprache */}
+        <div className="space-y-1.5">
+          <Label>Sprache</Label>
+          <Select value={language} onValueChange={setLanguage}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="de-CH">Deutsch (Schweiz)</SelectItem>
+              <SelectItem value="de-DE">Deutsch (Deutschland)</SelectItem>
+              <SelectItem value="fr-CH">Français (Suisse)</SelectItem>
+              <SelectItem value="it-CH">Italiano (Svizzera)</SelectItem>
+              <SelectItem value="en-US">English (US)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Antwortstil */}
+        <div className="space-y-1.5">
+          <Label>Antwortstil</Label>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { value: "concise", label: "Kurz & Präzise", desc: "1–2 Sätze" },
+              { value: "balanced", label: "Ausgewogen", desc: "2–4 Sätze" },
+              { value: "detailed", label: "Ausführlich", desc: "4–6 Sätze" },
+            ] as const).map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setStyle(opt.value)}
+                className={`border rounded-lg p-3 text-left transition-all ${
+                  style === opt.value
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border hover:border-primary/50"
+                }`}
+              >
+                <div className="text-sm font-medium">{opt.label}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Max. Sätze */}
+        <div className="space-y-1.5">
+          <Label>Maximale Sätze pro Antwort: <span className="text-primary font-bold">{maxSentences}</span></Label>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            value={maxSentences}
+            onChange={e => setMaxSentences(Number(e.target.value))}
+            className="w-full accent-primary"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>1 (sehr kurz)</span>
+            <span>10 (sehr ausführlich)</span>
+          </div>
+        </div>
+
+        {/* Benutzerdefinierter Prompt */}
+        <div className="space-y-1.5">
+          <Label>Zusätzliche Anweisungen (optional)</Label>
+          <Textarea
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
+            placeholder="z.B. Antworte immer auf Schweizerdeutsch. Erwähne immer die relevanten Kontonummern. Sei besonders präzise bei MWST-Fragen."
+            maxLength={2000}
+            className="min-h-[100px]"
+          />
+          <p className="text-xs text-muted-foreground">{customPrompt.length}/2000 Zeichen</p>
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={handleSave} disabled={saveMutation.isPending}>
+          {saveMutation.isPending ? "Speichert..." : "Einstellungen speichern"}
+        </Button>
+      </div>
     </div>
   );
 }

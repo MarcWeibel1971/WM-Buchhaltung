@@ -19,7 +19,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { globalRulesRouter } from "./globalRulesRouter";
 import { yearEndRouter } from "./yearEndRouter";
@@ -4001,6 +4001,15 @@ const avatarChatRouter = router({
 
       const orgId = ctx.organizationId;
 
+      // Load avatar settings from DB
+      const [avatarCfg] = await db.select().from(avatarSettings)
+        .where(eq(avatarSettings.organizationId, orgId))
+        .limit(1);
+      const cfgMaxSentences = avatarCfg?.maxSentences ?? 2;
+      const cfgCustomPrompt = avatarCfg?.customPrompt ?? '';
+      const cfgAvatarName = avatarCfg?.avatarName ?? 'Berater';
+      const cfgVoiceId = avatarCfg?.voiceId;
+
       // Gather accounting context
       let contextText = '';
       try {
@@ -4058,7 +4067,7 @@ ${recentDocs.map(d => {
         console.error('Avatar chat context error:', e);
       }
 
-      const systemPrompt = `Du bist der Buchhaltungsberater der WM Weibel Mueller AG. Antworte IMMER extrem kurz und direkt – maximal 1-2 Sätze. Keine Einleitungen, kein Smalltalk, kein "Gerne", kein "Natürlich". Nur die Antwort. Bei komplexen Themen maximal 3 Sätze.
+      const systemPrompt = `Du bist ${cfgAvatarName}, der Buchhaltungsberater der WM Weibel Mueller AG. Antworte IMMER extrem kurz und direkt – maximal ${cfgMaxSentences} Sätze. Keine Einleitungen, kein Smalltalk, kein "Gerne", kein "Natürlich". Nur die Antwort.${cfgCustomPrompt ? '\n' + cfgCustomPrompt : ''}
 Kontext: Schweizer Buchhaltung (OR, MWST, Swiss GAAP FER). Software: Belege-KI, Bank-Import (CSV/MT940), Freigaben, QR-Rechnungen, Berichte, MWST-Abrechnung, Kontenplan SKR04.
 ${contextText}`;
 
@@ -4077,8 +4086,8 @@ ${contextText}`;
       const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
       if (elevenLabsKey && reply) {
         try {
-          // Daniel: Steady Broadcaster – formal, professional, works well in German
-          const voiceId = process.env.ELEVENLABS_VOICE_ID ?? 'onwK4e9ZLuTAKqWW03F9';
+          // Use voiceId from avatar settings, env var, or default to Daniel
+          const voiceId = cfgVoiceId ?? process.env.ELEVENLABS_VOICE_ID ?? 'onwK4e9ZLuTAKqWW03F9';
           // Truncate reply to 500 chars for TTS to keep response size manageable
           const ttsText = reply.length > 500 ? reply.substring(0, 497) + '...' : reply;
           const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
@@ -4128,6 +4137,50 @@ ${contextText}`;
 });
 
 // ─── App Router ───────────────────────────────────────────────────────────────
+// ─── Avatar Settings Router ──────────────────────────────────────────────────
+const avatarSettingsRouter = router({
+  get: orgProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return null;
+    const [row] = await db.select().from(avatarSettings)
+      .where(eq(avatarSettings.organizationId, ctx.organizationId))
+      .limit(1);
+    return row ?? null;
+  }),
+
+  save: orgProcedure
+    .input(z.object({
+      language: z.string().max(10).optional(),
+      style: z.enum(["concise", "balanced", "detailed"]).optional(),
+      maxSentences: z.number().min(1).max(10).optional(),
+      customPrompt: z.string().max(2000).optional(),
+      voiceId: z.string().max(100).optional(),
+      avatarName: z.string().max(100).optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== 'admin') throw new TRPCError({ code: 'FORBIDDEN', message: 'Nur Administratoren können die Avatar-Einstellungen ändern.' });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      const [existing] = await db.select({ id: avatarSettings.id })
+        .from(avatarSettings)
+        .where(eq(avatarSettings.organizationId, ctx.organizationId))
+        .limit(1);
+      const data: Record<string, unknown> = { organizationId: ctx.organizationId };
+      if (input.language !== undefined) data.language = input.language;
+      if (input.style !== undefined) data.style = input.style;
+      if (input.maxSentences !== undefined) data.maxSentences = input.maxSentences;
+      if (input.customPrompt !== undefined) data.customPrompt = input.customPrompt;
+      if (input.voiceId !== undefined) data.voiceId = input.voiceId;
+      if (input.avatarName !== undefined) data.avatarName = input.avatarName;
+      if (existing) {
+        await db.update(avatarSettings).set(data).where(eq(avatarSettings.organizationId, ctx.organizationId));
+      } else {
+        await db.insert(avatarSettings).values(data as any);
+      }
+      return { success: true };
+    }),
+});
+
 export const appRouter = router({
   system: systemRouter,
   auth: authRouter,
@@ -4152,6 +4205,7 @@ export const appRouter = router({
   reminders: remindersRouter,
   stripe: stripeRouter,
   avatarChat: avatarChatRouter,
+  avatarSettings: avatarSettingsRouter,
   uidSearch: router({
     search: publicProcedure
       .input(z.object({ name: z.string().min(2).max(200) }))

@@ -29,7 +29,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { fiscalYear, setFiscalYear, fiscalYears } = useFiscalYear();
+  const { fiscalYear, setFiscalYear, fiscalYears, fiscalYearInfos } = useFiscalYear();
 
   // Queries for badge counts
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
@@ -411,9 +411,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {fiscalYears.map(y => (
-                  <SelectItem key={y} value={String(y)}>GJ {y}</SelectItem>
-                ))}
+                {fiscalYears.map(y => {
+                  const info = fiscalYearInfos?.find(fi => fi.year === y);
+                  const closed = info?.isClosed ?? false;
+                  return (
+                    <SelectItem key={y} value={String(y)}>
+                      GJ {y}{closed ? " 🔒" : ""}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             {totalInbox > 0 && (

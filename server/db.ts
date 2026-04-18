@@ -488,9 +488,10 @@ export async function getBankTransactionsByStatus(orgId: number, status: "pendin
   else if (status === "matched") conditions.push(eq(bankTransactions.status, "matched"));
   // "all" = no status filter
   if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
-  // Filter by fiscal year: only show transactions within the selected year
-  // transactionDate is mode:'string' so compare as strings (YYYY-MM-DD format)
-  if (fiscalYear) {
+  // Filter by fiscal year: only apply to matched/all transactions
+  // Pending transactions are ALWAYS shown regardless of fiscal year,
+  // because they haven't been booked yet and shouldn't be hidden by GJ filter.
+  if (fiscalYear && status !== "pending") {
     const yearStartStr = `${fiscalYear}-01-01`;
     const yearEndStr = `${fiscalYear + 1}-01-01`;
     const { gte, lt } = await import("drizzle-orm");

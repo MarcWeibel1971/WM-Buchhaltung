@@ -197,6 +197,13 @@
       "when": 1776406106065,
       "tag": "0027_broad_white_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "5",
+      "when": 1776504872946,
+      "tag": "0028_violet_slyde",
+      "breakpoints": true
     }
   ]
 }

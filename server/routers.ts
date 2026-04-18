@@ -3623,7 +3623,15 @@ const documentsRouter = router({
         if (ba) linkedBankAccount = { id: ba.id, accountId: ba.accountId, name: ba.bank || ba.name || `Konto ${ba.id}` };
       }
       
-      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount };
+      // Load journal entry status for direct-booked documents (without linked bank transaction)
+      let journalEntryStatus: string | null = null;
+      if (doc.journalEntryId && !linkedTransaction) {
+        const { journalEntries: jeTbl } = await import("../drizzle/schema");
+        const [je] = await db.select({ status: jeTbl.status }).from(jeTbl).where(eqOp(jeTbl.id, doc.journalEntryId)).limit(1);
+        if (je) journalEntryStatus = je.status;
+      }
+      
+      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus };
     }),
 
   // Update document metadata (user edits from detail view)

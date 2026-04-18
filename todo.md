@@ -1105,3 +1105,8 @@
 - [x] Beim Zurücksetzen eines Journal-Eintrags (reset/revert): verknüpfte Belege-Status auch zurücksetzen (journalEntryId auf null)
 - [x] Beim Verbuchen: verknüpfte Belege-Status auf "verbucht" setzen (bereits vorhanden)
 - [x] DocumentDetail.tsx: Beleg-Status-Konsistenz durch journalEntryId-Clearing beim Revert sichergestellt
+
+## Bugfix: DocumentDetail Status-Anzeige
+- [x] DocumentDetail: "Offen" Badge oben links → "Nicht verbucht" umbenennen
+- [x] DocumentDetail: "Erfolgreich verbucht" Banner nur zeigen wenn Journal-Eintrag Status = "approved", nicht bei "pending/ausstehend"
+- [x] DocumentDetail: Bei Journal-Status "pending" → Banner "Im Journal (ausstehend)" mit anderem Design (orange statt grün)

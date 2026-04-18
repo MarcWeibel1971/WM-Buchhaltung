@@ -298,14 +298,17 @@ export default function DocumentDetail() {
     );
   }
 
-  const { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount } = data;
+  const { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus } = data;
   const isPdf = doc.mimeType === "application/pdf";
   const isImage = doc.mimeType.startsWith("image/");
   const hasLinkedTx = !!linkedTransaction;
   const txIsBooked = linkedTransaction?.status === "approved" || linkedTransaction?.status === "booked";
   const txAmount = linkedTransaction ? Math.abs(parseFloat(linkedTransaction.amount)) : 0;
   const docAmount = editedMeta.totalAmount || editedMeta.netAmount || 0;
-  const isDirectBooked = !!doc.journalEntryId && !hasLinkedTx;
+  // isDirectBooked: only true if journal entry exists AND is approved (not just pending)
+  const isDirectBooked = !!doc.journalEntryId && !hasLinkedTx && journalEntryStatus === "approved";
+  // isDirectPending: journal entry exists but still pending (ausstehend)
+  const isDirectPending = !!doc.journalEntryId && !hasLinkedTx && journalEntryStatus === "pending";
 
   const handleBookTransaction = () => {
     if (!bookingDebitId || !bookingCreditId) {
@@ -360,7 +363,7 @@ export default function DocumentDetail() {
             ) : (
               <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
                 <AlertCircle className="w-3 h-3 mr-1" />
-                Offen
+                Nicht verbucht
               </Badge>
             )}
             {bookingSuggestion && (
@@ -1112,6 +1115,31 @@ export default function DocumentDetail() {
                       </div>
                     )}
                   </div>
+                </div>
+              ) : isDirectPending ? (
+                // Journal entry exists but is still pending (ausstehend) - not yet approved
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-8 h-8 text-amber-600" />
+                    <div>
+                      <p className="font-semibold text-amber-800">Im Journal – ausstehend</p>
+                      <p className="text-sm text-amber-600">
+                        Journal-Eintrag #{doc.journalEntryId} wartet auf Freigabe
+                      </p>
+                      <p className="text-sm text-amber-600 mt-0.5">
+                        Betrag: CHF {formatCHF(docAmount)}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-100"
+                    onClick={() => navigate("/freigaben")}
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                    Zur Freigabe
+                  </Button>
                 </div>
               ) : (
                 <div className="bg-green-50 border border-green-200 rounded-xl p-4">

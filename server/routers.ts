@@ -4089,15 +4089,17 @@ Antworte immer auf Deutsch. Halte Antworten prägnant (max. 3-4 Sätze), ausser 
       ];
 
       const llmResponse = await invokeLLM({ messages });
-      const reply = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
-
-      // TTS via ElevenLabs (optional)
+       const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
+      const reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
+      // TTS via ElevenLabs (optional) – return as base64 data URL to avoid CORS issues
       let audioUrl: string | undefined;
       const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
       if (elevenLabsKey && reply) {
         try {
           // Daniel: Steady Broadcaster – formal, professional, works well in German
           const voiceId = process.env.ELEVENLABS_VOICE_ID ?? 'onwK4e9ZLuTAKqWW03F9';
+          // Truncate reply to 500 chars for TTS to keep response size manageable
+          const ttsText = reply.length > 500 ? reply.substring(0, 497) + '...' : reply;
           const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
             method: 'POST',
             headers: {
@@ -4105,23 +4107,24 @@ Antworte immer auf Deutsch. Halte Antworten prägnant (max. 3-4 Sätze), ausser 
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              text: reply,
+              text: ttsText,
               model_id: 'eleven_multilingual_v2',
               voice_settings: { stability: 0.6, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
             }),
           });
           if (ttsRes.ok) {
             const audioBuffer = await ttsRes.arrayBuffer();
-            const { storagePut } = await import('./storage');
-            const key = `tts-audio/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`;
-            const { url } = await storagePut(key, Buffer.from(audioBuffer), 'audio/mpeg');
-            audioUrl = url;
+            // Return as base64 data URL so browser can play without CORS issues
+            const base64 = Buffer.from(audioBuffer).toString('base64');
+            audioUrl = `data:audio/mpeg;base64,${base64}`;
+          } else {
+            const errText = await ttsRes.text().catch(() => '');
+            console.error('ElevenLabs TTS error:', ttsRes.status, errText);
           }
         } catch (e) {
           console.error('ElevenLabs TTS error:', e);
         }
       }
-
       return { reply, audioUrl };
     }),
 

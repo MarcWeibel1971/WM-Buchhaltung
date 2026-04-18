@@ -159,45 +159,61 @@ export function AvatarChatWidget() {
   // ── TTS via audio URL (ElevenLabs) ─────────────────────────────────────────
 
   const playAudioUrl = useCallback(
-    async (audioUrl: string) => {
+    async (audioDataUrl: string) => {
       if (isMuted) return;
       stopSpeaking();
 
       try {
-        const audio = new Audio(audioUrl);
-
-        // Set up AudioContext for lip-sync analyser
+        // Create or resume AudioContext (must happen after user gesture)
         if (!audioContextRef.current || audioContextRef.current.state === "closed") {
           audioContextRef.current = new AudioContext();
         }
         const ctx = audioContextRef.current;
+        if (ctx.state === "suspended") {
+          await ctx.resume();
+        }
+
+        // Decode base64 data URL to ArrayBuffer
+        let arrayBuffer: ArrayBuffer;
+        if (audioDataUrl.startsWith("data:")) {
+          const base64 = audioDataUrl.split(",")[1];
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          arrayBuffer = bytes.buffer;
+        } else {
+          const response = await fetch(audioDataUrl);
+          arrayBuffer = await response.arrayBuffer();
+        }
+
+        // Decode audio data
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+        // Set up analyser for lip-sync
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
         analyserRef.current = analyser;
 
-        if (audioSourceRef.current) {
-          audioSourceRef.current.disconnect();
-        }
-        const source = ctx.createMediaElementSource(audio);
-        audioSourceRef.current = source;
+        // Create buffer source
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
         source.connect(analyser);
         analyser.connect(ctx.destination);
 
         setAudioAnalyser(analyser);
         setIsSpeaking(true);
 
-        audio.onended = () => {
-          setIsSpeaking(false);
-          setAudioAnalyser(null);
-        };
-        audio.onerror = () => {
+        source.onended = () => {
           setIsSpeaking(false);
           setAudioAnalyser(null);
         };
 
-        await audio.play();
+        source.start(0);
       } catch (err) {
         console.error("Audio playback error:", err);
+        // Fallback to Web Speech API
         setIsSpeaking(false);
         setAudioAnalyser(null);
       }

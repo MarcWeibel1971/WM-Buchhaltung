@@ -634,8 +634,8 @@ const audioUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 16 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ["audio/webm", "audio/mp3", "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4", "audio/m4a"];
-    if (allowed.includes(file.mimetype)) cb(null, true);
+    // Accept any audio/* MIME type (including audio/webm;codecs=opus)
+    if (file.mimetype.startsWith("audio/")) cb(null, true);
     else cb(new Error("Nur Audio-Dateien erlaubt"));
   },
 });

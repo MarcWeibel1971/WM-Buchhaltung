@@ -19,7 +19,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { globalRulesRouter } from "./globalRulesRouter";
 import { yearEndRouter } from "./yearEndRouter";
@@ -4181,6 +4181,50 @@ const avatarSettingsRouter = router({
     }),
 });
 
+// ─── Import Automation Router ───────────────────────────────────────────────
+const importAutomationRouter = router({
+  get: orgProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return null;
+    const [row] = await db.select().from(importAutomationSettings)
+      .where(eq(importAutomationSettings.organizationId, ctx.organizationId))
+      .limit(1);
+    // Return defaults if no row exists
+    return row ?? {
+      autoKiCategorize: true,
+      autoGenerateBookingTexts: true,
+      autoRefreshLearned: true,
+      autoDetectTransfers: true,
+      autoMatchDocuments: false,
+    };
+  }),
+
+  save: orgProcedure
+    .input(z.object({
+      autoKiCategorize: z.boolean(),
+      autoGenerateBookingTexts: z.boolean(),
+      autoRefreshLearned: z.boolean(),
+      autoDetectTransfers: z.boolean(),
+      autoMatchDocuments: z.boolean(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      const [existing] = await db.select({ id: importAutomationSettings.id })
+        .from(importAutomationSettings)
+        .where(eq(importAutomationSettings.organizationId, ctx.organizationId))
+        .limit(1);
+      const data = { ...input, organizationId: ctx.organizationId };
+      if (existing) {
+        await db.update(importAutomationSettings).set(data)
+          .where(eq(importAutomationSettings.organizationId, ctx.organizationId));
+      } else {
+        await db.insert(importAutomationSettings).values(data);
+      }
+      return { success: true };
+    }),
+});
+
 export const appRouter = router({
   system: systemRouter,
   auth: authRouter,
@@ -4206,6 +4250,7 @@ export const appRouter = router({
   stripe: stripeRouter,
   avatarChat: avatarChatRouter,
   avatarSettings: avatarSettingsRouter,
+  importAutomation: importAutomationRouter,
   uidSearch: router({
     search: publicProcedure
       .input(z.object({ name: z.string().min(2).max(200) }))

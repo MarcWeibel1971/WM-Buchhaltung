@@ -24,7 +24,7 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
-  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot,
+  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Zap,
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -44,6 +44,7 @@ import { toast } from "sonner";
 const TABS = [
   { id: "company", label: "Unternehmen", icon: Building2 },
   { id: "bank", label: "Bankkonten", icon: Landmark },
+  { id: "importAutomation", label: "Import-Automatisierung", icon: Zap },
   { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree },
   { id: "employees", label: "Mitarbeiter", icon: Users },
   { id: "insurance", label: "Versicherungen", icon: Shield },
@@ -148,6 +149,7 @@ export default function Settings() {
         {activeTab === "dsg" && <DsgTab />}
         {activeTab === "subscription" && <SubscriptionTab />}
         {activeTab === "avatar" && <AvatarSettingsTab />}
+        {activeTab === "importAutomation" && <ImportAutomationTab />}
       </main>
     </div>
   );
@@ -5186,6 +5188,154 @@ function AvatarSettingsTab() {
         <Button onClick={handleSave} disabled={saveMutation.isPending}>
           {saveMutation.isPending ? "Speichert..." : "Einstellungen speichern"}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Import Automation Tab ────────────────────────────────────────────────────
+
+function ImportAutomationTab() {
+  const { data: settings, isLoading } = trpc.importAutomation.get.useQuery();
+  const utils = trpc.useUtils();
+  const saveMutation = trpc.importAutomation.save.useMutation({
+    onSuccess: () => {
+      toast.success("Import-Automatisierungs-Einstellungen gespeichert");
+      utils.importAutomation.get.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const [autoKiCategorize, setAutoKiCategorize] = useState(true);
+  const [autoGenerateBookingTexts, setAutoGenerateBookingTexts] = useState(true);
+  const [autoRefreshLearned, setAutoRefreshLearned] = useState(true);
+  const [autoDetectTransfers, setAutoDetectTransfers] = useState(true);
+  const [autoMatchDocuments, setAutoMatchDocuments] = useState(false);
+
+  useEffect(() => {
+    if (settings) {
+      setAutoKiCategorize(settings.autoKiCategorize ?? true);
+      setAutoGenerateBookingTexts(settings.autoGenerateBookingTexts ?? true);
+      setAutoRefreshLearned(settings.autoRefreshLearned ?? true);
+      setAutoDetectTransfers(settings.autoDetectTransfers ?? true);
+      setAutoMatchDocuments(settings.autoMatchDocuments ?? false);
+    }
+  }, [settings]);
+
+  const handleSave = () => {
+    saveMutation.mutate({
+      autoKiCategorize,
+      autoGenerateBookingTexts,
+      autoRefreshLearned,
+      autoDetectTransfers,
+      autoMatchDocuments,
+    });
+  };
+
+  if (isLoading) return <div className="py-8 text-center text-muted-foreground text-sm">Lädt...</div>;
+
+  const automationItems = [
+    {
+      key: "autoKiCategorize" as const,
+      label: "KI-Kategorisierung",
+      description: "Schlägt automatisch Soll/Haben-Konten für jede Transaktion vor (LLM-basiert). Empfohlen für neue Transaktionen ohne gelernte Regel.",
+      value: autoKiCategorize,
+      onChange: setAutoKiCategorize,
+      badge: "KI",
+      badgeColor: "bg-purple-100 text-purple-800",
+    },
+    {
+      key: "autoGenerateBookingTexts" as const,
+      label: "Buchungstexte generieren",
+      description: "Erstellt lesbare Buchungstexte aus Rohdaten (z.B. \"Sunrise 1. Quartal 2026\" statt \"SUNRISE COMMUNICATIONS AG REF 12345\").",
+      value: autoGenerateBookingTexts,
+      onChange: setAutoGenerateBookingTexts,
+      badge: "KI",
+      badgeColor: "bg-purple-100 text-purple-800",
+    },
+    {
+      key: "autoRefreshLearned" as const,
+      label: "Refresh (gelernt)",
+      description: "Wendet gelernte Buchungsregeln auf neue Transaktionen an. Überschreibt KI-Vorschläge bei bekannten Gegenparteien mit höherer Konfidenz (98%).",
+      value: autoRefreshLearned,
+      onChange: setAutoRefreshLearned,
+      badge: "Regeln",
+      badgeColor: "bg-blue-100 text-blue-800",
+    },
+    {
+      key: "autoDetectTransfers" as const,
+      label: "Kontoüberträge erkennen",
+      description: "Erkennt automatisch interne Transfers zwischen eigenen Bankkonten (gleicher Betrag, entgegengesetztes Vorzeichen, max. 2 Tage Differenz).",
+      value: autoDetectTransfers,
+      onChange: setAutoDetectTransfers,
+      badge: "Analyse",
+      badgeColor: "bg-green-100 text-green-800",
+    },
+    {
+      key: "autoMatchDocuments" as const,
+      label: "Dokument-Matching",
+      description: "Gleicht hochgeladene Belege automatisch mit Banktransaktionen ab (Betrag, Gegenpartei, Datum). Kann bei vielen Dokumenten länger dauern.",
+      value: autoMatchDocuments,
+      onChange: setAutoMatchDocuments,
+      badge: "Optional",
+      badgeColor: "bg-orange-100 text-orange-800",
+    },
+  ];
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <h3 className="text-base font-semibold mb-1">Import-Automatisierung</h3>
+        <p className="text-sm text-muted-foreground">
+          Konfigurieren Sie, welche KI-Aktionen nach jedem Bankimport automatisch ausgeführt werden.
+          Aktivierte Aktionen laufen im Hintergrund und sparen manuelle Klicks.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {automationItems.map(item => (
+          <div
+            key={item.key}
+            className="flex items-start gap-4 p-4 border rounded-lg bg-card hover:bg-muted/30 transition-colors"
+          >
+            <Switch
+              checked={item.value}
+              onCheckedChange={item.onChange}
+              className="mt-0.5 shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-sm font-medium">{item.label}</span>
+                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${item.badgeColor}`}>
+                  {item.badge}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{item.description}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 pt-2">
+        <Button onClick={handleSave} disabled={saveMutation.isPending}>
+          {saveMutation.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Speichern...</> : "Einstellungen speichern"}
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Änderungen gelten ab dem nächsten Import.
+        </p>
+      </div>
+
+      <div className="border rounded-lg p-4 bg-muted/20">
+        <div className="flex items-start gap-2">
+          <Zap className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium mb-1">Empfohlene Konfiguration</p>
+            <p className="text-xs text-muted-foreground">
+              Für optimale Ergebnisse empfehlen wir: <strong>KI-Kategorisierung</strong>, <strong>Buchungstexte</strong> und <strong>Refresh (gelernt)</strong> aktiviert.
+              Das Dokument-Matching kann optional aktiviert werden, wenn Sie regelmässig Belege hochladen.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

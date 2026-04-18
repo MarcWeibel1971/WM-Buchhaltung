@@ -122,6 +122,7 @@ export default function BankImport() {
   }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
+  const { data: importAutomation } = trpc.importAutomation.get.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   // For pending transactions: show all (no fiscal year filter) if current year is open
   // For matched/all: filter by fiscal year as usual
@@ -158,9 +159,31 @@ export default function BankImport() {
       toast.success(`${data.imported} Transaktionen importiert, ${data.duplicates} Duplikate übersprungen`);
       refetchTxs();
       setImporting(false);
-      // Auto-detect transfers after import
       if (data.imported > 0) {
-        detectTransfersMutation.mutate();
+        // Run configured auto-actions sequentially after import
+        const cfg = importAutomation ?? {
+          autoRefreshLearned: true,
+          autoKiCategorize: true,
+          autoGenerateBookingTexts: true,
+          autoDetectTransfers: true,
+          autoMatchDocuments: false,
+        };
+        // 1. Refresh learned rules first (highest confidence)
+        if (cfg.autoRefreshLearned) {
+          refreshMutation.mutate({ bankAccountId: undefined });
+        }
+        // 2. KI categorization for remaining uncategorized
+        if (cfg.autoKiCategorize) {
+          setTimeout(() => categorizeMutation.mutate({ transactionIds: [] }), cfg.autoRefreshLearned ? 2000 : 0);
+        }
+        // 3. Generate booking texts
+        if (cfg.autoGenerateBookingTexts) {
+          setTimeout(() => bookingTextMutation.mutate({ transactionIds: [] }), (cfg.autoRefreshLearned ? 2000 : 0) + (cfg.autoKiCategorize ? 4000 : 0));
+        }
+        // 4. Detect transfers
+        if (cfg.autoDetectTransfers) {
+          setTimeout(() => detectTransfersMutation.mutate(), (cfg.autoRefreshLearned ? 2000 : 0) + (cfg.autoKiCategorize ? 4000 : 0) + (cfg.autoGenerateBookingTexts ? 2000 : 0));
+        }
       }
     },
     onError: (e) => { toast.error(e.message); setImporting(false); },

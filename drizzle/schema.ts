@@ -1149,3 +1149,24 @@ export const avatarSettings = mysqlTable("avatar_settings", {
 });
 export type AvatarSettings = typeof avatarSettings.$inferSelect;
 export type InsertAvatarSettings = typeof avatarSettings.$inferInsert;
+
+// ─── Import Automation Settings ───────────────────────────────────────────────
+// Konfiguriert, welche KI-Aktionen beim Bankimport automatisch ausgeführt werden.
+export const importAutomationSettings = mysqlTable("import_automation_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull().unique(),
+  // KI-Kategorisierung: Soll/Haben-Konten automatisch vorschlagen
+  autoKiCategorize: boolean("autoKiCategorize").default(true).notNull(),
+  // Buchungstexte: Lesbare Buchungstexte automatisch generieren
+  autoGenerateBookingTexts: boolean("autoGenerateBookingTexts").default(true).notNull(),
+  // Refresh (gelernt): Gelernte Buchungsregeln auf neue Transaktionen anwenden
+  autoRefreshLearned: boolean("autoRefreshLearned").default(true).notNull(),
+  // Kontoüberträge erkennen: Interne Transfers zwischen eigenen Konten erkennen
+  autoDetectTransfers: boolean("autoDetectTransfers").default(true).notNull(),
+  // Dokument-Matching: Hochgeladene Belege automatisch mit Transaktionen matchen
+  autoMatchDocuments: boolean("autoMatchDocuments").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type ImportAutomationSettings = typeof importAutomationSettings.$inferSelect;
+export type InsertImportAutomationSettings = typeof importAutomationSettings.$inferInsert;

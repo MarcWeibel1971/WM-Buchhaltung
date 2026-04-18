@@ -1153,3 +1153,13 @@
 - [x] Alle Ansichten: Konsistenter GJ-Wechsel über FiscalYearContext (isOpen, fiscalYearInfos exportiert)
 - [x] Layout.tsx: GJ-Selector markiert geschlossene Jahre visuell (Schloss-Icon)
 - [x] AvatarSettingsTab: Komponente in Settings.tsx implementiert
+
+## Feature: Import-Automatisierungs-Einstellungen
+
+- [x] DB-Schema: import_automation_settings Tabelle (organizationId, autoKiCategorize, autoGenerateBookingTexts, autoRefreshLearned, autoDetectTransfers, autoMatchDocuments) – alle Default true
+- [x] Backend: importAutomationRouter (get/upsert) via orgProcedure
+- [x] Frontend: Neuer Tab "Import-Automatisierung" in Einstellungen (unter Bankkonten)
+- [x] Frontend: Toggle-Switches für jede Auto-Aktion mit Beschreibung
+- [x] Frontend: Link im Admin-Bereich der Sidebar zu diesem Tab
+- [x] BankImport: Nach Upload die Einstellungen laden und nur aktivierte Aktionen ausführen
+- [ ] BankImport: Visuelle Anzeige welche Aktionen beim letzten Import ausgeführt wurden (optional)

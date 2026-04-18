@@ -24,7 +24,7 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
-  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Zap,
+  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Bolt,
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -44,7 +44,7 @@ import { toast } from "sonner";
 const TABS = [
   { id: "company", label: "Unternehmen", icon: Building2 },
   { id: "bank", label: "Bankkonten", icon: Landmark },
-  { id: "importAutomation", label: "Import-Automatisierung", icon: Zap },
+  { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt },
   { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree },
   { id: "employees", label: "Mitarbeiter", icon: Users },
   { id: "insurance", label: "Versicherungen", icon: Shield },
@@ -5327,7 +5327,7 @@ function ImportAutomationTab() {
 
       <div className="border rounded-lg p-4 bg-muted/20">
         <div className="flex items-start gap-2">
-          <Zap className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+          <Bolt className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
           <div>
             <p className="text-sm font-medium mb-1">Empfohlene Konfiguration</p>
             <p className="text-xs text-muted-foreground">

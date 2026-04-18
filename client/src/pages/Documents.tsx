@@ -99,10 +99,12 @@ export default function Documents() {
 
   const autoMatchMutation = trpc.documents.autoMatch.useMutation({
     onSuccess: (result) => {
+      const dbg = (result as any).debug;
       if (result.matched > 0) {
         toast.success(`${result.matched} Dokument(e) automatisch mit Transaktionen gematched`);
       } else {
-        toast.info("Keine neuen Matches gefunden");
+        const info = dbg ? ` (${dbg.unmatchedDocs} Belege ohne Match, ${dbg.pendingTxns} ausstehende Transaktionen)` : '';
+        toast.info(`Keine neuen Matches gefunden${info}`);
       }
       refetch();
     },

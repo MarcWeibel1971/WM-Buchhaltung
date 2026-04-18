@@ -1176,3 +1176,11 @@
 - [x] Belege: Prominenter "Abgleichen"-Banner wenn ungematchte Belege vorhanden (oben, mit Anzahl)
 - [x] Belege: Farbliche Unterscheidung der Dokumentkategorien (Rechnungen=blau, Kreditkartenabrechnungen=lila, Barbelege=grün)
 - [x] Backend: credit_card_statement zu VALID_DOC_TYPES hinzugefügt (wurde vorher als 'other' gespeichert)
+
+## Bugfix: Auto-Match findet keine Banktransaktionen
+- [x] Auto-Match: Debug-Info hinzugefügt (zeigt Anzahl Belege + Transaktionen in Toast-Meldung)
+- [x] Auto-Match: Sicherstellen dass alle pending Transaktionen (org-weit) für Matching verfügbar sind
+
+## Feature: Chatbot Begrüssungsaudio
+- [x] Chatbot: Beim Öffnen den Begrüssungstext via ElevenLabs TTS als Audio sprechen (speakGreeting Mutation)
+- [x] Chatbot: Audio-Wiedergabe nur beim ersten Öffnen (greetingPlayedRef verhindert Wiederholung)

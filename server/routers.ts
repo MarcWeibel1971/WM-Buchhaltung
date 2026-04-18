@@ -3399,9 +3399,25 @@ const documentsRouter = router({
   autoMatch: orgProcedure
     .input(z.object({ threshold: z.number().default(50) }))
     .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docsTbl, bankTransactions: txnsTbl } = await import("../drizzle/schema");
+      const { and, eq: eqOp, sql: sqlOp } = await import("drizzle-orm");
+      // Debug: count what we have
+      const unmatchedDocs = await db.select().from(docsTbl)
+        .where(and(
+          eqOp(docsTbl.organizationId, ctx.organizationId),
+          eqOp(docsTbl.matchStatus, 'unmatched'),
+          sqlOp`${docsTbl.aiMetadata} IS NOT NULL`,
+        ));
+      const pendingTxns = await db.select().from(txnsTbl)
+        .where(and(
+          eqOp(txnsTbl.organizationId, ctx.organizationId),
+          eqOp(txnsTbl.status, 'pending'),
+        ));
       const matches = await autoMatchDocuments(ctx.organizationId, input.threshold);
       const applied = await applyMatches(matches);
-      return { matched: applied, total: matches.length, details: matches };
+      return { matched: applied, total: matches.length, details: matches, debug: { unmatchedDocs: unmatchedDocs.length, pendingTxns: pendingTxns.length } };
     }),
 
   // Unmatch a document from a transaction
@@ -4133,6 +4149,45 @@ ${contextText}`;
         throw new TRPCError({ code: 'BAD_REQUEST', message: result.error });
       }
       return { text: result.text, language: result.language };
+    }),
+
+  // Speak greeting text via ElevenLabs TTS
+  speakGreeting: orgProcedure
+    .input(z.object({ text: z.string().min(1).max(500) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      let audioUrl: string | undefined;
+      const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+      if (elevenLabsKey) {
+        try {
+          // Load voice ID from avatar settings
+          let voiceId = process.env.ELEVENLABS_VOICE_ID ?? 'onwK4e9ZLuTAKqWW03F9';
+          if (db) {
+            const [cfg] = await db.select().from(avatarSettings)
+              .where(eq(avatarSettings.organizationId, ctx.organizationId))
+              .limit(1);
+            if (cfg?.voiceId) voiceId = cfg.voiceId;
+          }
+          const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+            method: 'POST',
+            headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: input.text,
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: { stability: 0.6, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
+            }),
+          });
+          if (ttsRes.ok) {
+            const buf = await ttsRes.arrayBuffer();
+            audioUrl = `data:audio/mpeg;base64,${Buffer.from(buf).toString('base64')}`;
+          } else {
+            console.error('ElevenLabs TTS greeting error:', ttsRes.status);
+          }
+        } catch (e) {
+          console.error('ElevenLabs TTS greeting error:', e);
+        }
+      }
+      return { audioUrl };
     }),
 });
 

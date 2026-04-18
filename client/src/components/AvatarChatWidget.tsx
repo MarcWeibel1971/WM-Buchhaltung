@@ -168,6 +168,7 @@ export default function AvatarChatWidget() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationHistoryRef = useRef<{ role: string; content: string }[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const greetingPlayedRef = useRef(false);
 
   // Speech Recognition refs
   const recognitionRef = useRef<any>(null);
@@ -175,11 +176,28 @@ export default function AvatarChatWidget() {
 
   // tRPC
   const avatarChatMutation = trpc.avatarChat.chat.useMutation();
+  const speakGreetingMutation = trpc.avatarChat.speakGreeting.useMutation();
 
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Play greeting audio when chat is first opened
+  useEffect(() => {
+    if (isOpen && !greetingPlayedRef.current && !isMuted) {
+      greetingPlayedRef.current = true;
+      const greetingText = messages[0]?.content ?? "Guten Tag! Ich bin Ihr digitaler Buchhaltungsberater. Wie kann ich Ihnen heute helfen?";
+      speakGreetingMutation.mutateAsync({ text: greetingText })
+        .then((result) => {
+          if (result.audioUrl) {
+            playAudio(result.audioUrl);
+          }
+        })
+        .catch(() => { /* TTS optional – ignore errors */ });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // ── Audio playback ────────────────────────────────────────────────────────
 

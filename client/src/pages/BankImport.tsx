@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Link } from "wouter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
@@ -495,11 +496,18 @@ export default function BankImport() {
               <SelectContent>
                 {bankAccounts?.map(ba => (
                   <SelectItem key={ba.bankAccount.id} value={String(ba.bankAccount.id)}>
-                    {ba.bankAccount.name} ({ba.account.number}){ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
+                    {ba.bankAccount.name} ({ba.account?.number ?? "?"}){ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {(!bankAccounts || bankAccounts.length === 0) && (
+              <p className="text-xs text-blue-600 mt-1">
+                <Link href="/settings" className="underline hover:text-blue-800">
+                  Bitte zuerst ein Bankkonto unter Einstellungen &rarr; Bankkonten erfassen.
+                </Link>
+              </p>
+            )}
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Datei</label>
@@ -949,8 +957,8 @@ export default function BankImport() {
             const collectiveBalanced = collectiveDiff < 0.005;
             // Find the bank account for this transaction
             const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
-            const bankAccountLabel = txBankAccount ? `${txBankAccount.account.number} ${txBankAccount.account.name}` : "Bankkonto";
-            const bankAccountId = txBankAccount?.account.id;
+            const bankAccountLabel = txBankAccount ? `${txBankAccount.account?.number ?? "?"} ${txBankAccount.account?.name ?? txBankAccount.bankAccount.name}` : "Bankkonto";
+            const bankAccountId = txBankAccount?.account?.id;
 
             const handleCollectiveApprove = () => {
               if (!editTx || !bankAccountId) return;
@@ -1284,7 +1292,7 @@ export default function BankImport() {
                   const txAmount = Math.abs(parseFloat(editTx.amount));
                   const isIncoming = parseFloat(editTx.amount) > 0;
                   const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
-                  const bankAccountId = txBankAccount?.account.id;
+                  const bankAccountId = txBankAccount?.account?.id;
                   if (!bankAccountId) { toast.error("Bankkonto nicht gefunden"); return; }
                   const collectiveSum = collectiveLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
                   if (Math.abs(txAmount - collectiveSum) >= 0.005) { toast.error("Differenz muss 0 sein"); return; }

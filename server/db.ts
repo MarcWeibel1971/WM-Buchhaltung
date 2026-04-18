@@ -459,7 +459,7 @@ export async function getBankAccounts(orgId: number) {
     bankAccount: bankAccounts,
     account: accounts,
   }).from(bankAccounts)
-    .innerJoin(accounts, eq(bankAccounts.accountId, accounts.id))
+    .leftJoin(accounts, eq(bankAccounts.accountId, accounts.id))
     .where(and(
       eq(bankAccounts.organizationId, orgId),
       eq(bankAccounts.isActive, true),

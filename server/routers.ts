@@ -5,6 +5,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, orgProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
+import { transcribeAudio } from "./_core/voiceTranscription";
 import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
   getJournalEntries, getJournalEntryWithLines, createJournalEntry,
@@ -3984,6 +3985,163 @@ Antworte NUR mit dem JSON-Objekt.`,
     }),
 });
 
+// ─── Avatar Chat Router ─────────────────────────────────────────────────────
+const avatarChatRouter = router({
+  chat: orgProcedure
+    .input(z.object({
+      message: z.string().min(1).max(2000),
+      conversationHistory: z.array(z.object({
+        role: z.string(),
+        content: z.string(),
+      })).max(20).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'DB not available' });
+
+      const orgId = ctx.organizationId;
+
+      // Gather accounting context
+      let contextText = '';
+      try {
+        // Recent journal entries
+        const recentJournals = await db.select({
+          id: journalEntries.id,
+          description: journalEntries.description,
+          bookingDate: journalEntries.bookingDate,
+          status: journalEntries.status,
+        }).from(journalEntries)
+          .where(eq(journalEntries.organizationId, orgId))
+          .orderBy(desc(journalEntries.createdAt))
+          .limit(5);
+
+        // Active accounts
+        const activeAccounts = await db.select({
+          number: accounts.number,
+          name: accounts.name,
+          category: accounts.category,
+          accountType: accounts.accountType,
+        }).from(accounts)
+          .where(and(eq(accounts.organizationId, orgId), eq(accounts.isActive, true)))
+          .limit(30);
+
+        // Recent documents (using available schema columns)
+        const recentDocs = await db.select({
+          id: documents.id,
+          filename: documents.filename,
+          documentType: documents.documentType,
+          matchStatus: documents.matchStatus,
+          aiMetadata: documents.aiMetadata,
+          createdAt: documents.createdAt,
+        }).from(documents)
+          .where(eq(documents.organizationId, orgId))
+          .orderBy(desc(documents.createdAt))
+          .limit(5);
+
+        contextText = `
+## Aktuelle Buchhaltungsdaten der Organisation:
+
+### Letzte Journalbuchungen (${recentJournals.length}):
+${recentJournals.map(j => `- ${j.bookingDate}: ${j.description} | Status: ${j.status}`).join('\n')}
+
+### Aktive Konten (Auswahl):
+${activeAccounts.map(a => `- ${a.number} ${a.name} (${a.accountType})`).join('\n')}
+
+### Letzte Belege (${recentDocs.length}):
+${recentDocs.map(d => {
+  let meta: Record<string, unknown> = {};
+  try { meta = JSON.parse(d.aiMetadata ?? '{}'); } catch {}
+  return `- ${d.filename} | Typ: ${d.documentType} | Match: ${d.matchStatus} | Betrag: CHF ${meta.amount ?? '?'}`;
+}).join('\n')}
+`;
+      } catch (e) {
+        console.error('Avatar chat context error:', e);
+      }
+
+      const systemPrompt = `Du bist ein erfahrener Schweizer Buchhalter und Berater der WM Weibel Mueller AG.
+Du hilfst dem Benutzer bei Fragen zur Buchhaltung, zum Schweizer Obligationenrecht (OR), zur MWST, zu Lohnbuchhaltung und zur Bedienung der WM-Buchhaltungssoftware.
+
+Deine Persönlichkeit:
+- Professionell, kompetent und freundlich
+- Sprichst Schweizerdeutsch / Hochdeutsch (Schweizer Kontext)
+- Gibst klare, präzise Antworten
+- Kennst die Schweizer Buchhaltungsstandards (OR, Swiss GAAP FER)
+- Kennst die WM-Buchhaltungssoftware gut
+
+Software-Funktionen der WM-Buchhaltung:
+- Belege: Hochladen und KI-gestützte Analyse von Rechnungen/Quittungen
+- Bank: Import von Kontoauszügen (CSV/MT940), automatisches Matching
+- Freigaben: Journal-Buchungen prüfen und freigeben
+- Rechnungen: Ausgangsrechnungen erstellen mit QR-Rechnung
+- Berichte: Bilanz, Erfolgsrechnung, Kontenblatt
+- Abschluss & MWST: Jahresabschluss, MWST-Abrechnung
+- Einstellungen: Kontenplan (SKR04-basiert), Mitarbeiter, Buchungsregeln
+
+${contextText}
+
+Antworte immer auf Deutsch. Halte Antworten prägnant (max. 3-4 Sätze), ausser bei komplexen Erklärungen.`;
+
+      const history = input.conversationHistory ?? [];
+      const messages = [
+        { role: 'system' as const, content: systemPrompt },
+        ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+        { role: 'user' as const, content: input.message },
+      ];
+
+      const llmResponse = await invokeLLM({ messages });
+      const reply = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
+
+      // TTS via ElevenLabs (optional)
+      let audioUrl: string | undefined;
+      const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+      if (elevenLabsKey && reply) {
+        try {
+          const voiceId = process.env.ELEVENLABS_VOICE_ID ?? 'pNInz6obpgDQGcFmaJgB'; // Adam voice
+          const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+            method: 'POST',
+            headers: {
+              'xi-api-key': elevenLabsKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              text: reply,
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+            }),
+          });
+          if (ttsRes.ok) {
+            const audioBuffer = await ttsRes.arrayBuffer();
+            const { storagePut } = await import('./storage');
+            const key = `tts-audio/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`;
+            const { url } = await storagePut(key, Buffer.from(audioBuffer), 'audio/mpeg');
+            audioUrl = url;
+          }
+        } catch (e) {
+          console.error('ElevenLabs TTS error:', e);
+        }
+      }
+
+      return { reply, audioUrl };
+    }),
+
+  transcribeVoice: protectedProcedure
+    .input(z.object({
+      audioUrl: z.string().url(),
+      language: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const result = await transcribeAudio({
+        audioUrl: input.audioUrl,
+        language: input.language ?? 'de',
+        prompt: 'Buchhaltung Schweiz',
+      });
+      if ('error' in result) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: result.error });
+      }
+      return { text: result.text, language: result.language };
+    }),
+});
+
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
@@ -4008,6 +4166,7 @@ export const appRouter = router({
   invoices: invoicesRouter,
   reminders: remindersRouter,
   stripe: stripeRouter,
+  avatarChat: avatarChatRouter,
   uidSearch: router({
     search: publicProcedure
       .input(z.object({ name: z.string().min(2).max(200) }))

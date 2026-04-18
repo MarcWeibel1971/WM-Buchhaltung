@@ -1110,3 +1110,17 @@
 - [x] DocumentDetail: "Offen" Badge oben links → "Nicht verbucht" umbenennen
 - [x] DocumentDetail: "Erfolgreich verbucht" Banner nur zeigen wenn Journal-Eintrag Status = "approved", nicht bei "pending/ausstehend"
 - [x] DocumentDetail: Bei Journal-Status "pending" → Banner "Im Journal (ausstehend)" mit anderem Design (orange statt grün)
+
+## Feature: 3D-ChatBot-Avatar (Berater-Look)
+- [x] npm-Pakete installieren: @pixiv/three-vrm, three, @react-three/fiber, @react-three/drei
+- [x] VRM-Modell: NeonGlitch86 "EL BUENO" Placeholder zu S3 hochgeladen (/manus-storage/advisor_avatar_c531768f.vrm)
+- [x] AvatarScene.tsx: Three.js/React Three Fiber Komponente mit VRM-Loader, Idle-Animation, Lip-Sync, CSS-Fallback-Avatar
+- [x] AvatarChatWidget.tsx: Schwebendes Widget unten rechts (Button zum Öffnen/Schliessen)
+- [x] AvatarChatWidget.tsx: Chat-Interface (Texteingabe + Nachrichtenverlauf + Sprachaufnahme)
+- [x] Backend: tRPC-Procedure avatarChat.chat mit System-Prompt (Buchhaltungs-Kontext + Software-Doku)
+- [x] Backend: Zugriff auf echte Daten (Konten, Belege, Buchungen) im Avatar-Chat
+- [x] Spracheingabe: Mikrofon-Button + Whisper-Transkription (Built-in via avatarChat.transcribeVoice)
+- [x] TTS: Browser Web Speech API als Fallback (ElevenLabs optional via ELEVENLABS_API_KEY)
+- [x] Lip-Sync: Audio-Analyse für Mundbewegung des Avatars (CSS-Fallback + WebAudio für ElevenLabs)
+- [x] App.tsx: AvatarChatWidget global einbinden (auf allen Seiten sichtbar)
+- [ ] ElevenLabs API-Key als Secret konfigurieren (optional, Browser-TTS als Fallback aktiv)

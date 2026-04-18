@@ -627,3 +627,34 @@ Antworte NUR mit JSON: { "balances": [...], "totalAssets": number, "totalLiabili
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
   }
 });
+
+// ─── POST /api/upload/voice ────────────────────────────────────────────────────
+// Accepts audio files for voice transcription (max 16MB)
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["audio/webm", "audio/mp3", "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4", "audio/m4a"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Nur Audio-Dateien erlaubt"));
+  },
+});
+
+uploadRouter.post("/voice", audioUpload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Keine Audio-Datei hochgeladen" });
+    }
+    const ext = req.file.mimetype.includes("webm") ? "webm"
+      : req.file.mimetype.includes("wav") ? "wav"
+      : req.file.mimetype.includes("ogg") ? "ogg"
+      : req.file.mimetype.includes("mp4") || req.file.mimetype.includes("m4a") ? "m4a"
+      : "mp3";
+    const key = `voice-recordings/${nanoid()}.${ext}`;
+    const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
+    return res.json({ url, key });
+  } catch (err: any) {
+    console.error("[Voice Upload] Error:", err);
+    return res.status(500).json({ error: err.message ?? "Audio-Upload fehlgeschlagen" });
+  }
+});

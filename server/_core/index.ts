@@ -6,6 +6,7 @@ import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
+import { registerStorageProxy } from "./storageProxy";
 import { uploadRouter } from "../uploadRoute";
 import { stripeWebhookRouter } from "../stripeWebhook";
 import { appRouter } from "../routers";
@@ -98,6 +99,8 @@ async function startServer() {
     });
   });
 
+  // Storage proxy for serving VRM/asset files
+  registerStorageProxy(app);
   // OAuth callback under /api/oauth/callback
   app.use("/api/oauth", authLimiter);
   registerOAuthRoutes(app);

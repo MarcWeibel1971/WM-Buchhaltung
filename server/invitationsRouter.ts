@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, orgProcedure, publicProcedure } from "./_core/trpc";
 import { getDb } from "./db";
-import { invitations, userOrganizations, users } from "../drizzle/schema";
+import { invitations, userOrganizations, users, organizations } from "../drizzle/schema";
 import { eq, and, gt, isNull } from "drizzle-orm";
 import crypto from "crypto";
 
@@ -109,8 +109,10 @@ export const invitationsRouter = router({
           expiresAt: invitations.expiresAt,
           usedAt: invitations.usedAt,
           organizationId: invitations.organizationId,
+          orgName: organizations.name,
         })
         .from(invitations)
+        .leftJoin(organizations, eq(organizations.id, invitations.organizationId))
         .where(eq(invitations.token, input.token))
         .limit(1);
 

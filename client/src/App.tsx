@@ -45,6 +45,7 @@ import GlobalRules from "./pages/GlobalRules";
 import Layout from "./components/Layout";
 import AvatarChatWidget from "./components/AvatarChatWidget";
 import Accounts from "./pages/Accounts";
+import AcceptInvitation from "./pages/AcceptInvitation";
 
 /**
  * AuthGuard: Prüft ob der User eingeloggt ist.
@@ -217,6 +218,7 @@ function App() {
             <Route path="/forgot-password" component={ForgotPassword} />
             <Route path="/reset-password" component={ResetPassword} />
             <Route path="/verify-email" component={VerifyEmail} />
+            <Route path="/einladung/:token" component={AcceptInvitation} />
 
             {/* Protected routes – auth + org required */}
             <Route component={ProtectedApp} />

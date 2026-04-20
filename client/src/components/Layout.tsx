@@ -65,7 +65,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       "/belege": ["/belege", "/documents"],
       "/bank": ["/bank", "/bank-import", "/credit-card"],
       "/freigaben": ["/freigaben", "/journal"],
-      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen"],
+      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen/kreditoren"],
       "/berichte": ["/berichte", "/reports"],
       "/abschluss": ["/abschluss", "/vat", "/year-end"],
       "/einstellungen": ["/einstellungen", "/settings"],
@@ -85,7 +85,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       "/belege": ["/belege", "/documents"],
       "/bank": ["/bank", "/bank-import", "/credit-card"],
       "/freigaben": ["/freigaben", "/journal"],
-      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen"],
+      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen/kreditoren"],
       "/berichte": ["/berichte", "/reports"],
       "/abschluss": ["/abschluss", "/vat", "/year-end"],
       "/einstellungen": ["/einstellungen", "/settings"],
@@ -109,11 +109,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { href: "/bank", icon: Building2, label: "Bank", badge: pendingBankTx > 0 ? pendingBankTx : undefined },
     { href: "/freigaben", icon: CheckSquare, label: "Buchungen", badge: pendingEntries > 0 ? pendingEntries : undefined },
     { href: "/rechnungen", icon: Receipt, label: "Rechnungen", separator: true, children: [
-      { href: "/rechnungen", icon: FileText, label: "Ausgangsrechnungen" },
-      { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },
-      { href: "/rechnungen?tab=payments", icon: Banknote, label: "Zahlungseingänge" },
-      { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
-      { href: "/rechnungen?tab=customers", icon: Users, label: "Kunden" },
+      { href: "/rechnungen", icon: Users, label: "Kunden (Debitoren)", children: [
+        { href: "/rechnungen", icon: FileText, label: "Ausgangsrechnungen" },
+        { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },
+        { href: "/rechnungen?tab=payments", icon: Banknote, label: "Zahlungseingänge" },
+        { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
+        { href: "/rechnungen?tab=customers", icon: Users, label: "Kunden" },
+      ]},
+      { href: "/zahlungen/kreditoren", icon: Building2, label: "Lieferanten (Kreditoren)", children: [
+        { href: "/belege", icon: FileText, label: "Eingangsrechnungen (Belege)" },
+        { href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditorenzahlungen" },
+      ]},
     ]},
     { href: "/berichte", icon: BarChart3, label: "Berichte", children: [
       { href: "/berichte?view=income", icon: PieChart, label: "Erfolgsrechnung" },
@@ -126,10 +132,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       { href: "/vat", icon: Receipt, label: "MWST" },
       { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
     ]},
-    { href: "/einstellungen", icon: Settings, label: "Einstellungen", children: [
-      { href: "/settings", icon: Settings, label: "Firma & Konten" },
-      { href: "/settings?tab=users", icon: Users, label: "Benutzer" },
-    ]},
+    { href: "/einstellungen", icon: Settings, label: "Einstellungen" },
     { href: "/admin", icon: Brain, label: "Admin", adminOnly: true, children: [
       { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln" },
       { href: "/settings?tab=avatar", icon: Bot, label: "Avatar-Chatbot" },
@@ -208,6 +211,86 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {isExpanded && (
             <div className="ml-4 mt-0.5 space-y-0.5">
               {item.children!.map(child => {
+                // Gruppe mit eigenen Kindern (z.B. Kunden/Lieferanten unter Rechnungen)
+                if (child.children && child.children.length > 0) {
+                  const groupExpanded = expandedSections.has(item.href + child.href);
+                  const groupActive = child.children.some(gc => {
+                    const base = gc.href.split("?")[0];
+                    return location === base || location.startsWith(base + "/");
+                  });
+                  return (
+                    <div key={child.href}>
+                      <div
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] cursor-pointer transition-all"
+                        style={{
+                          color: groupActive ? "oklch(0.88 0.01 240)" : "oklch(0.52 0.03 240)",
+                          fontWeight: groupActive ? 600 : 400,
+                        }}
+                        onMouseEnter={e => {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.04 240)";
+                          (e.currentTarget as HTMLElement).style.color = "oklch(0.75 0.03 240)";
+                        }}
+                        onMouseLeave={e => {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                          (e.currentTarget as HTMLElement).style.color = groupActive ? "oklch(0.88 0.01 240)" : "oklch(0.52 0.03 240)";
+                        }}
+                        onClick={() => {
+                          setExpandedSections(prev => {
+                            const next = new Set(prev);
+                            const key = item.href + child.href;
+                            if (next.has(key)) next.delete(key); else next.add(key);
+                            return next;
+                          });
+                        }}
+                      >
+                        <child.icon className="h-3 w-3 flex-shrink-0 opacity-70" />
+                        <span className="flex-1">{child.label}</span>
+                        {groupExpanded
+                          ? <ChevronDown className="h-2.5 w-2.5 opacity-50" />
+                          : <ChevronRight className="h-2.5 w-2.5 opacity-50" />}
+                      </div>
+                      {groupExpanded && (
+                        <div className="ml-4 mt-0.5 space-y-0.5">
+                          {child.children.map(gc => {
+                            const gcBase = gc.href.split("?")[0];
+                            const gcActive = !gc.href.includes("?")
+                              ? location === gcBase
+                              : location === gcBase && window.location.search === "?" + gc.href.split("?")[1];
+                            return (
+                              <Link key={gc.href} href={gc.href}>
+                                <div
+                                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition-all"
+                                  style={{
+                                    backgroundColor: gcActive ? "oklch(0.30 0.10 240)" : "transparent",
+                                    color: gcActive ? "white" : "oklch(0.48 0.03 240)",
+                                    fontWeight: gcActive ? 600 : 400,
+                                  }}
+                                  onMouseEnter={e => {
+                                    if (!gcActive) {
+                                      (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.04 240)";
+                                      (e.currentTarget as HTMLElement).style.color = "oklch(0.70 0.03 240)";
+                                    }
+                                  }}
+                                  onMouseLeave={e => {
+                                    if (!gcActive) {
+                                      (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                                      (e.currentTarget as HTMLElement).style.color = "oklch(0.48 0.03 240)";
+                                    }
+                                  }}
+                                  onClick={() => setMobileOpen(false)}
+                                >
+                                  <gc.icon className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
+                                  <span>{gc.label}</span>
+                                </div>
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                // Normales Kind ohne eigene Kinder
                 const childActive = isChildActive(child);
                 return (
                   <Link key={child.href} href={child.href}>

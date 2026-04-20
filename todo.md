@@ -1233,3 +1233,12 @@
 - [ ] Einstellungen: Globaler "Dienstleistungen/Produkte" Tab hinzufügen
 - [ ] QR-Rechnung: Logo in PDF-Generierung (renderInvoicePdf) einbinden
 - [ ] QR-Rechnung: QR-Code-Bild Upload in Einstellungen (für Einzahlungsschein-Grafik)
+
+## Navigation-Umstrukturierung (20.04.2026 - Session 2)
+- [x] Einstellungen: Unterpunkte aus Sidebar entfernen (nur Hauptlink, direkt zu /einstellungen)
+- [x] Einladungslink Bug: /einladung/:token Route in App.tsx als öffentliche Route registriert
+- [x] AcceptInvitation.tsx: Öffentliche Seite für Einladungslinks erstellt (zeigt Org-Name, Rolle, Registrieren-Button)
+- [x] invitationsRouter: getByToken um orgName (JOIN mit organizations) erweitert
+- [x] Rechnungen: Hauptpunkt "Rechnungen" mit Unterpunkten "Kunden (Debitoren)" und "Lieferanten (Kreditoren)"
+- [x] Layout.tsx: 3-Ebenen-Navigation für Rechnungen (renderNavItem mit verschachtelten Gruppen)
+- [x] sectionPrefixes: /zahlungen/kreditoren zu /rechnungen-Gruppe hinzugefügt

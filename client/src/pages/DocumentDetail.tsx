@@ -298,7 +298,7 @@ export default function DocumentDetail() {
     );
   }
 
-  const { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus } = data;
+  const { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus, journalEntryAccounts } = data;
   const isPdf = doc.mimeType === "application/pdf";
   const isImage = doc.mimeType.startsWith("image/");
   const hasLinkedTx = !!linkedTransaction;
@@ -923,12 +923,20 @@ export default function DocumentDetail() {
               <div className="bg-card border border-border rounded-xl p-4">
                 <h3 className="font-semibold text-sm mb-2">Zahlungsstatus</h3>
                 {(doc.matchStatus === "matched" || doc.matchStatus === "manual") && doc.bankTransactionId ? (
-                  <div className="flex items-center gap-2 text-green-700">
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span className="text-sm font-medium">Mit Banktransaktion verknüpft</span>
-                    <Badge variant="outline" className="text-xs ml-1">
-                      Txn #{doc.bankTransactionId}
-                    </Badge>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-green-700">
+                      <CheckCircle2 className="w-5 h-5" />
+                      <span className="text-sm font-medium">Mit Banktransaktion verknüpft</span>
+                      <Badge variant="outline" className="text-xs ml-1">
+                        Txn #{doc.bankTransactionId}
+                      </Badge>
+                    </div>
+                    {journalEntryStatus === 'approved' && (
+                      <div className="flex items-center gap-2 text-green-700 mt-1">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span className="text-xs">Verbucht im Journal</span>
+                      </div>
+                    )}
                   </div>
                 ) : (doc.matchStatus === "matched" || doc.matchStatus === "manual") && !doc.bankTransactionId ? (
                   <div className="flex items-center gap-2 text-green-700">
@@ -947,6 +955,36 @@ export default function DocumentDetail() {
                   </div>
                 )}
               </div>
+
+              {/* Buchungskonten – only show if journal entry exists */}
+              {journalEntryAccounts && (
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-muted-foreground" />
+                    Buchungskonten (verbucht)
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-xs text-muted-foreground">Soll (Aufwand/Aktiv)</span>
+                      <p className="font-mono font-medium mt-0.5">
+                        {journalEntryAccounts.debitAccountNumber}
+                        {journalEntryAccounts.debitAccountName && (
+                          <span className="font-sans font-normal text-muted-foreground ml-1">{journalEntryAccounts.debitAccountName}</span>
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">Haben (Kredit/Passiv)</span>
+                      <p className="font-mono font-medium mt-0.5">
+                        {journalEntryAccounts.creditAccountNumber}
+                        {journalEntryAccounts.creditAccountName && (
+                          <span className="font-sans font-normal text-muted-foreground ml-1">{journalEntryAccounts.creditAccountName}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </TabsContent>
 
             {/* ─── Tab: Verbuchen ──────────────────────────────────── */}

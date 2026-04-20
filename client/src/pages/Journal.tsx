@@ -294,8 +294,8 @@ export default function Journal() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { key: "all",      label: "Alle Buchungen",        count: journalStats.total,    accent: "from-slate-500 to-slate-600",  light: "bg-slate-50 border-slate-200 text-slate-700",  icon: <BookOpen className="w-5 h-5" /> },
-          { key: "pending",  label: "Bereit zur Freigabe",   count: journalStats.pending,  accent: "from-amber-500 to-orange-500", light: "bg-amber-50 border-amber-200 text-amber-700",  icon: <Clock className="w-5 h-5" /> },
-          { key: "approved", label: "Verbucht / Genehmigt",  count: journalStats.approved, accent: "from-green-500 to-emerald-600",light: "bg-green-50 border-green-200 text-green-700",  icon: <CheckCircle className="w-5 h-5" /> },
+          { key: "pending",  label: "Zu genehmigen",         count: journalStats.pending,  accent: "from-amber-500 to-orange-500", light: "bg-amber-50 border-amber-200 text-amber-700",  icon: <Clock className="w-5 h-5" /> },
+          { key: "approved", label: "Verbucht",               count: journalStats.approved, accent: "from-green-500 to-emerald-600",light: "bg-green-50 border-green-200 text-green-700",  icon: <CheckCircle className="w-5 h-5" /> },
           { key: "rejected", label: "Abgelehnt",              count: journalStats.rejected, accent: "from-red-500 to-rose-600",     light: "bg-red-50 border-red-200 text-red-700",        icon: <XCircle className="w-5 h-5" /> },
         ].map(tile => {
           const isActive = status === tile.key;

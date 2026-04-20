@@ -1031,8 +1031,41 @@ export async function applyMatches(matches: { documentId: number; transactionId:
   const db = await getDb();
   if (!db || matches.length === 0) return 0;
 
+  // Enforce 1:1 constraint: each transaction can only be matched to ONE document
+  // and each document can only be matched to ONE transaction.
+  // Process matches in order of score (highest first) and skip already-used IDs.
+  const sortedMatches = [...matches].sort((a, b) => b.score - a.score);
+  const usedTransactionIds = new Set<number>();
+  const usedDocumentIds = new Set<number>();
+
+  // Pre-check: skip transactions that are already matched to another document
+  for (const match of sortedMatches) {
+    const [existingTxn] = await db.select({ matchedDocumentId: bankTransactions.matchedDocumentId })
+      .from(bankTransactions)
+      .where(eq(bankTransactions.id, match.transactionId))
+      .limit(1);
+    if (existingTxn?.matchedDocumentId && existingTxn.matchedDocumentId !== match.documentId) {
+      usedTransactionIds.add(match.transactionId);
+    }
+    const [existingDoc] = await db.select({ bankTransactionId: documents.bankTransactionId })
+      .from(documents)
+      .where(eq(documents.id, match.documentId))
+      .limit(1);
+    if (existingDoc?.bankTransactionId && existingDoc.bankTransactionId !== match.transactionId) {
+      usedDocumentIds.add(match.documentId);
+    }
+  }
+
   let applied = 0;
-  for (const match of matches) {
+  for (const match of sortedMatches) {
+    // Skip if transaction or document already used in this batch or pre-existing
+    if (usedTransactionIds.has(match.transactionId)) continue;
+    if (usedDocumentIds.has(match.documentId)) continue;
+
+    // Mark as used
+    usedTransactionIds.add(match.transactionId);
+    usedDocumentIds.add(match.documentId);
+
     // Update document
     await db.update(documents)
       .set({

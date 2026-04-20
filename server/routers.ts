@@ -3703,15 +3703,45 @@ const documentsRouter = router({
         if (ba) linkedBankAccount = { id: ba.id, accountId: ba.accountId, name: ba.bank || ba.name || `Konto ${ba.id}` };
       }
       
-      // Load journal entry status for direct-booked documents (without linked bank transaction)
+      // Load journal entry with debit/credit accounts (for Belegdetails tab and consistency)
       let journalEntryStatus: string | null = null;
-      if (doc.journalEntryId && !linkedTransaction) {
-        const { journalEntries: jeTbl } = await import("../drizzle/schema");
-        const [je] = await db.select({ status: jeTbl.status }).from(jeTbl).where(eqOp(jeTbl.id, doc.journalEntryId)).limit(1);
+      let journalEntryAccounts: {
+        debitAccountId: number | null;
+        debitAccountNumber: string | null;
+        debitAccountName: string | null;
+        creditAccountId: number | null;
+        creditAccountNumber: string | null;
+        creditAccountName: string | null;
+      } | null = null;
+
+      // Load from document's journalEntryId
+      const journalEntryId = doc.journalEntryId || linkedTransaction?.journalEntryId || null;
+      if (journalEntryId) {
+        const { journalEntries: jeTbl, journalLines: jlTbl } = await import("../drizzle/schema");
+        const [je] = await db.select({ status: jeTbl.status }).from(jeTbl).where(eqOp(jeTbl.id, journalEntryId)).limit(1);
         if (je) journalEntryStatus = je.status;
+
+        // Load journal lines to get actual booked accounts
+        const lines = await db.select().from(jlTbl).where(eqOp(jlTbl.entryId, journalEntryId));
+        const debitLine = lines.find(l => l.side === 'debit');
+        const creditLine = lines.find(l => l.side === 'credit');
+
+        const debitAcct = debitLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl).where(eqOp(acctsTbl.id, debitLine.accountId)).limit(1).then(r => r[0]) : null;
+        const creditAcct = creditLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl).where(eqOp(acctsTbl.id, creditLine.accountId)).limit(1).then(r => r[0]) : null;
+
+        if (debitAcct || creditAcct) {
+          journalEntryAccounts = {
+            debitAccountId: debitAcct?.id ?? null,
+            debitAccountNumber: debitAcct?.number ?? null,
+            debitAccountName: debitAcct?.name ?? null,
+            creditAccountId: creditAcct?.id ?? null,
+            creditAccountNumber: creditAcct?.number ?? null,
+            creditAccountName: creditAcct?.name ?? null,
+          };
+        }
       }
       
-      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus };
+      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus, journalEntryAccounts };
     }),
 
   // Update document metadata (user edits from detail view)

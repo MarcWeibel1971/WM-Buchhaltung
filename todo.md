@@ -1194,3 +1194,12 @@
 - [x] Backend: deleteImport Prozedur – alle Transaktionen eines Imports löschen (anhand importBatchId)
 - [x] Frontend: Papierkorb-Button in Import-Historie für jeden Import
 - [x] Frontend: Bestätigungsdialog vor dem Löschen (Anzahl Transaktionen anzeigen)
+
+## Bugfix: Belege/Journal Inkonsistenzen (6 Punkte)
+- [x] Terminologie: "Verbucht / Matched" → "Verknüpft" in Belege-Kacheln, Filter und Badges
+- [x] Beleg-Status: Zahlungsstatus zeigt jetzt ob Beleg im Journal verbucht ist (journalEntryStatus)
+- [x] 1:1 Matching: applyMatches prüft ob Transaktion/Dokument bereits vergeben (1:1 Constraint)
+- [x] Konto-Konsistenz: journalEntryAccounts aus JournalLines geladen und in Belegdetails angezeigt
+- [x] Gegenkonto: Initialisierung in DocumentDetail nutzt linkedBankAccount.accountId korrekt
+- [x] Journal: "Bereit zur Freigabe" → "Zu genehmigen", "Verbucht / Genehmigt" → "Verbucht"
+- [x] Belegdetail: Buchungskonten (Soll/Haben) aus JournalLines in Belegdetails-Tab angezeigt

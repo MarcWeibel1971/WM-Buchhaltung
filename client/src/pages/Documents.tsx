@@ -503,17 +503,15 @@ export default function Documents() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    <a
-                      href={doc.s3Url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Öffnen"
-                      onClick={(e) => e.stopPropagation()}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      title="Detailansicht öffnen"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/documents/${doc.id}`); }}
                     >
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                    </a>
+                      <Eye className="w-4 h-4" />
+                    </Button>
                     {isUnmatched && (
                       <Button
                         variant="ghost"

@@ -1214,3 +1214,6 @@
 - [x] Bank: Zähler "Alle Transaktionen" zeigt jetzt korrekt 44 (pending + matched im GJ)
 - [x] Bank: "Alle Transaktionen" Filter zeigt jetzt alle Transaktionen (pending immer, matched nach GJ)
 - [x] Bank: Verbuchte Transaktionen (Status "matched") werden in "Verbucht"-Kachel korrekt gezählt
+
+## Feature: Vorschau-Button öffnet Detailansicht (20.04.2026)
+- [x] Documents.tsx: Vorschau-Button (Auge-Icon) soll Detailansicht (/documents/:id) öffnen statt PDF direkt

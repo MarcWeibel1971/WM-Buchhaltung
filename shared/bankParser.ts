@@ -70,6 +70,20 @@ function isValidDate(y: string, m: string, d: string): boolean {
 }
 
 // ─── CAMT.053 XML Parser ──────────────────────────────────────────────────────
+/**
+ * Extract the account IBAN from a CAMT.053 file (the statement account, not counterparty IBANs).
+ * Returns null if not found.
+ */
+export function extractCAMT053AccountIban(xmlContent: string): string | null {
+  // Try <Stmt><Acct><Id><IBAN>...
+  const stmtMatch = xmlContent.match(/<Stmt[^>]*>[\s\S]*?<Acct>[\s\S]*?<Id>[\s\S]*?<IBAN>([^<]+)<\/IBAN>/);
+  if (stmtMatch) return stmtMatch[1].replace(/\s/g, '').toUpperCase();
+  // Fallback: first <IBAN> in the file (usually the statement account)
+  const firstIban = xmlContent.match(/<IBAN>([^<]+)<\/IBAN>/);
+  if (firstIban) return firstIban[1].replace(/\s/g, '').toUpperCase();
+  return null;
+}
+
 export function parseCAMT053(xmlContent: string): ParsedTransaction[] {
   const transactions: ParsedTransaction[] = [];
 

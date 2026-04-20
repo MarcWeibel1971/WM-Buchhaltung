@@ -1832,6 +1832,69 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       undoSnapshots.delete(ctx.user.id as number);
       return { success: true };
     }),
+
+  // ── Delete an import batch (rollback) ──
+  deleteImport: orgProcedure
+    .input(z.object({ importBatchId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Only allow deleting imports from this org
+      const txns = await db.select({ id: bankTransactions.id, status: bankTransactions.status })
+        .from(bankTransactions)
+        .where(and(
+          eq(bankTransactions.organizationId, ctx.organizationId),
+          eq(bankTransactions.importBatchId, input.importBatchId),
+        ));
+      // Check if any transactions are already booked (approved = verbucht)
+      const booked = txns.filter(t => (t.status as string) === 'approved');
+      if (booked.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${booked.length} Transaktion(en) sind bereits verbucht und k\u00f6nnen nicht gel\u00f6scht werden.`,
+        });
+      }
+      // Delete all pending/ignored transactions from this batch
+      const ids = txns.map(t => t.id);
+      if (ids.length > 0) {
+        // Unlink any matched documents
+        await db.update(documents).set({ bankTransactionId: null, matchStatus: 'unmatched', matchScore: null })
+          .where(inArray(documents.bankTransactionId, ids));
+        await db.delete(bankTransactions)
+          .where(and(
+            eq(bankTransactions.organizationId, ctx.organizationId),
+            eq(bankTransactions.importBatchId, input.importBatchId),
+          ));
+      }
+      // Delete import history record
+      await db.delete(importHistory)
+        .where(and(
+          eq(importHistory.organizationId, ctx.organizationId),
+          eq(importHistory.importBatchId, input.importBatchId),
+        ));
+      return { deleted: ids.length };
+    }),
+
+  // ── Validate IBAN before import ──
+  validateImportIban: orgProcedure
+    .input(z.object({ bankAccountId: z.number(), fileIban: z.string() }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return { valid: true };
+      const [acct] = await db.select({ iban: bankAccounts.iban })
+        .from(bankAccounts)
+        .where(and(
+          eq(bankAccounts.id, input.bankAccountId),
+          eq(bankAccounts.organizationId, ctx.organizationId),
+        ));
+      if (!acct?.iban) return { valid: true }; // No IBAN configured, skip check
+      const normalizeIban = (s: string) => s.replace(/\s/g, '').toUpperCase();
+      const accountIban = normalizeIban(acct.iban);
+      const fileIban = normalizeIban(input.fileIban);
+      const valid = accountIban === fileIban;
+      return { valid, accountIban, fileIban };
+    }),
 });
 
 // ─── Credit Card Router ───────────────────────────────────────────────────────

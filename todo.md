@@ -1184,3 +1184,13 @@
 ## Feature: Chatbot Begrüssungsaudio
 - [x] Chatbot: Beim Öffnen den Begrüssungstext via ElevenLabs TTS als Audio sprechen (speakGreeting Mutation)
 - [x] Chatbot: Audio-Wiedergabe nur beim ersten Öffnen (greetingPlayedRef verhindert Wiederholung)
+
+## Feature: Bankimport IBAN-Validierung
+- [x] Backend: extractCAMT053AccountIban Funktion in bankParser.ts
+- [x] Backend: IBAN-Validierung im handleFileUpload (Frontend-seitig, kein Server-Round-Trip nötig)
+- [x] Frontend: IBAN-Fehler als Toast mit 8s Dauer anzeigen
+
+## Feature: Bankimport Rükgängig
+- [x] Backend: deleteImport Prozedur – alle Transaktionen eines Imports löschen (anhand importBatchId)
+- [x] Frontend: Papierkorb-Button in Import-Historie für jeden Import
+- [x] Frontend: Bestätigungsdialog vor dem Löschen (Anzahl Transaktionen anzeigen)

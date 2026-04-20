@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { parseStatement } from "../../../shared/bankParser";
+import { parseStatement, extractCAMT053AccountIban } from "../../../shared/bankParser";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 
 function formatCHF(val: string | number) {
@@ -137,10 +137,24 @@ export default function BankImport() {
     { bankAccountId: selectedBankAccountId! },
     { enabled: !!selectedBankAccountId }
   );
-  const { data: importHistoryList } = trpc.bankImport.getImportHistory.useQuery(
+  const { data: importHistoryList, refetch: refetchHistory } = trpc.bankImport.getImportHistory.useQuery(
     { bankAccountId: selectedBankAccountId ?? undefined }
   );
   const [showHistory, setShowHistory] = useState(false);
+  const [deleteImportConfirm, setDeleteImportConfirm] = useState<{ batchId: string; filename: string; count: number } | null>(null);
+
+  const deleteImportMutation = trpc.bankImport.deleteImport.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import rükgängig gemacht: ${data.deleted} Transaktionen gelöscht`);
+      refetchTxs();
+      refetchHistory();
+      setDeleteImportConfirm(null);
+    },
+    onError: (e: any) => {
+      toast.error(e.message);
+      setDeleteImportConfirm(null);
+    },
+  });
 
   const utils = trpc.useUtils();
 
@@ -353,6 +367,25 @@ export default function BankImport() {
     if (!parsed.length) { toast.error("Keine Transaktionen erkannt. Bitte CAMT.053, MT940 oder CSV hochladen."); setImporting(false); return; }
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "unknown";
     const fileType = ext === "xml" ? "CAMT.053" : ext === "sta" || ext === "mt940" ? "MT940" : ext === "csv" || ext === "txt" ? "CSV" : ext;
+    // IBAN validation for CAMT.053 files
+    if (ext === "xml") {
+      const fileIban = extractCAMT053AccountIban(content);
+      if (fileIban) {
+        // Find the selected bank account's IBAN (bankAccounts has shape {bankAccount, account}[])
+        const selectedAcct = bankAccounts?.find((a: any) => a.bankAccount?.id === selectedBankAccountId);
+        if (selectedAcct?.bankAccount?.iban) {
+          const normalize = (s: string) => s.replace(/\s/g, '').toUpperCase();
+          if (normalize(fileIban) !== normalize(selectedAcct.bankAccount.iban)) {
+            toast.error(
+              `IBAN-Konflikt: Die Datei gehört zu Konto ${fileIban}, aber ausgewählt ist ${normalize(selectedAcct.bankAccount.iban)}. Bitte das richtige Bankkonto auswählen.`,
+              { duration: 8000 }
+            );
+            setImporting(false);
+            return;
+          }
+        }
+      }
+    }
     // Check fiscal year from first transaction date
     const firstDate = parsed[0]?.transactionDate;
     if (firstDate) {
@@ -746,6 +779,7 @@ export default function BankImport() {
                       <th className="text-right py-1 font-medium">Duplikate</th>
                       <th className="text-left py-1 font-medium">Zeitraum</th>
                       <th className="text-center py-1 font-medium">PDF</th>
+                      <th className="text-center py-1 font-medium">Aktion</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -770,6 +804,21 @@ export default function BankImport() {
                           ) : (
                             <span className="text-muted-foreground">–</span>
                           )}
+                        </td>
+                        <td className="py-1.5 text-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            title="Import rükgängig machen"
+                            onClick={() => setDeleteImportConfirm({
+                              batchId: h.importBatchId,
+                              filename: h.filename,
+                              count: h.transactionsImported,
+                            })}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -1722,6 +1771,34 @@ export default function BankImport() {
               </a>
             )}
               <Button variant="outline" onClick={() => setPreviewDoc(null)}>Schliessen</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Import Confirmation Dialog */}
+      <Dialog open={!!deleteImportConfirm} onOpenChange={(open) => { if (!open) setDeleteImportConfirm(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Import rükgängig machen?</DialogTitle>
+            <DialogDescription>
+              Alle <strong>{deleteImportConfirm?.count ?? 0} Transaktionen</strong> aus dem Import
+              <br /><span className="font-medium text-foreground">{deleteImportConfirm?.filename}</span><br />
+              werden unwiderruflich gelöscht. Bereits verbuchte Transaktionen können nicht gelöscht werden.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteImportConfirm(null)}>Abbrechen</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteImportMutation.isPending}
+              onClick={() => {
+                if (deleteImportConfirm) {
+                  deleteImportMutation.mutate({ importBatchId: deleteImportConfirm.batchId });
+                }
+              }}
+            >
+              {deleteImportMutation.isPending ? "Lösche..." : "Import löschen"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

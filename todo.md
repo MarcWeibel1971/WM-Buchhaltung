@@ -1203,3 +1203,8 @@
 - [x] Gegenkonto: Initialisierung in DocumentDetail nutzt linkedBankAccount.accountId korrekt
 - [x] Journal: "Bereit zur Freigabe" → "Zu genehmigen", "Verbucht / Genehmigt" → "Verbucht"
 - [x] Belegdetail: Buchungskonten (Soll/Haben) aus JournalLines in Belegdetails-Tab angezeigt
+
+## Neue Änderungen (Benutzer-Feedback 20.04.2026)
+- [x] Navigation: "Freigaben" → "Buchungen" in Layout.tsx umbenennen
+- [x] Terminologie: "Verknüpft" → "Mit Bank abgeglichen" in Documents.tsx, DocumentDetail.tsx und allen anderen Dateien
+- [ ] Öffentliche URL wmbuchhaltung-g3uypyrz.manus.space prüfen und erreichbar machen

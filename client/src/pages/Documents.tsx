@@ -30,9 +30,9 @@ const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; co
 };
 
 const MATCH_STATUS_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  matched:   { label: "Verknüpft",             icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-green-700 bg-green-100 border-green-200" },
-  unmatched: { label: "Nicht verknüpft",       icon: <AlertCircle className="w-3.5 h-3.5" />,  color: "text-amber-700 bg-amber-50 border-amber-200" },
-  manual:    { label: "Manuell verknüpft",     icon: <Link2 className="w-3.5 h-3.5" />,        color: "text-blue-700 bg-blue-50 border-blue-200" },
+  matched:   { label: "Mit Bank abgeglichen",  icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-green-700 bg-green-100 border-green-200" },
+  unmatched: { label: "Nicht abgeglichen",      icon: <AlertCircle className="w-3.5 h-3.5" />,  color: "text-amber-700 bg-amber-50 border-amber-200" },
+  manual:    { label: "Manuell abgeglichen",    icon: <Link2 className="w-3.5 h-3.5" />,        color: "text-blue-700 bg-blue-50 border-blue-200" },
 };
 
 function formatBytes(bytes: number) {
@@ -294,7 +294,7 @@ export default function Documents() {
           { key: "new",          label: "Neu hochgeladen",    count: stats.newDocs,     accent: "from-blue-500 to-blue-600",     light: "bg-blue-50 border-blue-200 text-blue-700",      icon: <ArrowDownToLine className="w-5 h-5" /> },
           { key: "ai-processed", label: "KI verarbeitet",     count: stats.aiProcessed, accent: "from-purple-500 to-purple-600", light: "bg-purple-50 border-purple-200 text-purple-700", icon: <RefreshCw className="w-5 h-5" /> },
           { key: "review",       label: "Zu prüfen",          count: stats.review,      accent: "from-amber-500 to-orange-500",  light: "bg-amber-50 border-amber-200 text-amber-700",   icon: <Eye className="w-5 h-5" /> },
-          { key: "matched",      label: "Verknüpft",          count: stats.matched,     accent: "from-green-500 to-emerald-600", light: "bg-green-50 border-green-200 text-green-700",   icon: <CheckCircle2 className="w-5 h-5" /> },
+          { key: "matched",      label: "Mit Bank abgeglichen", count: stats.matched,     accent: "from-green-500 to-emerald-600", light: "bg-green-50 border-green-200 text-green-700",   icon: <CheckCircle2 className="w-5 h-5" /> },
           { key: "archived",     label: "Archiv",             count: stats.archived,    accent: "from-gray-400 to-gray-500",     light: "bg-gray-50 border-gray-200 text-gray-600",      icon: <StickyNote className="w-5 h-5" /> },
         ].map(tile => {
           const isActive = sidebarFilter === tile.key;
@@ -330,7 +330,7 @@ export default function Documents() {
         <p className="text-xs text-muted-foreground mt-2">
           Die KI analysiert den Beleg automatisch und extrahiert Betrag, Gegenpartei und Datum.
           Belege werden automatisch dem Geschäftsjahr <strong>GJ {fiscalYear}</strong> zugewiesen.
-          Nutzen Sie den «Jetzt abgleichen»-Button oben um Belege automatisch mit Banktransaktionen zu verknüpfen.
+          Nutzen Sie den «Jetzt abgleichen»-Button oben um Belege automatisch mit Banktransaktionen abzugleichen.
         </p>
       </div>
 
@@ -367,9 +367,9 @@ export default function Documents() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle Status</SelectItem>
-            <SelectItem value="matched">Verknüpft</SelectItem>
-            <SelectItem value="unmatched">Nicht verknüpft</SelectItem>
-            <SelectItem value="manual">Manuell verknüpft</SelectItem>
+            <SelectItem value="matched">Mit Bank abgeglichen</SelectItem>
+            <SelectItem value="unmatched">Nicht abgeglichen</SelectItem>
+            <SelectItem value="manual">Manuell abgeglichen</SelectItem>
           </SelectContent>
         </Select>
         {/* View Mode Toggle */}

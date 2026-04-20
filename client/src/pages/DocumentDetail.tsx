@@ -358,7 +358,7 @@ export default function DocumentDetail() {
             {doc.matchStatus === "matched" || doc.matchStatus === "manual" ? (
               <Badge className="text-xs bg-green-100 text-green-700 border-green-200">
                 <CheckCircle2 className="w-3 h-3 mr-1" />
-                Verknüpft
+                Mit Bank abgeglichen
               </Badge>
             ) : (
               <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
@@ -558,7 +558,7 @@ export default function DocumentDetail() {
                 {/* Linked Supplier Info */}
                 {supplier && (
                   <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-xs font-medium text-blue-700 mb-1">Verknüpfter Lieferant</p>
+                    <p className="text-xs font-medium text-blue-700 mb-1">Zugeordneter Lieferant</p>
                     <p className="text-sm font-medium">{supplier.name}</p>
                     {supplier.street && (
                       <p className="text-xs text-muted-foreground">
@@ -994,7 +994,7 @@ export default function DocumentDetail() {
                 <div className="bg-card border border-border rounded-xl p-4 space-y-3">
                   <h3 className="font-semibold text-sm flex items-center gap-2">
                     <CircleDot className="w-4 h-4 text-muted-foreground" />
-                    Verknüpfte Transaktion
+                    Abgeglichene Transaktion
                   </h3>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>

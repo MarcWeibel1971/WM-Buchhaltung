@@ -266,13 +266,13 @@ export default function Dashboard() {
 
       {/* Block 4: FREIGABEN + RECHNUNGEN */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Freigaben */}
+        {/* Buchungen */}
         <Card className="border-border shadow-sm">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <CheckSquare className="h-4 w-4 text-amber-500" />
-                Freigaben
+                Buchungen
               </CardTitle>
               <Link href="/freigaben">
                 <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">

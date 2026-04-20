@@ -107,7 +107,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { href: "/inbox", icon: Inbox, label: "Inbox", badge: totalInbox > 0 ? totalInbox : undefined },
     { href: "/belege", icon: FileText, label: "Belege", separator: true, badge: newDocs > 0 ? newDocs : undefined },
     { href: "/bank", icon: Building2, label: "Bank", badge: pendingBankTx > 0 ? pendingBankTx : undefined },
-    { href: "/freigaben", icon: CheckSquare, label: "Freigaben", badge: pendingEntries > 0 ? pendingEntries : undefined },
+    { href: "/freigaben", icon: CheckSquare, label: "Buchungen", badge: pendingEntries > 0 ? pendingEntries : undefined },
     { href: "/rechnungen", icon: Receipt, label: "Rechnungen", separator: true, children: [
       { href: "/rechnungen", icon: FileText, label: "Ausgangsrechnungen" },
       { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },

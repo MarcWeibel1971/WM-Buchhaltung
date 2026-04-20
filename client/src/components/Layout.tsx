@@ -7,7 +7,7 @@ import {
   Brain, ShieldCheck, Upload, Sparkles, Search, Eye,
   Link2, Archive, CreditCard, ArrowLeftRight, Wallet,
   AlertTriangle, Users, BookOpen, PieChart, List,
-  FileCheck, AlertCircle, CheckCircle, Banknote, Bot, Bolt
+  FileCheck, AlertCircle, CheckCircle, Banknote, Bot, Bolt, Timer
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
@@ -121,7 +121,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       { href: "/berichte?view=accounts", icon: BookOpen, label: "Kontoblätter" },
       { href: "/berichte?view=journal", icon: List, label: "Journal" },
     ]},
-    { href: "/abschluss", icon: CalendarCheck, label: "Abschluss & MWST", separator: true, children: [
+    { href: "/time-tracking", icon: Timer, label: "Zeiterfassung", separator: true },
+    { href: "/abschluss", icon: CalendarCheck, label: "Abschluss & MWST", children: [
       { href: "/vat", icon: Receipt, label: "MWST" },
       { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
     ]},

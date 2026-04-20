@@ -1226,3 +1226,10 @@
 - [x] Frontend: Treuhänder einladen via E-Mail + Einladungslink generieren (7 Tage gültig)
 - [x] Frontend: Einladungslink kopieren und anzeigen
 - [x] Frontend: Öffentliche Einladungs-Annahme-Seite (/einladung/:token)
+
+## Feature-Batch (20.04.2026 - Nachmittag)
+- [ ] Kunden-Import: Datei-Auswahl-Bug fixen (label/input Portal-Problem in Dialog)
+- [ ] Zeiterfassung: Link in Sidebar-Navigation hinzufügen
+- [ ] Einstellungen: Globaler "Dienstleistungen/Produkte" Tab hinzufügen
+- [ ] QR-Rechnung: Logo in PDF-Generierung (renderInvoicePdf) einbinden
+- [ ] QR-Rechnung: QR-Code-Bild Upload in Einstellungen (für Einzahlungsschein-Grafik)

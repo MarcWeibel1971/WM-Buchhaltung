@@ -24,7 +24,7 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
-  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Bolt,
+  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Bolt, QrCode,
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
@@ -39,6 +39,8 @@ import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useMemo, useState as useReactState, useCallback } from "react";
 import { toast } from "sonner";
 import UsersTab from "./UsersTab";
+import ServicesTab from "./ServicesTab";
+import QrSettingsTab from "./QrSettingsTab";
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
@@ -55,10 +57,12 @@ const TABS = [
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
   { id: "suppliers", label: "Lieferanten", icon: Truck },
   { id: "customers", label: "Kunden", icon: UserCheck },
+  { id: "services", label: "Dienstleistungen", icon: ClipboardList },
   { id: "templates", label: "Vorlagen", icon: FileStack },
   { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
   { id: "subscription", label: "Abonnement", icon: CreditCard },
   { id: "avatar", label: "Avatar-Chatbot", icon: Bot },
+  { id: "qr", label: "QR-Rechnung", icon: QrCode },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -153,6 +157,8 @@ export default function Settings() {
         {activeTab === "avatar" && <AvatarSettingsTab />}
         {activeTab === "importAutomation" && <ImportAutomationTab />}
         {activeTab === "users" && <UsersTab />}
+        {activeTab === "services" && <ServicesTab />}
+        {activeTab === "qr" && <QrSettingsTab />}
       </main>
     </div>
   );
@@ -4158,6 +4164,7 @@ function CustomersTab() {
   const [expandedCustomer, setExpandedCustomer] = useReactState<number | null>(null);
   const [showImportDialog, setShowImportDialog] = useReactState(false);
   const [importPreview, setImportPreview] = useReactState<Array<{name:string;company?:string;street?:string;zipCode?:string;city?:string;country?:string;email?:string;phone?:string;salutation?:string;notes?:string}>>([]);
+  const customerImportFileRef = useRef<HTMLInputElement>(null);
 
   // Customer form
   const [cCustNr, setCCustNr] = useReactState("");
@@ -4609,13 +4616,11 @@ function CustomersTab() {
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 className="hidden"
-                id="customer-import-file"
+                ref={customerImportFileRef}
                 onChange={handleImportFile}
               />
-              <Button variant="outline" asChild>
-                <label htmlFor="customer-import-file" className="cursor-pointer">
-                  <Upload className="h-4 w-4 mr-2" /> Datei wählen
-                </label>
+              <Button variant="outline" onClick={() => customerImportFileRef.current?.click()}>
+                <Upload className="h-4 w-4 mr-2" /> Datei wählen
               </Button>
             </div>
             {importPreview.length > 0 && (

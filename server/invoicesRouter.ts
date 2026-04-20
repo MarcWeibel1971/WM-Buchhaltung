@@ -146,9 +146,24 @@ async function renderInvoicePdf(params: {
   const vatTotal = parseFloat(invoice.vatTotal as string);
   const total = parseFloat(invoice.total as string);
 
+  // ── Logo (falls vorhanden) ──
+  let briefkopfY = 45;
+  if (org.logoUrl) {
+    try {
+      const logoResp = await fetch(org.logoUrl);
+      if (logoResp.ok) {
+        const logoBuffer = Buffer.from(await logoResp.arrayBuffer());
+        const ct = logoResp.headers.get("content-type") ?? "";
+        if (ct.includes("png") || ct.includes("jpg") || ct.includes("jpeg")) {
+          pdfDoc.image(logoBuffer, leftM, 38, { fit: [130, 42] });
+          briefkopfY = 88;
+        }
+      }
+    } catch { /* Logo-Fetch fehlgeschlagen – ignorieren */ }
+  }
   // ── Briefkopf ──
   pdfDoc.fontSize(11).font("Helvetica-Bold");
-  pdfDoc.text(org.companyName, leftM, 45);
+  pdfDoc.text(org.companyName, leftM, briefkopfY);
   pdfDoc.fontSize(8.5).font("Helvetica").fillColor("#444444");
   if (org.street)  pdfDoc.text(org.street);
   if (org.zipCode || org.city) pdfDoc.text(`${org.zipCode ?? ""} ${org.city ?? ""}`.trim());

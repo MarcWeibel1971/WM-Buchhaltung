@@ -868,49 +868,65 @@ export function calculateMatchScore(
 ): number {
   let score = 0;
 
-  // 1. Amount match (40 points)
+  // Helper: normalize company name for comparison
+  // Removes legal suffixes (AG, GmbH, SA, etc.), punctuation, extra spaces
+  function normalizeName(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/\b(ag|gmbh|sa|sarl|ltd|inc|co|kg|llc|cie|und|and|&)\b/g, '')
+      .replace(/[^a-zäöüéèàâ0-9]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // 1. Amount match (45 points)
+  let amountScore = 0;
   if (doc.totalAmount != null) {
     const docAmount = Math.abs(doc.totalAmount);
     const txnAmount = Math.abs(parseFloat(txn.amount));
     if (docAmount > 0 && txnAmount > 0) {
       const diff = Math.abs(docAmount - txnAmount);
       const pctDiff = diff / Math.max(docAmount, txnAmount);
-      if (pctDiff === 0) score += 40;           // exact match
-      else if (pctDiff < 0.001) score += 38;    // rounding diff
-      else if (pctDiff < 0.01) score += 30;     // <1% off
-      else if (pctDiff < 0.05) score += 15;     // <5% off (partial payment?)
+      if (pctDiff === 0) amountScore = 45;           // exact match
+      else if (pctDiff < 0.001) amountScore = 43;    // rounding diff
+      else if (pctDiff < 0.01) amountScore = 35;     // <1% off
+      else if (pctDiff < 0.05) amountScore = 18;     // <5% off (partial payment?)
     }
   }
+  score += amountScore;
 
   // 2. Counterparty match (30 points)
   if (doc.counterparty && txn.counterparty) {
-    const docVendor = doc.counterparty.toLowerCase().replace(/[^a-zäöüéèà0-9]/g, '');
-    const txnVendor = txn.counterparty.toLowerCase().replace(/[^a-zäöüéèà0-9]/g, '');
+    const docVendor = normalizeName(doc.counterparty);
+    const txnVendor = normalizeName(txn.counterparty);
     if (docVendor === txnVendor) {
       score += 30;
     } else if (docVendor.includes(txnVendor) || txnVendor.includes(docVendor)) {
       score += 25;
     } else {
-      // Check if any significant word matches
-      const docWords = docVendor.match(/[a-zäöüéèà]{3,}/g) || [];
-      const txnWords = txnVendor.match(/[a-zäöüéèà]{3,}/g) || [];
+      // Check if any significant word matches (min 4 chars to avoid false positives)
+      const docWords = docVendor.split(' ').filter(w => w.length >= 4);
+      const txnWords = txnVendor.split(' ').filter(w => w.length >= 4);
       const commonWords = docWords.filter(w => txnWords.some(tw => tw.includes(w) || w.includes(tw)));
-      if (commonWords.length > 0) {
-        score += Math.min(20, commonWords.length * 10);
+      if (commonWords.length >= 2) {
+        score += Math.min(25, commonWords.length * 12);
+      } else if (commonWords.length === 1) {
+        score += 12;
       }
     }
   }
 
-  // 3. Date proximity (20 points)
+  // 3. Date proximity (15 points) – extended tolerance for invoices paid later
   if (doc.documentDate && txn.transactionDate) {
     const docDate = new Date(doc.documentDate);
     const txnDate = new Date(txn.transactionDate);
     const daysDiff = Math.abs((docDate.getTime() - txnDate.getTime()) / (1000 * 60 * 60 * 24));
-    if (daysDiff <= 3) score += 20;
-    else if (daysDiff <= 7) score += 15;
-    else if (daysDiff <= 14) score += 10;
-    else if (daysDiff <= 30) score += 5;
-    else if (daysDiff <= 60) score += 2;
+    if (daysDiff <= 3) score += 15;
+    else if (daysDiff <= 7) score += 12;
+    else if (daysDiff <= 14) score += 9;
+    else if (daysDiff <= 30) score += 6;
+    else if (daysDiff <= 60) score += 3;
+    else if (daysDiff <= 120) score += 1;  // invoices often paid 1-4 months later
   }
 
   // 4. Reference/IBAN match (10 points)
@@ -934,7 +950,7 @@ export function calculateMatchScore(
  * Run auto-matching: find best matches between unmatched documents and pending transactions.
  * Returns array of matches with scores >= threshold.
  */
-export async function autoMatchDocuments(orgId: number, threshold: number = 50): Promise<{
+export async function autoMatchDocuments(orgId: number, threshold: number = 40): Promise<{
   documentId: number;
   transactionId: number;
   score: number;

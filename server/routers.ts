@@ -3397,7 +3397,7 @@ const documentsRouter = router({
 
   // Auto-match unmatched documents with pending bank transactions
   autoMatch: orgProcedure
-    .input(z.object({ threshold: z.number().default(50) }))
+    .input(z.object({ threshold: z.number().default(40) }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });

@@ -262,7 +262,7 @@ export default function Documents() {
             </div>
           </div>
           <Button
-            onClick={() => autoMatchMutation.mutate({ threshold: 50 })}
+            onClick={() => autoMatchMutation.mutate({ threshold: 40 })}
             disabled={autoMatchMutation.isPending}
             className="gap-2 shrink-0"
             size="default"

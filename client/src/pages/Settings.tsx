@@ -4296,7 +4296,20 @@ function CustomersTab() {
     try {
       const XLSX = await import("xlsx");
       const data = await file.arrayBuffer();
-      const wb = XLSX.read(data);
+      // For CSV files: try UTF-8 first, then Latin-1 as fallback (handles umlauts from Excel exports)
+      const isCSV = file.name.toLowerCase().endsWith('.csv');
+      let wb;
+      if (isCSV) {
+        try {
+          const text = new TextDecoder('utf-8').decode(data);
+          wb = XLSX.read(text, { type: 'string' });
+        } catch {
+          const text = new TextDecoder('iso-8859-1').decode(data);
+          wb = XLSX.read(text, { type: 'string' });
+        }
+      } else {
+        wb = XLSX.read(data);
+      }
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
       const parsed = rows.map((r: Record<string, any>) => {

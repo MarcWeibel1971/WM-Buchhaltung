@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
   FileText, Image, Eye, Trash2, Search, Filter,
   Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
@@ -50,8 +50,13 @@ function formatCHF(n: number) {
 }
 
 export default function Documents() {
-  const { fiscalYear, fiscalYears } = useFiscalYear();
+  const { fiscalYear, fiscalYears, fiscalYearInfos } = useFiscalYear();
   const [, navigate] = useLocation();
+  // GJ-Eröffnungs-Dialog State
+  const [gjDialogOpen, setGjDialogOpen] = useState(false);
+  const [gjDialogYear, setGjDialogYear] = useState<number | null>(null);
+  const [gjDialogDocIds, setGjDialogDocIds] = useState<number[]>([]);
+  const [gjCreating, setGjCreating] = useState(false);
   
   // Read filter from URL query params (sidebar sub-items use ?filter=...)
   const urlFilter = new URLSearchParams(window.location.search).get("filter");
@@ -147,10 +152,50 @@ export default function Documents() {
     onError: (err) => toast.error(err.message),
   });
 
-  const handleUploaded = useCallback((_doc: UploadedDocument) => {
+  const createFiscalYearMutation = trpc.yearEnd.createFiscalYear.useMutation({
+    onSuccess: async (_, variables) => {
+      toast.success(`Geschäftsjahr ${variables.year} wurde eröffnet`);
+      // Update fiscalYear in documents that were uploaded with wrong GJ
+      for (const docId of gjDialogDocIds) {
+        await updateFiscalYearMutation.mutateAsync({ documentId: docId, fiscalYear: variables.year });
+      }
+      setGjDialogOpen(false);
+      setGjDialogDocIds([]);
+      setGjCreating(false);
+      refetch();
+    },
+    onError: (err) => {
+      toast.error(err.message);
+      setGjCreating(false);
+    },
+  });
+
+  const handleUploaded = useCallback((doc: UploadedDocument) => {
     setRefreshKey(k => k + 1);
     refetch();
-  }, [refetch]);
+    // Check if document date is from a different year than current fiscalYear
+    // and that year is not yet opened
+    if (doc.aiMetadata) {
+      try {
+        const meta = JSON.parse(doc.aiMetadata);
+        if (meta.documentDate) {
+          const docYear = new Date(meta.documentDate).getFullYear();
+          if (docYear !== fiscalYear && !isNaN(docYear) && docYear > 2000) {
+            const isOpened = fiscalYearInfos.some(fy => fy.year === docYear);
+            if (!isOpened) {
+              // Ask user to open new fiscal year
+              setGjDialogYear(docYear);
+              setGjDialogDocIds(prev => [...prev, doc.id]);
+              setGjDialogOpen(true);
+            } else if (!fiscalYears.includes(docYear)) {
+              // Year exists but not in list – just update the document's GJ
+              updateFiscalYearMutation.mutate({ documentId: doc.id, fiscalYear: docYear });
+            }
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    }
+  }, [refetch, fiscalYear, fiscalYears, fiscalYearInfos]);
 
   const handleDelete = useCallback(async (id: number, filename: string) => {
     if (!confirm(`Dokument "${filename}" wirklich löschen?`)) return;
@@ -555,6 +600,46 @@ export default function Documents() {
           </div>
         )}
       </div>
+
+      {/* GJ-Eröffnungs-Dialog */}
+      <Dialog open={gjDialogOpen} onOpenChange={(open) => { if (!open) { setGjDialogOpen(false); setGjDialogDocIds([]); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-amber-500" />
+              Neues Geschäftsjahr eröffnen?
+            </DialogTitle>
+            <DialogDescription className="mt-2">
+              Der hochgeladene Beleg hat das Datum <strong>{gjDialogYear}</strong>, aber das Geschäftsjahr{" "}
+              <strong>GJ {gjDialogYear}</strong> wurde noch nicht eröffnet.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2 text-sm text-muted-foreground">
+            Soll das Geschäftsjahr <strong>GJ {gjDialogYear}</strong> jetzt automatisch eröffnet werden?
+            Der Beleg wird dann automatisch dem richtigen Geschäftsjahr zugewiesen.
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => { setGjDialogOpen(false); setGjDialogDocIds([]); }}
+            >
+              Nein, bei GJ {fiscalYear} belassen
+            </Button>
+            <Button
+              onClick={() => {
+                if (gjDialogYear) {
+                  setGjCreating(true);
+                  createFiscalYearMutation.mutate({ year: gjDialogYear });
+                }
+              }}
+              disabled={gjCreating || createFiscalYearMutation.isPending}
+            >
+              {(gjCreating || createFiscalYearMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Ja, GJ {gjDialogYear} eröffnen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Manual Match Dialog */}
       <Dialog open={matchDialogOpen} onOpenChange={setMatchDialogOpen}>

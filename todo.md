@@ -1242,3 +1242,7 @@
 - [x] Rechnungen: Hauptpunkt "Rechnungen" mit Unterpunkten "Kunden (Debitoren)" und "Lieferanten (Kreditoren)"
 - [x] Layout.tsx: 3-Ebenen-Navigation für Rechnungen (renderNavItem mit verschachtelten Gruppen)
 - [x] sectionPrefixes: /zahlungen/kreditoren zu /rechnungen-Gruppe hinzugefügt
+
+## Bugfixes (20.04.2026 - Session 3)
+- [x] GJ-Eröffnungsabfrage beim Beleg-Upload: Wenn Belegdatum in nicht eröffnetes GJ fällt, Dialog anzeigen und GJ automatisch eröffnen
+- [x] Kunden-Import CSV/Excel: CSV-Encoding-Fix (UTF-8 + Latin-1 Fallback für Umlaute aus Excel-Exporten)

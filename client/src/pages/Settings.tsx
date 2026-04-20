@@ -38,11 +38,13 @@ import { CSS } from "@dnd-kit/utilities";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useMemo, useState as useReactState, useCallback } from "react";
 import { toast } from "sonner";
+import UsersTab from "./UsersTab";
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
 const TABS = [
   { id: "company", label: "Unternehmen", icon: Building2 },
+  { id: "users", label: "Benutzer", icon: Users },
   { id: "bank", label: "Bankkonten", icon: Landmark },
   { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt },
   { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree },
@@ -150,6 +152,7 @@ export default function Settings() {
         {activeTab === "subscription" && <SubscriptionTab />}
         {activeTab === "avatar" && <AvatarSettingsTab />}
         {activeTab === "importAutomation" && <ImportAutomationTab />}
+        {activeTab === "users" && <UsersTab />}
       </main>
     </div>
   );

@@ -1217,3 +1217,12 @@
 
 ## Feature: Vorschau-Button öffnet Detailansicht (20.04.2026)
 - [x] Documents.tsx: Vorschau-Button (Auge-Icon) soll Detailansicht (/documents/:id) öffnen statt PDF direkt
+
+## Feature: Benutzer-Verwaltung & Treuhänder-Einladung (20.04.2026)
+- [x] DB-Schema: invitations-Tabelle (token, email, role, expiresAt, usedAt, createdBy)
+- [x] Backend: invitations Router (create, list, revoke, accept)
+- [x] Frontend: Benutzer-Seite in Einstellungen aktivieren (aktuell inaktiv)
+- [x] Frontend: Benutzer-Liste mit Rolle und Status anzeigen
+- [x] Frontend: Treuhänder einladen via E-Mail + Einladungslink generieren (7 Tage gültig)
+- [x] Frontend: Einladungslink kopieren und anzeigen
+- [x] Frontend: Öffentliche Einladungs-Annahme-Seite (/einladung/:token)

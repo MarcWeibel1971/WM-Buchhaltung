@@ -34,6 +34,7 @@ import { invoicesRouter } from "./invoicesRouter";
 import { remindersRouter } from "./remindersRouter";
 import { stripeRouter } from "./stripeRouter";
 import { searchCompanies } from "./uidSearch";
+import { invitationsRouter } from "./invitationsRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -4399,6 +4400,7 @@ export const appRouter = router({
   avatarChat: avatarChatRouter,
   avatarSettings: avatarSettingsRouter,
   importAutomation: importAutomationRouter,
+  invitations: invitationsRouter,
   uidSearch: router({
     search: publicProcedure
       .input(z.object({ name: z.string().min(2).max(200) }))

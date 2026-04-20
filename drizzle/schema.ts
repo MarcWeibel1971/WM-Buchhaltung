@@ -1170,3 +1170,21 @@ export const importAutomationSettings = mysqlTable("import_automation_settings",
 });
 export type ImportAutomationSettings = typeof importAutomationSettings.$inferSelect;
 export type InsertImportAutomationSettings = typeof importAutomationSettings.$inferInsert;
+
+// ─── Invitations (Treuhänder-Einladungen) ─────────────────────────────────────
+// Zeitlich begrenzte Einladungen für externe Benutzer (z.B. Treuhänder).
+export const invitations = mysqlTable("invitations", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  invitedByUserId: int("invitedByUserId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  name: varchar("name", { length: 200 }),
+  role: mysqlEnum("role", ["admin", "bookkeeper", "viewer"]).default("viewer").notNull(),
+  token: varchar("token", { length: 128 }).notNull().unique(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  acceptedByUserId: int("acceptedByUserId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type Invitation = typeof invitations.$inferSelect;
+export type InsertInvitation = typeof invitations.$inferInsert;

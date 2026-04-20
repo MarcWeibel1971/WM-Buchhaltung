@@ -1207,4 +1207,10 @@
 ## Neue Änderungen (Benutzer-Feedback 20.04.2026)
 - [x] Navigation: "Freigaben" → "Buchungen" in Layout.tsx umbenennen
 - [x] Terminologie: "Verknüpft" → "Mit Bank abgeglichen" in Documents.tsx, DocumentDetail.tsx und allen anderen Dateien
-- [ ] Öffentliche URL wmbuchhaltung-g3uypyrz.manus.space prüfen und erreichbar machen
+- [x] Öffentliche URL wmbuchhaltung-g3uypyrz.manus.space prüfen und erreichbar machen
+
+## Bugfixes Bank + Berichte (20.04.2026)
+- [x] Berichte: "Journal"-Tab in Berichte-Navigation (neben Konten) hinzugefügt
+- [x] Bank: Zähler "Alle Transaktionen" zeigt jetzt korrekt 44 (pending + matched im GJ)
+- [x] Bank: "Alle Transaktionen" Filter zeigt jetzt alle Transaktionen (pending immer, matched nach GJ)
+- [x] Bank: Verbuchte Transaktionen (Status "matched") werden in "Verbucht"-Kachel korrekt gezählt

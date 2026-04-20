@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { jsPDF } from "jspdf";
 import Accounts from "./Accounts";
+import Journal from "./Journal";
 
 function exportToPdf(title: string, year: number, rows: Array<{label: string; amount: number; indent?: number; bold?: boolean}>, company?: { companyName?: string | null; legalForm?: string | null; street?: string | null; zipCode?: string | null; city?: string | null; uid?: string | null; vatNumber?: string | null }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -176,6 +177,7 @@ export default function Reports() {
           <TabsTrigger value="income-statement">Erfolgsrechnung</TabsTrigger>
           <TabsTrigger value="balance-sheet">Bilanz</TabsTrigger>
           <TabsTrigger value="accounts">Konten</TabsTrigger>
+          <TabsTrigger value="journal">Journal</TabsTrigger>
         </TabsList>
 
         {/* Erfolgsrechnung */}
@@ -348,6 +350,9 @@ export default function Reports() {
         {/* Konten */}
         <TabsContent value="accounts">
           <Accounts />
+        </TabsContent>
+        <TabsContent value="journal">
+          <Journal />
         </TabsContent>
       </Tabs>
     </div>

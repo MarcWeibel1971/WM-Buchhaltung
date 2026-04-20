@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, sql, gte, lte, inArray, or, like } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte, lte, lt, inArray, or, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, accounts, journalEntries, journalLines,
@@ -488,15 +488,28 @@ export async function getBankTransactionsByStatus(orgId: number, status: "pendin
   else if (status === "matched") conditions.push(eq(bankTransactions.status, "matched"));
   // "all" = no status filter
   if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
-  // Filter by fiscal year: only apply to matched/all transactions
-  // Pending transactions are ALWAYS shown regardless of fiscal year,
-  // because they haven't been booked yet and shouldn't be hidden by GJ filter.
-  if (fiscalYear && status !== "pending") {
+  // Filter by fiscal year:
+  // - "matched": only show transactions within the fiscal year
+  // - "all": show ALL pending (regardless of date) + matched/ignored within fiscal year
+  // - "pending": no date filter (always show all pending)
+  if (fiscalYear && status === "matched") {
     const yearStartStr = `${fiscalYear}-01-01`;
     const yearEndStr = `${fiscalYear + 1}-01-01`;
-    const { gte, lt } = await import("drizzle-orm");
     conditions.push(gte(bankTransactions.transactionDate, yearStartStr));
     conditions.push(lt(bankTransactions.transactionDate, yearEndStr));
+  } else if (fiscalYear && status === "all") {
+    // Include ALL pending + matched/ignored within fiscal year
+    const yearStartStr = `${fiscalYear}-01-01`;
+    const yearEndStr = `${fiscalYear + 1}-01-01`;
+    conditions.push(
+      or(
+        eq(bankTransactions.status, "pending"),
+        and(
+          gte(bankTransactions.transactionDate, yearStartStr),
+          lt(bankTransactions.transactionDate, yearEndStr)
+        )!
+      )!
+    );
   }
   return db.select().from(bankTransactions)
     .where(and(...conditions))

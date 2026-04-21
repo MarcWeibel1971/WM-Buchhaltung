@@ -4311,23 +4311,72 @@ function CustomersTab() {
         wb = XLSX.read(data);
       }
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
-      const parsed = rows.map((r: Record<string, any>) => {
-        const name = String(r["Name"] ?? r["Kunde"] ?? r["Kontakt"] ?? r["name"] ?? "").trim();
-        const company = String(r["Firma"] ?? r["Unternehmen"] ?? r["company"] ?? "").trim() || undefined;
-        const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
-        const zipCode = String(r["PLZ"] ?? r["Postleitzahl"] ?? r["zipCode"] ?? r["zip"] ?? "").trim() || undefined;
-        const city = String(r["Ort"] ?? r["Stadt"] ?? r["city"] ?? "").trim() || undefined;
-        const country = String(r["Land"] ?? r["country"] ?? "").trim() || undefined;
-        const email = String(r["E-Mail"] ?? r["Email"] ?? r["email"] ?? "").trim() || undefined;
-        const phone = String(r["Telefon"] ?? r["Tel"] ?? r["phone"] ?? "").trim() || undefined;
-        const salutation = String(r["Anrede"] ?? r["salutation"] ?? "").trim() || undefined;
-        const notes = String(r["Notizen"] ?? r["Bemerkung"] ?? r["notes"] ?? "").trim() || undefined;
-        return { name, company, street, zipCode, city, country, email, phone, salutation, notes };
-      }).filter(c => c.name.length > 0);
+
+      // Read as raw array rows (header:1) to handle both standard headers and positional formats
+      const rawRows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: '' });
+
+      // Detect if file has standard headers (Name/Firma/etc.) in first non-empty row
+      const headerRowIdx = rawRows.findIndex(r => r.some((c: any) => {
+        const v = String(c ?? '').toLowerCase().trim();
+        return ['name', 'firma', 'kunde', 'kontakt', 'company'].includes(v);
+      }));
+
+      let parsed: Array<{ name: string; company?: string; street?: string; zipCode?: string; city?: string; country?: string; email?: string; phone?: string; salutation?: string; notes?: string; customerNumber?: string }>;
+
+      if (headerRowIdx >= 0) {
+        // Standard header-based import
+        const headers = rawRows[headerRowIdx].map((h: any) => String(h ?? '').trim());
+        const dataRows = rawRows.slice(headerRowIdx + 1);
+        parsed = dataRows.map((r: any[]) => {
+          const get = (...keys: string[]) => {
+            for (const k of keys) {
+              const idx = headers.findIndex(h => h.toLowerCase() === k.toLowerCase());
+              if (idx >= 0 && r[idx] != null && String(r[idx]).trim()) return String(r[idx]).trim();
+            }
+            return '';
+          };
+          const name = get('Name', 'Kunde', 'Kontakt', 'name');
+          const company = get('Firma', 'Unternehmen', 'company') || undefined;
+          const street = get('Strasse', 'Adresse', 'street', 'address') || undefined;
+          const zipCode = get('PLZ', 'Postleitzahl', 'zipCode', 'zip') || undefined;
+          const city = get('Ort', 'Stadt', 'city') || undefined;
+          const country = get('Land', 'country') || undefined;
+          const email = get('E-Mail', 'Email', 'email') || undefined;
+          const phone = get('Telefon', 'Tel', 'phone') || undefined;
+          const salutation = get('Anrede', 'salutation') || undefined;
+          const notes = get('Notizen', 'Bemerkung', 'notes') || undefined;
+          const customerNumber = get('Kunden-Nr.', 'KundenNr', 'Kundennummer', 'Nr.', 'Nr') || undefined;
+          return { name, company, street, zipCode, city, country, email, phone, salutation, notes, customerNumber };
+        }).filter(c => c.name.length > 0);
+      } else {
+        // Positional import: detect column with Kunden-Nr. (numeric) and Name+Ort (text with comma)
+        // Format: col[1] = Kunden-Nr. (number), col[2] = "Name, Ort" (text)
+        // Filter rows where col[1] is a valid customer number (1-9000) and col[2] has content
+        const customerRows = rawRows.filter(r =>
+          typeof r[1] === 'number' && r[1] > 0 && r[1] < 9000 &&
+          String(r[2] ?? '').trim().length > 2
+        );
+        // Deduplicate by Kunden-Nr.
+        const seen = new Set<number>();
+        const uniqueRows = customerRows.filter(r => {
+          if (seen.has(r[1])) return false;
+          seen.add(r[1]);
+          return true;
+        });
+        parsed = uniqueRows.map(r => {
+          const nameOrt = String(r[2]).trim();
+          const lastComma = nameOrt.lastIndexOf(',');
+          const name = lastComma > 0 ? nameOrt.substring(0, lastComma).trim() : nameOrt;
+          const city = lastComma > 0 ? nameOrt.substring(lastComma + 1).trim() : undefined;
+          const customerNumber = String(r[1]);
+          return { name, city: city || undefined, customerNumber };
+        }).filter(c => c.name.length > 0);
+      }
+
       setImportPreview(parsed);
       toast.success(`${parsed.length} Kunden aus Datei gelesen`);
     } catch (err) {
+      console.error('Import error:', err);
       toast.error("Fehler beim Lesen der Datei");
     }
     e.target.value = "";

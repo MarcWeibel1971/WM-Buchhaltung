@@ -167,6 +167,7 @@ function AppRouter() {
       {/* Bestehende Detail-Routen */}
       <Route path="/documents/:id" component={DocumentDetail} />
       <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
+      <Route path="/rechnungen/neu" component={QrBillGenerator} />
       <Route path="/zahlungen/kreditoren" component={Kreditoren} />
       <Route path="/time-tracking" component={TimeTracking} />
       <Route path="/payroll" component={Payroll} />

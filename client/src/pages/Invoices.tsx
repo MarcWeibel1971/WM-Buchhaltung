@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
 import {
   FileText, Plus, Search, Eye, Send, CheckCircle2, XCircle,
@@ -140,7 +141,8 @@ export default function Invoices() {
     return { openSum, overdueSum, openCount, overdueCount, total: all.length };
   }, [allQuery.data]);
 
-  const handleNew = () => { setEditingId(null); setEditorOpen(true); };
+  const [, navigate] = useLocation();
+  const handleNew = () => navigate("/rechnungen/neu");
   const handleEdit = (id: number) => { setEditingId(id); setEditorOpen(true); };
 
   return (

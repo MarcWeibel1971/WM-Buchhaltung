@@ -1246,3 +1246,8 @@
 ## Bugfixes (20.04.2026 - Session 3)
 - [x] GJ-Eröffnungsabfrage beim Beleg-Upload: Wenn Belegdatum in nicht eröffnetes GJ fällt, Dialog anzeigen und GJ automatisch eröffnen
 - [x] Kunden-Import CSV/Excel: CSV-Encoding-Fix (UTF-8 + Latin-1 Fallback für Umlaute aus Excel-Exporten)
+
+## QR-Rechnung Navigation (21.04.2026)
+- [x] "Neue Rechnung"-Button navigiert zu QrBillGenerator statt InvoicesEditor-Dialog
+- [x] Route /rechnungen/neu → QrBillGenerator
+- [x] QrBillGenerator: Kunden aus Stammdaten auswählen (Dropdown mit Suche bereits vorhanden)

@@ -6,8 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import {
-  FileText, Image, Eye, Trash2, Search, Filter, Check,
+import { FileText, Image, Eye, Trash2, Search, Filter, Check,
   Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
   Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2, Calendar,
   Paperclip, ChevronRight, CreditCard, LayoutList, AlignJustify
@@ -15,6 +14,9 @@ import {
 import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useLocation } from "wouter";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string; border: string }> = {
   // Rechnungen (Eingang + Ausgang) → Blau
@@ -52,6 +54,13 @@ function formatCHF(n: number) {
 export default function Documents() {
   const { fiscalYear, fiscalYears, fiscalYearInfos } = useFiscalYear();
   const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
+  // Admin bulk-delete state
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
   // GJ-Eröffnungs-Dialog State
   const [gjDialogOpen, setGjDialogOpen] = useState(false);
   const [gjDialogYear, setGjDialogYear] = useState<number | null>(null);
@@ -146,6 +155,40 @@ export default function Documents() {
     },
     onError: (err) => toast.error(err.message),
   });
+
+  // Admin delete mutations
+  const utils = trpc.useUtils();
+  const adminDeleteMutation = trpc.documents.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Beleg gelöscht");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+  const adminBulkDeleteMutation = trpc.documents.bulkDelete.useMutation({
+    onSuccess: (result) => {
+      toast.success(`${result.deleted} Beleg(e) gelöscht`);
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleAll = () => {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map(d => d.id)));
+    }
+  };
 
   const manualMatchMutation = trpc.documents.manualMatch.useMutation({
     onSuccess: () => {
@@ -453,8 +496,46 @@ export default function Documents() {
         </div>
       </div>
 
+      {/* Admin Bulk-Delete Toolbar */}
+      {isAdmin && selectedIds.size > 0 && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-destructive/10 border border-destructive/30 rounded-xl">
+          <div className="flex items-center gap-2">
+            <Trash2 className="w-4 h-4 text-destructive" />
+            <span className="text-sm font-medium text-destructive">{selectedIds.size} Beleg{selectedIds.size !== 1 ? "e" : ""} ausgewählt</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())} className="text-xs">
+              Auswahl aufheben
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setBulkDeleteOpen(true)}
+              disabled={adminBulkDeleteMutation.isPending}
+              className="gap-1.5 text-xs"
+            >
+              {adminBulkDeleteMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {selectedIds.size} Beleg{selectedIds.size !== 1 ? "e" : ""} löschen
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Document List */}
       <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+        {/* Admin: Select-All Header */}
+        {isAdmin && filtered.length > 0 && (
+          <div className="flex items-center gap-3 px-4 py-2 border-b border-border bg-muted/30">
+            <Checkbox
+              checked={selectedIds.size === filtered.length && filtered.length > 0}
+              onCheckedChange={toggleAll}
+              aria-label="Alle auswählen"
+            />
+            <span className="text-xs text-muted-foreground">
+              {selectedIds.size > 0 ? `${selectedIds.size} von ${filtered.length} ausgewählt` : `Alle ${filtered.length} auswählen`}
+            </span>
+          </div>
+        )}
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <FileText className="w-12 h-12 mb-3 opacity-30" />
@@ -473,12 +554,24 @@ export default function Documents() {
               const docFiscalYear = doc.fiscalYear;
               const isUnmatched = matchStatus === "unmatched" || !matchStatus;
 
+              const isSelected = selectedIds.has(doc.id);
               return (
                 <div
                   key={doc.id}
-                  className={`group flex items-start gap-3 p-4 hover:bg-muted/40 transition-colors cursor-pointer ${typeInfo.border}`}
+                  className={`group flex items-start gap-3 p-4 hover:bg-muted/40 transition-colors cursor-pointer ${typeInfo.border} ${isSelected ? "bg-destructive/5" : ""}`}
                   onClick={() => navigate(`/documents/${doc.id}`)}
                 >
+                  {/* Admin Checkbox */}
+                  {isAdmin && (
+                    <div className="flex-shrink-0 self-center" onClick={e => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleSelect(doc.id)}
+                        aria-label={`Beleg ${doc.filename} auswählen`}
+                      />
+                    </div>
+                  )}
+
                   {/* Thumbnail – farbig nach Dokumenttyp */}
                   <div className={`mt-0.5 flex-shrink-0 w-10 h-12 rounded overflow-hidden flex items-center justify-center ${
                     doc.documentType === "invoice_in" ? "bg-blue-100 border border-blue-300" :
@@ -605,15 +698,28 @@ export default function Documents() {
                         <Unlink className="w-4 h-4" />
                       </Button>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      title="Löschen"
-                      onClick={(e) => { e.stopPropagation(); handleDelete(doc.id, doc.filename); }}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {isAdmin ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        title="Admin: Löschen"
+                        onClick={(e) => { e.stopPropagation(); if (confirm(`Beleg "${doc.filename}" wirklich löschen?`)) adminDeleteMutation.mutate({ documentId: doc.id }); }}
+                        disabled={adminDeleteMutation.isPending}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        title="Löschen"
+                        onClick={(e) => { e.stopPropagation(); handleDelete(doc.id, doc.filename); }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
 
                   {/* Click indicator */}
@@ -626,6 +732,32 @@ export default function Documents() {
           </div>
         )}
       </div>
+
+      {/* Admin Bulk-Delete Bestätigungsdialog */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="w-5 h-5" />
+              {selectedIds.size} Beleg{selectedIds.size !== 1 ? "e" : ""} löschen?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Diese Aktion kann nicht rückgängig gemacht werden. Die Belege werden dauerhaft aus der Datenbank und dem Speicher gelöscht.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => adminBulkDeleteMutation.mutate({ ids: Array.from(selectedIds) })}
+              disabled={adminBulkDeleteMutation.isPending}
+            >
+              {adminBulkDeleteMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              Ja, {selectedIds.size} Beleg{selectedIds.size !== 1 ? "e" : ""} löschen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* GJ-Eröffnungs-Dialog */}
       <Dialog open={gjDialogOpen} onOpenChange={(open) => { if (!open) { setGjDialogOpen(false); setGjDialogDocIds([]); } }}>

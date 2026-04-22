@@ -1311,3 +1311,8 @@
 ## Bugfix: Debitorenkonto dynamisch aus Kontenplan (später)
 - [ ] invoicesRouter.ts: Debitorenkonto nicht hardcoded 1100, sondern dynamisch aus Kontenplan laden (erstes aktives Konto mit subCategory "Debitoren" oder Kontonummer 1050/1100)
 - [ ] Konto 1100 aus DB entfernen falls es ein Duplikat zu 1050 ist
+
+## Feature: Bulk-Löschen für Belege (22.04.2026)
+- [x] Backend: delete + bulkDelete-Prozeduren in documentsRouter (Admin-only, löscht S3-Dateien + DB-Einträge), storageDelete in storage.ts
+- [x] Frontend: Checkboxen in Documents.tsx (Admin-only), Toolbar mit "X Belege löschen"-Button, Select-All-Header
+- [x] Frontend: AlertDialog-Bestätigungsdialog vor Bulk-Delete

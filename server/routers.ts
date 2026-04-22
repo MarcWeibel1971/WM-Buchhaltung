@@ -4093,6 +4093,55 @@ Antworte NUR mit dem JSON-Objekt.`,
       
       return { entryId };
     }),
+
+  // Delete a single document (admin)
+  delete: orgProcedure
+    .input(z.object({ documentId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "Nur Admins können Belege löschen" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      // Delete S3 file if key exists
+      if (doc.s3Key) {
+        try {
+          const { storageDelete } = await import("./storage");
+          await storageDelete(doc.s3Key);
+        } catch { /* S3 delete failed, continue */ }
+      }
+      await db.delete(docs).where(eqOp(docs.id, input.documentId));
+      return { success: true };
+    }),
+
+  // Bulk delete documents (admin)
+  bulkDelete: orgProcedure
+    .input(z.object({ ids: z.array(z.number()).min(1).max(200) }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "Nur Admins können Belege löschen" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { inArray: inArrayOp } = await import("drizzle-orm");
+      // Load docs to get S3 keys
+      const rows = await db.select({ id: docs.id, s3Key: docs.s3Key }).from(docs)
+        .where(inArrayOp(docs.id, input.ids));
+      // Delete S3 files
+      for (const row of rows) {
+        if (row.s3Key) {
+          try {
+            const { storageDelete } = await import("./storage");
+            await storageDelete(row.s3Key);
+          } catch { /* S3 delete failed, continue */ }
+        }
+      }
+      await db.delete(docs).where(inArrayOp(docs.id, input.ids));
+      return { deleted: rows.length };
+    }),
 });
 
 // ─── Avatar Chat Router ─────────────────────────────────────────────────────

@@ -111,10 +111,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { href: "/rechnungen", icon: Receipt, label: "Rechnungen", separator: true, children: [
       { href: "/rechnungen", icon: Users, label: "Kunden (Debitoren)", children: [
         { href: "/rechnungen", icon: FileText, label: "Ausgangsrechnungen" },
-        { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },
-        { href: "/rechnungen?tab=payments", icon: Banknote, label: "Zahlungseingänge" },
         { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
-        { href: "/rechnungen?tab=customers", icon: Users, label: "Kunden" },
       ]},
       { href: "/zahlungen/kreditoren", icon: Building2, label: "Lieferanten (Kreditoren)", children: [
         { href: "/belege", icon: FileText, label: "Eingangsrechnungen (Belege)" },

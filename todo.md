@@ -1251,3 +1251,6 @@
 - [x] "Neue Rechnung"-Button navigiert zu QrBillGenerator statt InvoicesEditor-Dialog
 - [x] Route /rechnungen/neu → QrBillGenerator
 - [x] QrBillGenerator: Kunden aus Stammdaten auswählen (Dropdown mit Suche bereits vorhanden)
+
+## Navigation Bereinigung (22.04.2026)
+- [x] Kunden (Debitoren): Unterpunkte "Offene Forderungen", "Zahlungsausgänge" und "Kunden" entfernen (nur "Ausgangsrechnungen" und "Mahnwesen" behalten)

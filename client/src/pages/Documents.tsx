@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
-  FileText, Image, Eye, Trash2, Search, Filter,
+  FileText, Image, Eye, Trash2, Search, Filter, Check,
   Receipt, ArrowDownToLine, ArrowUpFromLine, StickyNote, Building2,
   Link2, Unlink, RefreshCw, CheckCircle2, AlertCircle, Loader2, Calendar,
   Paperclip, ChevronRight, CreditCard, LayoutList, AlignJustify
@@ -270,28 +270,22 @@ export default function Documents() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold">Belege</h2>
-          <p className="text-sm text-muted-foreground">Rechnungen, Kreditkartenabrechnungen und Barbelege zentral verwalten</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (confirm(`Alle Belege neu analysieren? Dies kann einige Minuten dauern.`)) {
-                batchReanalyzeMutation.mutate();
-              }
-            }}
-            disabled={batchReanalyzeMutation.isPending}
-            className="gap-2 text-xs"
-          >
-            {batchReanalyzeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            Neu analysieren
-          </Button>
-        </div>
+      {/* Neu analysieren Button (ohne doppelten Header) */}
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            if (confirm(`Alle Belege neu analysieren? Dies kann einige Minuten dauern.`)) {
+              batchReanalyzeMutation.mutate();
+            }
+          }}
+          disabled={batchReanalyzeMutation.isPending}
+          className="gap-2 text-xs"
+        >
+          {batchReanalyzeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          Neu analysieren
+        </Button>
       </div>
 
       {/* Prominenter Abgleichen-Banner wenn ungematchte Belege vorhanden */}
@@ -468,11 +462,25 @@ export default function Documents() {
                   className={`group flex items-start gap-3 p-4 hover:bg-muted/40 transition-colors cursor-pointer ${typeInfo.border}`}
                   onClick={() => navigate(`/documents/${doc.id}`)}
                 >
-                  {/* Thumbnail */}
-                  <div className="mt-0.5 flex-shrink-0 w-10 h-12 rounded border border-border overflow-hidden bg-muted/50 flex items-center justify-center">
+                  {/* Thumbnail – farbig nach Dokumenttyp */}
+                  <div className={`mt-0.5 flex-shrink-0 w-10 h-12 rounded overflow-hidden flex items-center justify-center ${
+                    doc.documentType === "invoice_in" ? "bg-blue-100 border border-blue-300" :
+                    doc.documentType === "invoice_out" ? "bg-blue-50 border border-blue-200" :
+                    doc.documentType === "credit_card_statement" ? "bg-purple-100 border border-purple-300" :
+                    doc.documentType === "receipt" ? "bg-emerald-100 border border-emerald-300" :
+                    doc.documentType === "bank_statement" ? "bg-slate-100 border border-slate-300" :
+                    "bg-gray-100 border border-gray-200"
+                  }`}>
                     {doc.mimeType.startsWith("image/")
                       ? <img src={doc.s3Url} alt="" className="w-full h-full object-cover" />
-                      : <FileText className="w-5 h-5 text-red-400" />
+                      : <span className={`${
+                          doc.documentType === "invoice_in" ? "text-blue-600" :
+                          doc.documentType === "invoice_out" ? "text-blue-500" :
+                          doc.documentType === "credit_card_statement" ? "text-purple-600" :
+                          doc.documentType === "receipt" ? "text-emerald-600" :
+                          doc.documentType === "bank_statement" ? "text-slate-500" :
+                          "text-gray-500"
+                        }`}>{typeInfo.icon}</span>
                     }
                   </div>
 
@@ -549,13 +557,14 @@ export default function Documents() {
                   {/* Actions */}
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      title="Detailansicht öffnen"
-                      onClick={(e) => { e.stopPropagation(); navigate(`/documents/${doc.id}`); }}
+                      variant="default"
+                      size="sm"
+                      className="h-8 px-2.5 text-xs bg-green-600 hover:bg-green-700 gap-1.5"
+                      title="Verbuchen / Detailansicht"
+                      onClick={(e) => { e.stopPropagation(); navigate(`/documents/${doc.id}?tab=verbuchen`); }}
                     >
-                      <Eye className="w-4 h-4" />
+                      <Check className="w-3.5 h-3.5" />
+                      Verbuchen
                     </Button>
                     {isUnmatched && (
                       <Button

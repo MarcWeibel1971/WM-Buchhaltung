@@ -490,7 +490,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-2">
             <Select value={String(fiscalYear)} onValueChange={v => setFiscalYear(Number(v))}>
-              <SelectTrigger className="w-24 h-7 text-xs">
+              <SelectTrigger className="w-32 h-9 text-sm font-semibold border-2 border-primary/40 bg-primary/5 hover:bg-primary/10 gap-1.5">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -498,7 +498,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   const info = fiscalYearInfos?.find(fi => fi.year === y);
                   const closed = info?.isClosed ?? false;
                   return (
-                    <SelectItem key={y} value={String(y)}>
+                    <SelectItem key={y} value={String(y)} className="font-medium">
                       GJ {y}{closed ? " 🔒" : ""}
                     </SelectItem>
                   );

@@ -1278,3 +1278,13 @@
 - [x] Frontend: Nach erstem Speichern wechselt Button zu "Entwurf aktualisieren" (savedInvoiceId-State)
 - [x] Frontend: Toast-Notification mit Link zu Entwürfen nach erfolgreichem Speichern
 - [x] Invoices.tsx: customerName für null-Fall abgesichert (Entwürfe ohne Kunden zeigen "—")
+
+## Bank & Belege – UI-Verbesserungen (Apr 2026)
+- [x] Bank: Internen h2-Header "Bankimport" entfernen (Layout-Header reicht)
+- [x] Bank: GJ-Button im Bankimport-Bereich prominenter (grösser, rechts im Import-Bereich)
+- [x] Bank: Verbuchen-Button öffnet Bearbeiten-Dialog (mit Abbrechen, Speichern, Verbuchen)
+- [x] Belege: Internen h2-Header "Belege" entfernen (Layout-Header reicht)
+- [x] Belege: Farbkennzeichnung links deutlicher (farbige Hinterlegung der Dokument-Kachel/Thumbnail)
+- [x] Belege: "Verbuchen"-Button statt Vorschau-Icon rechts in der Liste
+- [x] Belege: Manuelle Verknüpfung mit Banktransaktion auch in Detailansicht
+- [x] Belege-Detailansicht: KK-Abrechnungen – automatischer Verbuchungsvorschlag wie im Bankbereich

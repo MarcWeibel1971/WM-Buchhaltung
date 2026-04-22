@@ -8,11 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
   ArrowLeft, Save, RefreshCw, Loader2, FileText, Building2,
   CreditCard, Receipt, BookOpen, Banknote, CheckCircle2, AlertCircle,
   Sparkles, GraduationCap, ExternalLink, CheckSquare, ArrowRight,
-  CircleDot, Clock, XCircle
+  CircleDot, Clock, XCircle, Link2, Search
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -73,19 +74,31 @@ function formatDate(d: Date | string | null | undefined) {
 // ─── Component ──────────────────────────────────────────────────────────────
 export default function DocumentDetail() {
   const [, params] = useRoute("/documents/:id");
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const docId = params?.id ? parseInt(params.id) : null;
+
+  // Parse initial tab from URL query param
+  const urlTab = useMemo(() => {
+    const search = window.location.search;
+    const p = new URLSearchParams(search);
+    return p.get("tab") || "kontakt";
+  }, []);
 
   // Local editable state
   const [editedMeta, setEditedMeta] = useState<DocumentMetadata>({});
   const [editedNotes, setEditedNotes] = useState("");
   const [editedDocType, setEditedDocType] = useState("other");
   const [isDirty, setIsDirty] = useState(false);
-  const [activeTab, setActiveTab] = useState("kontakt");
+  const [activeTab, setActiveTab] = useState(urlTab);
   const [bookingDebitId, setBookingDebitId] = useState<number | null>(null);
   const [bookingCreditId, setBookingCreditId] = useState<number | null>(null);
   const [bookingText, setBookingText] = useState("");
   const [isBooking, setIsBooking] = useState(false);
+
+  // Manual link dialog state
+  const [manualLinkOpen, setManualLinkOpen] = useState(false);
+  const [manualLinkSearch, setManualLinkSearch] = useState("");
+  const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
 
   // Queries
   const { data, isLoading, isError, refetch } = trpc.documents.getById.useQuery(
@@ -96,6 +109,12 @@ export default function DocumentDetail() {
   const accountsQuery = trpc.accounts.list.useQuery(undefined, {
     staleTime: 60_000,
   });
+
+  // Unmatched bank transactions for manual linking
+  const unmatchedTxQuery = trpc.bankImport.listUnmatchedTransactions.useQuery(
+    {},
+    { enabled: manualLinkOpen, staleTime: 30_000 }
+  );
 
   // Mutations
   const updateMutation = trpc.documents.updateMetadata.useMutation({
@@ -131,6 +150,17 @@ export default function DocumentDetail() {
       toast.error("Verbuchung fehlgeschlagen: " + err.message);
       setIsBooking(false);
     },
+  });
+
+  // Manual match mutation
+  const manualMatchMutation = trpc.documents.manualMatch.useMutation({
+    onSuccess: () => {
+      toast.success("Beleg manuell mit Transaktion verknüpft");
+      setManualLinkOpen(false);
+      setSelectedTxId(null);
+      refetch();
+    },
+    onError: (err: any) => toast.error("Verknüpfung fehlgeschlagen: " + err.message),
   });
 
   const reanalyzeMutation = trpc.documents.reanalyze.useMutation({
@@ -1054,13 +1084,69 @@ export default function DocumentDetail() {
               {/* Direct booking info (no bank transaction) */}
               {!hasLinkedTx && !isDirectBooked && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-                    <div>
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
                       <p className="font-semibold text-amber-800 text-sm">Direktverbuchung (ohne Banktransaktion)</p>
                       <p className="text-xs text-amber-600 mt-0.5">
-                        Dieser Beleg ist nicht mit einer Banktransaktion verknüpft. Sie können ihn direkt verbuchen (z.B. Barauslage, Kassabeleg).
+                        Dieser Beleg ist nicht mit einer Banktransaktion verknüpft. Sie können ihn direkt verbuchen (z.B. Barauslage, Kassabeleg) oder manuell mit einer Transaktion verknüpfen.
                       </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-100"
+                      onClick={() => setManualLinkOpen(true)}
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                      Verknüpfen
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* KK-Abrechnung: Verbuchungsvorschlag */}
+              {doc.documentType === "credit_card_statement" && !txIsBooked && !isDirectBooked && (
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <CreditCard className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Verbuchungsvorschlag</p>
+                      <p className="text-xs text-purple-600 mt-1">
+                        Kreditkartenabrechnungen werden typischerweise als Sammelposten verbucht:
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-white border border-purple-200 rounded p-2">
+                          <span className="text-purple-500 font-medium block">Soll (Aufwand)</span>
+                          <span className="font-mono font-semibold">2000 Kreditoren</span>
+                          <span className="text-muted-foreground block">oder 6xxx Aufwandkonto</span>
+                        </div>
+                        <div className="bg-white border border-purple-200 rounded p-2">
+                          <span className="text-purple-500 font-medium block">Haben (Bank)</span>
+                          <span className="font-mono font-semibold">1032 Bankkonto</span>
+                          <span className="text-muted-foreground block">Zahlung an Kreditkartengesellschaft</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-purple-600 mt-2">
+                        Betrag: <strong>CHF {formatCHF(docAmount)}</strong> · Gegenpartei: <strong>{editedMeta.counterparty || '–'}</strong>
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3 gap-1.5 border-purple-300 text-purple-700 hover:bg-purple-100"
+                        onClick={() => {
+                          // Pre-fill with typical KK booking: Soll=2000 Kreditoren, Haben=Bankkonto
+                          const creditorsAcc = accountOptions.find((a: any) => a.number === '2000');
+                          const bankAcc = accountOptions.find((a: any) => a.number === '1032');
+                          if (creditorsAcc) setBookingDebitId(creditorsAcc.id);
+                          if (bankAcc) setBookingCreditId(bankAcc.id);
+                          setBookingText(`KK-Abrechnung ${editedMeta.counterparty || ''} ${editedMeta.documentDate || ''}`.trim());
+                          toast.info("Verbuchungsvorschlag übernommen – bitte Konten prüfen");
+                        }}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Vorschlag übernehmen
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -1211,6 +1297,112 @@ export default function DocumentDetail() {
           </Tabs>
         </div>
       </div>
+
+      {/* Manual Link Dialog */}
+      <Dialog open={manualLinkOpen} onOpenChange={setManualLinkOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-primary" />
+              Manuell mit Banktransaktion verknüpfen
+            </DialogTitle>
+            <DialogDescription>
+              Wählen Sie eine ausstehende Banktransaktion, die zu diesem Beleg gehört.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Suche nach Buchungstext, Gegenpartei, Betrag..."
+                value={manualLinkSearch}
+                onChange={(e) => setManualLinkSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            <div className="max-h-80 overflow-y-auto space-y-1.5">
+              {unmatchedTxQuery.isLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (() => {
+                const txList = (unmatchedTxQuery.data || []).filter((tx: any) => {
+                  if (!manualLinkSearch) return true;
+                  const q = manualLinkSearch.toLowerCase();
+                  return (
+                    (tx.description || '').toLowerCase().includes(q) ||
+                    (tx.counterparty || '').toLowerCase().includes(q) ||
+                    String(tx.amount).includes(q)
+                  );
+                });
+                if (txList.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      Keine ausstehenden Transaktionen gefunden
+                    </div>
+                  );
+                }
+                return txList.map((tx: any) => {
+                  const amt = parseFloat(tx.amount);
+                  const isSelected = selectedTxId === tx.id;
+                  return (
+                    <button
+                      key={tx.id}
+                      onClick={() => setSelectedTxId(isSelected ? null : tx.id)}
+                      className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                        isSelected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/40 hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{tx.description || '(kein Text)'}</p>
+                          {tx.counterparty && (
+                            <p className="text-xs text-muted-foreground truncate">{tx.counterparty}</p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(tx.transactionDate).toLocaleDateString('de-CH')}
+                          </p>
+                        </div>
+                        <span className={`font-bold text-sm shrink-0 ${
+                          amt < 0 ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          CHF {Math.abs(amt).toLocaleString('de-CH', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setManualLinkOpen(false); setSelectedTxId(null); }}>
+              Abbrechen
+            </Button>
+            <Button
+              onClick={() => {
+                if (!docId || !selectedTxId) return;
+                manualMatchMutation.mutate({ documentId: docId, transactionId: selectedTxId });
+              }}
+              disabled={!selectedTxId || manualMatchMutation.isPending}
+              className="gap-1.5"
+            >
+              {manualMatchMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Link2 className="w-4 h-4" />
+              )}
+              Verknüpfen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

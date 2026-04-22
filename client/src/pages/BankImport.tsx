@@ -121,7 +121,7 @@ export default function BankImport() {
     }
   }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
+  const { fiscalYear, setFiscalYear, fiscalYears, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
   const { data: importAutomation } = trpc.importAutomation.get.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   // Always filter by selected fiscal year (consistent across all views)
@@ -613,10 +613,6 @@ export default function BankImport() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h2 className="text-xl font-bold">Bankimport</h2>
-        <p className="text-sm text-muted-foreground">CAMT.053, MT940, CSV oder PDF importieren</p>
-      </div>
 
       {/* Warnung: Geschäftsjahr geschlossen */}
       {!isCurrentYearOpen && (
@@ -657,7 +653,24 @@ export default function BankImport() {
 
       {/* Import section */}
       <div className="bg-card rounded-xl border border-border p-5 shadow-sm">
-        <h3 className="font-semibold mb-4">Kontoauszug importieren</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold">Kontoauszug importieren</h3>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-medium">Geschäftsjahr:</span>
+            <Select value={String(fiscalYear)} onValueChange={v => setFiscalYear(Number(v))}>
+              <SelectTrigger className="w-32 h-9 text-sm font-semibold border-2 border-primary/50 bg-primary/8 hover:bg-primary/15 gap-1.5">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {fiscalYearInfos?.map(fi => (
+                  <SelectItem key={fi.year} value={String(fi.year)}>
+                    GJ {fi.year}{fi.isClosed ? " 🔒" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Bankkonto</label>
@@ -1114,14 +1127,10 @@ export default function BankImport() {
                                 <Check className="h-3 w-3 mr-1" />Übertrag verbuchen
                               </Button>
                             )}
-                            {!isTransfer && debitAcc && creditAcc && (
+                            {!isTransfer && (
                               <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
-                                onClick={() => approveMutation.mutate({
-                                  transactionId: tx.id,
-                                  debitAccountId: debitAcc.id,
-                                  creditAccountId: creditAcc.id,
-                                  description: tx.description ?? undefined,
-                                })}>
+                                title={debitAcc && creditAcc ? "Verbuchen" : "Konten prüfen und verbuchen"}
+                                onClick={() => openEditDialog(tx)}>
                                 <Check className="h-3 w-3 mr-1" />Verbuchen
                               </Button>
                             )}
@@ -1493,9 +1502,47 @@ export default function BankImport() {
           <DialogFooter>
             <Button variant="outline" onClick={() => { setEditTx(null); setEditMode("single"); }}>Abbrechen</Button>
             {editMode === "single" ? (
-              <Button onClick={saveEdit} disabled={updateTxMutation.isPending}>
-                {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
-              </Button>
+              <>
+                <Button variant="outline" onClick={saveEdit} disabled={updateTxMutation.isPending}>
+                  {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
+                </Button>
+                {editTx && (() => {
+                  const debitId = editForm.debitAccountId ? parseInt(editForm.debitAccountId) : null;
+                  const creditId = editForm.creditAccountId ? parseInt(editForm.creditAccountId) : null;
+                  const canApprove = !!(debitId && creditId);
+                  return (
+                    <Button
+                      className="bg-green-600 hover:bg-green-700"
+                      disabled={!canApprove || approveMutation.isPending || updateTxMutation.isPending}
+                      title={canApprove ? "Speichern und verbuchen" : "Soll- und Haben-Konto müssen ausgefüllt sein"}
+                      onClick={() => {
+                        if (!editTx || !debitId || !creditId) return;
+                        updateTxMutation.mutate({
+                          transactionId: editTx.id,
+                          description: editForm.description || undefined,
+                          counterparty: editForm.counterparty || undefined,
+                          counterpartyIban: editForm.counterpartyIban || undefined,
+                          reference: editForm.reference || undefined,
+                          suggestedDebitAccountId: debitId,
+                          suggestedCreditAccountId: creditId,
+                        }, {
+                          onSuccess: () => {
+                            approveMutation.mutate({
+                              transactionId: editTx.id,
+                              debitAccountId: debitId,
+                              creditAccountId: creditId,
+                              description: editForm.description || editTx.description || undefined,
+                            });
+                          },
+                        });
+                      }}
+                    >
+                      <Check className="h-3.5 w-3.5 mr-1.5" />
+                      {approveMutation.isPending ? "Verbuchen..." : "Verbuchen"}
+                    </Button>
+                  );
+                })()}
+              </>
             ) : (
               <Button
                 onClick={() => {

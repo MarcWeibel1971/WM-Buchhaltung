@@ -998,6 +998,12 @@ export const invoices = mysqlTable(
     introText: text("introText"),
     // Fusszeile / Dankestext
     footerText: text("footerText"),
+    // Schlusstext (nach Positionsliste, vor Grussformel)
+    closingText: text("closingText"),
+    // Grussformel + Unterzeichner (für Briefformat)
+    greeting: varchar("greeting", { length: 100 }),
+    signatory: varchar("signatory", { length: 200 }),
+    signatoryTitle: varchar("signatoryTitle", { length: 200 }),
     // Beträge (werden aus invoice_items berechnet, aber gecacht für Filter)
     subtotal: decimal("subtotal", { precision: 15, scale: 2 }).default("0").notNull(),
     vatTotal: decimal("vatTotal", { precision: 15, scale: 2 }).default("0").notNull(),

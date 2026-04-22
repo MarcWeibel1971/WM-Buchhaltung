@@ -225,6 +225,13 @@
       "when": 1776841976002,
       "tag": "0031_wealthy_doomsday",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "5",
+      "when": 1776857429835,
+      "tag": "0032_dashing_odin",
+      "breakpoints": true
     }
   ]
 }

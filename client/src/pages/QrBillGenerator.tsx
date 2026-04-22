@@ -199,6 +199,10 @@ export default function QrBillGenerator() {
     paymentTermDays: parseInt(paymentDays) || 30,
     subject: invoiceSubject || undefined,
     introText: introText || undefined,
+    closingText: closingText || undefined,
+    greeting: greeting || undefined,
+    signatory: signerName || undefined,
+    signatoryTitle: signerTitle || undefined,
     currency,
     items: lineItems
       .filter(i => i.description && parseFloat(i.amount) > 0)

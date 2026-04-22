@@ -267,10 +267,38 @@ async function renderInvoicePdf(params: {
   pdfDoc.text(`Zahlbar innert ${invoice.paymentTermDays} Tagen bis ${dueStr}.`, leftM, yPos, { width: contentW });
   yPos = pdfDoc.y + 16;
 
-  // ── Fusszeile ──
+  // ── Schlusstext (closingText) ──
+  if (invoice.closingText) {
+    pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
+    pdfDoc.text(invoice.closingText, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 16;
+  }
+
+  // ── Fusszeile (footerText) ──
   if (invoice.footerText) {
     pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
     pdfDoc.text(invoice.footerText, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 16;
+  }
+
+  // ── Grussformel + Unterzeichner ──
+  if (invoice.greeting || invoice.signatory) {
+    if (invoice.greeting) {
+      pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
+      pdfDoc.text(invoice.greeting, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 6;
+    }
+    pdfDoc.text(org.companyName, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 16;
+    if (invoice.signatory) {
+      pdfDoc.text(invoice.signatory, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 2;
+    }
+    if (invoice.signatoryTitle) {
+      pdfDoc.fillColor("#666666").fontSize(9);
+      pdfDoc.text(invoice.signatoryTitle, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 8;
+    }
   }
 
   // ── QR-Einzahlungsschein (falls IBAN konfiguriert und CHF/EUR) ──
@@ -432,6 +460,10 @@ export const invoicesRouter = router({
       })).min(1),
       vatRate: z.number().min(0).max(100).default(0),
       notes: z.string().optional(),
+      closingText: z.string().optional(),
+      greeting: z.string().optional(),
+      signatory: z.string().optional(),
+      signatoryTitle: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
@@ -475,6 +507,10 @@ export const invoicesRouter = router({
           subject: input.subject ?? null,
           introText: input.introText ?? null,
           footerText: input.footerText ?? null,
+          closingText: input.closingText ?? null,
+          greeting: input.greeting ?? null,
+          signatory: input.signatory ?? null,
+          signatoryTitle: input.signatoryTitle ?? null,
           currency: input.currency,
           subtotal: subtotal.toFixed(2),
           vatTotal: vatTotal.toFixed(2),
@@ -498,6 +534,10 @@ export const invoicesRouter = router({
           subject: input.subject ?? null,
           introText: input.introText ?? null,
           footerText: input.footerText ?? null,
+          closingText: input.closingText ?? null,
+          greeting: input.greeting ?? null,
+          signatory: input.signatory ?? null,
+          signatoryTitle: input.signatoryTitle ?? null,
           currency: input.currency,
           subtotal: subtotal.toFixed(2),
           vatTotal: vatTotal.toFixed(2),

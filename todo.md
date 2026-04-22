@@ -1294,3 +1294,6 @@
 
 ## KK-Sammelbuchung in Beleg-Detailansicht (Apr 2026)
 - [x] DocumentDetail.tsx: KK-Abrechnung Verbuchen-Tab – Sammelbuchung mit allen Einzelpositionen und KI-Aufwandskonten (analog Bankbereich Kreditkartenzahlungen-Button)
+
+## Bugfix: Rechnungs-PDF Format nach Verbuchen (Apr 2026)
+- [ ] Nach Verbuchen einer QR-Rechnung: PDF-Button in Rechnungsliste soll dasselbe Briefformat (QrBillGenerator-Template) wie beim direkten PDF-Generieren verwenden

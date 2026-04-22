@@ -1001,9 +1001,9 @@ export const qrBillRouter = router({
             ? await pdfDoc.embedPng(logoBytes)
             : await pdfDoc.embedJpg(logoBytes);
 
-          // Logo should be ~160pt wide, centered, starting ~12mm from top
-          const maxLogoW = 180;
-          const maxLogoH = 70;
+          // Logo should be ~120pt wide, centered, starting ~12mm from top
+          const maxLogoW = 130;
+          const maxLogoH = 45;
           const scale = Math.min(maxLogoW / logoImage.width, maxLogoH / logoImage.height);
           const logoW = logoImage.width * scale;
           const logoH = logoImage.height * scale;
@@ -1059,7 +1059,7 @@ export const qrBillRouter = router({
       // Amount column: right-aligned at rightEdge
       // Currency column: ~25mm before amount right edge
       const amtColRight = rightEdge; // right edge for amounts
-      const curColRight = rightEdge - 55; // "CHF" column
+      const curColRight = rightEdge - 75; // "CHF" column (weiter links, kein Überlappen mit Beträgen)
 
       for (let i = 0; i < input.lineItems.length; i++) {
         const item = input.lineItems[i];
@@ -1119,24 +1119,7 @@ export const qrBillRouter = router({
         drawT(input.signerTitle, leftM, bodyY);
       }
 
-      // ═══ 12. QR CODE IMAGE – centered, near bottom ═══
-      const QR_CODE_URL = "https://d2xsxph8kpxj0f.cloudfront.net/114467201/g3uYPYRzWxJLqW5bmLAtac/QRCodeMW_d48c71fc.png";
-      try {
-        const qrResponse = await fetch(QR_CODE_URL);
-        const qrBytes = new Uint8Array(await qrResponse.arrayBuffer());
-        const qrImage = await pdfDoc.embedPng(qrBytes);
-        const qrSize = 70; // 70pt ≈ 25mm
-        page.drawImage(qrImage, {
-          x: (pageW - qrSize) / 2,
-          y: pageH - 255 * mm,
-          width: qrSize,
-          height: qrSize,
-        });
-      } catch {
-        // QR code loading failed, skip
-      }
-
-      // ═══ 13. FOOTER – centered with divider line ═══
+      // ═══ 12. FOOTER (QR-Code auf Seite 1 entfernt – erscheint auf Seite 2 als SwissQRBill) – centered with divider line ═══
       const footerY = 275; // mm from top
       // Divider line
       drawLine(leftM + 80, rightEdge - 80, footerY - 3, 0.5, lightGray);

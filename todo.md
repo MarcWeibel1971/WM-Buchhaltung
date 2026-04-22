@@ -1296,4 +1296,18 @@
 - [x] DocumentDetail.tsx: KK-Abrechnung Verbuchen-Tab – Sammelbuchung mit allen Einzelpositionen und KI-Aufwandskonten (analog Bankbereich Kreditkartenzahlungen-Button)
 
 ## Bugfix: Rechnungs-PDF Format nach Verbuchen (Apr 2026)
-- [ ] Nach Verbuchen einer QR-Rechnung: PDF-Button in Rechnungsliste soll dasselbe Briefformat (QrBillGenerator-Template) wie beim direkten PDF-Generieren verwenden
+- [x] Nach Verbuchen einer QR-Rechnung: PDF-Button in Rechnungsliste soll dasselbe Briefformat (QrBillGenerator-Template) wie beim direkten PDF-Generieren verwenden
+  - Schema: closingText, greeting, signatory, signatoryTitle zu invoices-Tabelle hinzugefügt (Migration 0032)
+  - Backend: saveFromQrGenerator speichert diese Felder, renderInvoicePdf rendert sie korrekt
+  - Frontend: buildSaveDraftInput() übergibt alle Briefformat-Felder beim Speichern
+
+## Bugfixes + Features (22.04.2026 - Session 4)
+- [x] Bug: Eingangsrechnungen (Belege) zeigt auch Ausgangsrechnungen – URL-Parameter ?type=incoming, Dropdown-Filter "Eingangsrechnungen (alle)" hinzugefügt
+- [x] QR-Rechnung PDF: Logo kleiner (maxW 130pt, maxH 45pt)
+- [x] QR-Rechnung PDF: Währung weiter nach links (curColRight rightEdge-75 statt -55)
+- [x] QR-Rechnung PDF: QR-Code auf Seite 1 entfernt (erscheint auf Seite 2 als SwissQRBill)
+- [x] Admin: Rechnungen einzeln oder mehrfach löschen – adminDelete + adminBulkDelete Prozeduren + Checkboxen in Invoices.tsx
+
+## Bugfix: Debitorenkonto dynamisch aus Kontenplan (später)
+- [ ] invoicesRouter.ts: Debitorenkonto nicht hardcoded 1100, sondern dynamisch aus Kontenplan laden (erstes aktives Konto mit subCategory "Debitoren" oder Kontonummer 1050/1100)
+- [ ] Konto 1100 aus DB entfernen falls es ein Duplikat zu 1050 ist

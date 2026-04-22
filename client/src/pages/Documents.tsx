@@ -58,8 +58,9 @@ export default function Documents() {
   const [gjDialogDocIds, setGjDialogDocIds] = useState<number[]>([]);
   const [gjCreating, setGjCreating] = useState(false);
   
-  // Read filter from URL query params (sidebar sub-items use ?filter=...)
+  // Read filter from URL query params (sidebar sub-items use ?filter=... or ?type=...)
   const urlFilter = new URLSearchParams(window.location.search).get("filter");
+  const urlType = new URLSearchParams(window.location.search).get("type");
   
   // Map sidebar filter values to internal filter states
   const getInitialMatchFilter = () => {
@@ -67,8 +68,14 @@ export default function Documents() {
     if (urlFilter === "new" || urlFilter === "review") return "unmatched";
     return "all";
   };
+
+  // Map ?type=incoming to filterType "incoming" (Eingangsrechnungen)
+  const getInitialTypeFilter = () => {
+    if (urlType === "incoming") return "incoming";
+    return "all";
+  };
   
-  const [filterType, setFilterType] = useState<string>("all");
+  const [filterType, setFilterType] = useState<string>(getInitialTypeFilter);
   const [filterMatch, setFilterMatch] = useState<string>(getInitialMatchFilter);
   const [search, setSearch] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -78,11 +85,14 @@ export default function Documents() {
   // Update filters when URL changes (sidebar navigation)
   useEffect(() => {
     const newFilter = new URLSearchParams(window.location.search).get("filter");
+    const newType = new URLSearchParams(window.location.search).get("type");
     setSidebarFilter(newFilter);
     if (newFilter === "matched") setFilterMatch("matched");
     else if (newFilter === "new" || newFilter === "review") setFilterMatch("unmatched");
-    else if (!newFilter) { setFilterMatch("all"); setFilterType("all"); }
-  }, [urlFilter]);
+    else if (!newFilter) { setFilterMatch("all"); }
+    if (newType === "incoming") setFilterType("incoming");
+    else if (!newType && !newFilter) setFilterType("all");
+  }, [urlFilter, urlType]);
 
   // Manual match dialog state
   const [matchDialogOpen, setMatchDialogOpen] = useState(false);
@@ -90,8 +100,12 @@ export default function Documents() {
   const [matchDocName, setMatchDocName] = useState("");
   const [txnSearch, setTxnSearch] = useState("");
 
+  // "incoming" = Eingangsrechnungen (invoice_in + receipt + bank_statement, NICHT invoice_out/credit_card_statement)
+  const incomingTypes = ["invoice_in", "receipt", "bank_statement"];
+  const resolvedDocumentType = filterType === "incoming" ? undefined : (filterType !== "all" ? filterType : undefined);
+
   const { data: docs, refetch } = trpc.documents.list.useQuery({
-    documentType: filterType !== "all" ? filterType : undefined,
+    documentType: resolvedDocumentType,
     fiscalYear: fiscalYear,
     limit: 200,
   });
@@ -220,6 +234,8 @@ export default function Documents() {
   };
 
   const filtered = (docs ?? []).filter(doc => {
+    // "incoming" type filter: nur Eingangsrechnungen (invoice_in, receipt, bank_statement)
+    if (filterType === "incoming" && !incomingTypes.includes(doc.documentType ?? "")) return false;
     // Sidebar filter from URL params
     if (sidebarFilter) {
       const ms = (doc as any).matchStatus ?? "unmatched";
@@ -391,6 +407,7 @@ export default function Documents() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle Typen</SelectItem>
+            <SelectItem value="incoming">Eingangsrechnungen (alle)</SelectItem>
             <SelectItem value="invoice_in">Eingangsrechnungen</SelectItem>
             <SelectItem value="invoice_out">Ausgangsrechnungen</SelectItem>
             <SelectItem value="receipt">Quittungen</SelectItem>

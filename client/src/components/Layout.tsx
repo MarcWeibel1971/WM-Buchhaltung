@@ -114,7 +114,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
       ]},
       { href: "/zahlungen/kreditoren", icon: Building2, label: "Lieferanten (Kreditoren)", children: [
-        { href: "/belege", icon: FileText, label: "Eingangsrechnungen (Belege)" },
+        { href: "/belege?type=incoming", icon: FileText, label: "Eingangsrechnungen (Belege)" },
         { href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditorenzahlungen" },
       ]},
     ]},

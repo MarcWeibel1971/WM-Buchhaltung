@@ -1171,4 +1171,40 @@ ${org.companyName}`;
 
       return { success: true, messageId, to: recipient };
     }),
+
+  // ─── ADMIN DELETE (alle Status, nur für Entwicklungsphase) ───────────────────────────────
+  adminDelete: orgProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [existing] = await db.select({ id: invoices.id }).from(invoices)
+        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)))
+        .limit(1);
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+      await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, input.id));
+      await db.delete(invoices)
+        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)));
+      return { success: true };
+    }),
+
+  // ─── ADMIN BULK DELETE ───────────────────────────────────────────────────────────────────
+  adminBulkDelete: orgProcedure
+    .input(z.object({ ids: z.array(z.number()).min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      let deleted = 0;
+      for (const id of input.ids) {
+        const [existing] = await db.select({ id: invoices.id }).from(invoices)
+          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)))
+          .limit(1);
+        if (!existing) continue;
+        await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+        await db.delete(invoices)
+          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)));
+        deleted++;
+      }
+      return { success: true, deleted };
+    }),
 });

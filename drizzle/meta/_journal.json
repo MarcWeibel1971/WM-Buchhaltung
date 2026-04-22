@@ -218,6 +218,13 @@
       "when": 1776678780421,
       "tag": "0030_overrated_matthew_murdock",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1776841976002,
+      "tag": "0031_wealthy_doomsday",
+      "breakpoints": true
     }
   ]
 }

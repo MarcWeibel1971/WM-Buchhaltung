@@ -254,7 +254,7 @@ export default function Invoices() {
                       {inv.isOverdue && <span className="ml-1 text-xs">(+{inv.daysOverdue}T)</span>}
                     </TableCell>
                     <TableCell className="max-w-[180px] truncate">
-                      {inv.customerCompany ?? inv.customerName}
+                      {inv.customerCompany ?? inv.customerName ?? <span className="text-muted-foreground italic">Kein Kunde</span>}
                     </TableCell>
                     <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">
                       {inv.subject ?? "—"}

@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useCallback } from "react";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText, Users, ListChecks } from "lucide-react";
+import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText, Users, ListChecks, Save } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -20,6 +21,8 @@ interface LineItem {
 }
 
 export default function QrBillGenerator() {
+  const [, navigate] = useLocation();
+  const [savedInvoiceId, setSavedInvoiceId] = useState<number | null>(null);
   const { data: qrSettings, isLoading: qrLoading } = trpc.qrBill.getQrSettings.useQuery();
   const { data: companySettings } = trpc.settings.getCompanySettings.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
@@ -157,6 +160,19 @@ export default function QrBillGenerator() {
     },
     onError: (e: any) => toast.error(`Fehler: ${e.message}`),
   });
+  const saveDraftMut = trpc.invoices.saveFromQrGenerator.useMutation({
+    onSuccess: (result) => {
+      setSavedInvoiceId(result.id);
+      toast.success("Entwurf gespeichert", {
+        description: "Die Rechnung wurde in den Entw\u00fcrfen gespeichert.",
+        action: {
+          label: "Zu Entw\u00fcrfen",
+          onClick: () => navigate("/rechnungen"),
+        },
+      });
+    },
+    onError: (e: any) => toast.error(`Fehler beim Speichern: ${e.message}`),
+  });
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
   const addLineItem = () => {
@@ -172,6 +188,30 @@ export default function QrBillGenerator() {
     setLineItems(lineItems.map(item => item.id === id ? { ...item, [field]: value } : item));
   };
 
+  const buildSaveDraftInput = () => ({
+    invoiceId: savedInvoiceId ?? undefined,
+    customerId: selectedCustomerId ?? undefined,
+    recipientName: recipientName.trim(),
+    recipientStreet: recipientStreet.trim(),
+    recipientZip: recipientZip.trim(),
+    recipientCity: recipientCity.trim(),
+    invoiceDate,
+    paymentTermDays: parseInt(paymentDays) || 30,
+    subject: invoiceSubject || undefined,
+    introText: introText || undefined,
+    currency,
+    items: lineItems
+      .filter(i => i.description && parseFloat(i.amount) > 0)
+      .map(i => ({ description: i.description, amount: parseFloat(i.amount) })),
+    vatRate: parseFloat(vatRate),
+  });
+
+  const handleSaveDraft = () => {
+    if (!recipientName.trim()) { toast.error("Empfängername ist erforderlich"); return; }
+    if (total <= 0) { toast.error("Gesamtbetrag muss grösser als 0 sein"); return; }
+    saveDraftMut.mutate(buildSaveDraftInput());
+  };
+
   const handleGenerateInvoice = () => {
     if (!recipientName.trim()) { toast.error("Empfängername ist erforderlich"); return; }
     if (!recipientStreet.trim()) { toast.error("Strasse ist erforderlich"); return; }
@@ -179,6 +219,8 @@ export default function QrBillGenerator() {
     if (!recipientCity.trim()) { toast.error("Ort ist erforderlich"); return; }
     if (total <= 0) { toast.error("Gesamtbetrag muss grösser als 0 sein"); return; }
 
+    // Automatisch als Entwurf speichern beim PDF-Generieren
+    saveDraftMut.mutate(buildSaveDraftInput());
     generateInvoiceMut.mutate({
       recipientTitle: recipientTitle || undefined,
       recipientName: recipientName.trim(),
@@ -548,11 +590,21 @@ export default function QrBillGenerator() {
             </CardContent>
           </Card>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-3">
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={handleSaveDraft}
+              disabled={saveDraftMut.isPending || generateInvoiceMut.isPending}
+              className="gap-2"
+            >
+              {saveDraftMut.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
+              {savedInvoiceId ? "Entwurf aktualisieren" : "Als Entwurf speichern"}
+            </Button>
             <Button
               size="lg"
               onClick={handleGenerateInvoice}
-              disabled={generateInvoiceMut.isPending}
+              disabled={generateInvoiceMut.isPending || saveDraftMut.isPending}
               className="gap-2"
             >
               {generateInvoiceMut.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}

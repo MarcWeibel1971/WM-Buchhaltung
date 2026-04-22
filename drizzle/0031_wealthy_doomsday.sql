@@ -1,0 +1,1 @@
+ALTER TABLE `invoices` MODIFY COLUMN `customerId` int;

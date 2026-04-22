@@ -972,7 +972,8 @@ export const invoices = mysqlTable(
     // NULL während Draft-Phase, wird bei `issue` vergeben.
     invoiceNumber: varchar("invoiceNumber", { length: 30 }),
     // Kunde (FK auf customers – nur eingeloggt innerhalb der Org)
-    customerId: int("customerId").notNull(),
+    // NULL erlaubt für Entwürfe aus QrBillGenerator ohne Kundenzuordnung
+    customerId: int("customerId"),
     // Rechnungsdatum (Ausstellungsdatum)
     invoiceDate: date("invoiceDate", { mode: "string" }).notNull(),
     // Fälligkeitsdatum – wird bei `issue` aus payment_terms_days berechnet,

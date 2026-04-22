@@ -526,6 +526,7 @@ export const remindersRouter = router({
         ))
         .limit(1);
       if (!invoice) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung nicht gefunden" });
+      if (!invoice.customerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung hat keinen Kunden" });
 
       const [customer] = await db.select().from(customers)
         .where(and(
@@ -607,6 +608,7 @@ export const remindersRouter = router({
         ))
         .limit(1);
       if (!invoice) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung nicht gefunden" });
+      if (!invoice.customerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung hat keinen Kunden" });
 
       const [customer] = await db.select().from(customers)
         .where(and(

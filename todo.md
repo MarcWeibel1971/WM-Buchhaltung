@@ -1264,3 +1264,17 @@
 ## Eröffnungssalden-Verbesserungen (22.04.2026)
 - [x] Eröffnungssalden: GJ-Selector prominenter anzeigen (Label "Geschäftsjahr" + Dropdown oben rechts)
 - [x] Eröffnungssalden: Toggle "Konten ohne Betrag ausblenden" (filtert Konten mit Saldo 0.00, zeigt Anzahl ausgeblendeter Konten)
+
+## Bug: Verbuchte KK-Abrechnung verschwunden (22.04.2026)
+- [ ] Journal zeigt verbuchte Kreditkartenabrechnung nicht an (nur 2 Buchungen sichtbar)
+- [ ] Banktransaktionen: KK-Abrechnung nach Verbuchung nicht mehr sichtbar
+- [ ] Ursache prüfen: GJ-Filter, fehlende Daten, oder Lösch-Bug
+
+## QrBillGenerator – Entwurf-Speicherfunktion
+- [x] Schema: customerId in invoices nullable gemacht (Rechnungen ohne Kundenzuordnung möglich)
+- [x] Backend: saveFromQrGenerator-Prozedur in invoicesRouter (Insert/Update Entwurf, nullable customerId)
+- [x] Frontend: "Als Entwurf speichern" Button im QrBillGenerator (Tab Rechnung mit QR-Zahlungsteil)
+- [x] Frontend: Auto-Save als Entwurf beim Klick auf "Rechnung als PDF generieren"
+- [x] Frontend: Nach erstem Speichern wechselt Button zu "Entwurf aktualisieren" (savedInvoiceId-State)
+- [x] Frontend: Toast-Notification mit Link zu Entwürfen nach erfolgreichem Speichern
+- [x] Invoices.tsx: customerName für null-Fall abgesichert (Entwürfe ohne Kunden zeigen "—")

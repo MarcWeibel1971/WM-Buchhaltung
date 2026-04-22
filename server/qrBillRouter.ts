@@ -8,7 +8,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { orgProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
-import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions } from "../drizzle/schema";
+import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions, timeEntries, services } from "../drizzle/schema";
 import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { SwissQRBill } from "swissqrbill/pdf";
@@ -868,6 +868,8 @@ export const qrBillRouter = router({
       signerName: z.string(),
       signerTitle: z.string().optional(),
       paymentDays: z.number().int().default(30),
+      includeServiceDetails: z.boolean().optional().default(false),
+      customerId: z.number().int().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const { PDFDocument: PDFLib, rgb, StandardFonts } = await import('pdf-lib');
@@ -1200,6 +1202,89 @@ export const qrBillRouter = router({
       const qrDoc = await PDFLib.load(qrPdfBuffer);
       const [qrPage] = await finalDoc.copyPages(qrDoc, [0]);
       finalDoc.addPage(qrPage);
+
+      // Optional: Leistungsblatt als zusätzliche Seite anhängen
+      if (input.includeServiceDetails && input.customerId) {
+        const db2 = await getDb();
+        if (db2) {
+          const entries = await db2.select().from(timeEntries)
+            .where(and(
+              eq(timeEntries.organizationId, ctx.organizationId),
+              eq(timeEntries.customerId, input.customerId)
+            ))
+            .orderBy(timeEntries.date);
+
+          const serviceList = await db2.select().from(services)
+            .where(eq(services.organizationId, ctx.organizationId));
+          const serviceMap = new Map(serviceList.map((s: any) => [s.id, s.name]));
+
+          if (entries.length > 0) {
+            const lbDoc = new PDFDocument({ size: "A4", autoFirstPage: true, margins: { top: 50, bottom: 50, left: 60, right: 60 } });
+            const lbChunks: Buffer[] = [];
+            lbDoc.on("data", (chunk: Buffer) => lbChunks.push(chunk));
+            const lbPromise = new Promise<Buffer>((resolve) => {
+              lbDoc.on("end", () => resolve(Buffer.concat(lbChunks)));
+            });
+
+            lbDoc.fontSize(16).font("Helvetica-Bold").text("Leistungsdetails", { align: "left" });
+            lbDoc.moveDown(0.3);
+            lbDoc.fontSize(10).font("Helvetica").fillColor("#666")
+              .text(`Kunde: ${input.recipientName}`)
+              .text(`Datum: ${dateStr}`);
+            lbDoc.moveDown(0.8);
+
+            const colX = { date: 60, service: 130, desc: 250, hours: 380, rate: 430, amount: 490 };
+            const tableTop = lbDoc.y;
+            lbDoc.fontSize(9).font("Helvetica-Bold").fillColor("#000");
+            lbDoc.text("Datum", colX.date, tableTop, { width: 65 });
+            lbDoc.text("Dienstleistung", colX.service, tableTop, { width: 115 });
+            lbDoc.text("Beschreibung", colX.desc, tableTop, { width: 125 });
+            lbDoc.text("Std.", colX.hours, tableTop, { width: 45, align: "right" });
+            lbDoc.text("Ansatz", colX.rate, tableTop, { width: 55, align: "right" });
+            lbDoc.text("Betrag", colX.amount, tableTop, { width: 55, align: "right" });
+            lbDoc.moveDown(0.3);
+            lbDoc.moveTo(60, lbDoc.y).lineTo(545, lbDoc.y).strokeColor("#333").lineWidth(0.5).stroke();
+            lbDoc.moveDown(0.3);
+
+            let totalHours = 0;
+            let totalAmount = 0;
+            lbDoc.fontSize(8).font("Helvetica").fillColor("#000");
+
+            for (const entry of entries) {
+              const rowY = lbDoc.y;
+              const hrs = parseFloat(entry.hours as string) || 0;
+              const rate = parseFloat(entry.hourlyRate as string) || 0;
+              const amt = hrs * rate;
+              totalHours += hrs;
+              totalAmount += amt;
+              const serviceName = serviceMap.get(entry.serviceId) || "";
+              const entryDate = entry.date ? new Date(entry.date + "T00:00:00").toLocaleDateString("de-CH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+              lbDoc.text(entryDate, colX.date, rowY, { width: 65 });
+              lbDoc.text(serviceName, colX.service, rowY, { width: 115 });
+              lbDoc.text(entry.description || "", colX.desc, rowY, { width: 125 });
+              lbDoc.text(hrs.toFixed(2), colX.hours, rowY, { width: 45, align: "right" });
+              lbDoc.text(formatCHF(rate), colX.rate, rowY, { width: 55, align: "right" });
+              lbDoc.text(formatCHF(amt), colX.amount, rowY, { width: 55, align: "right" });
+              lbDoc.moveDown(0.5);
+            }
+
+            lbDoc.moveDown(0.3);
+            lbDoc.moveTo(60, lbDoc.y).lineTo(545, lbDoc.y).strokeColor("#333").lineWidth(0.5).stroke();
+            lbDoc.moveDown(0.3);
+            const totY = lbDoc.y;
+            lbDoc.fontSize(9).font("Helvetica-Bold");
+            lbDoc.text("Total", colX.date, totY, { width: 315 });
+            lbDoc.text(totalHours.toFixed(2), colX.hours, totY, { width: 45, align: "right" });
+            lbDoc.text(formatCHF(totalAmount), colX.amount, totY, { width: 55, align: "right" });
+
+            lbDoc.end();
+            const lbBuffer = await lbPromise;
+            const lbPdfDoc = await PDFLib.load(lbBuffer);
+            const [lbPage] = await finalDoc.copyPages(lbPdfDoc, [0]);
+            finalDoc.addPage(lbPage);
+          }
+        }
+      }
 
       const finalBytes = await finalDoc.save();
 

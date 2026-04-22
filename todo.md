@@ -1254,3 +1254,9 @@
 
 ## Navigation Bereinigung (22.04.2026)
 - [x] Kunden (Debitoren): Unterpunkte "Offene Forderungen", "Zahlungsausgänge" und "Kunden" entfernen (nur "Ausgangsrechnungen" und "Mahnwesen" behalten)
+
+## QR-Rechnung + Zeiterfassung (22.04.2026)
+- [x] QrBillGenerator: "Kunde wählen"-Button auch im Tab "Einfacher QR-Einzahlungsschein" hinzugefügt
+- [x] QrBillGenerator: Toggle "Mit Leistungsdetails" bei Leistungspositionen (Tab Rechnung mit QR-Zahlungsteil)
+- [x] QrBillGenerator: Beim Aktivieren von "Mit Leistungsdetails" Kunden-Zeiteinträge laden und nach QR-Seite als Leistungsblatt anhängen
+- [x] Backend: generateInvoiceAcroform um optionale Leistungsdetail-Seite erweitert (Datum, Dienstleistung, Beschreibung, Std., Ansatz, Betrag, Total)

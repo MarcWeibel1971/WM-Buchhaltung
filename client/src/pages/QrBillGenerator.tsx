@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText, Users } from "lucide-react";
+import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText, Users, ListChecks } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
@@ -78,7 +79,24 @@ export default function QrBillGenerator() {
   // Payment terms
   const [paymentDays, setPaymentDays] = useState("30");
 
-  // ─── Simple QR-Bill Form (existing) ────────────────────────────────────────
+  // ─── Simple QR-Bill Form ──────────────────────────────────────────────────
+  const [simpleCustomerPopoverOpen, setSimpleCustomerPopoverOpen] = useState(false);
+  const [simpleSelectedCustomerId, setSimpleSelectedCustomerId] = useState<number | null>(null);
+
+  const handleSelectSimpleCustomer = useCallback((customerId: number) => {
+    const c = (customersList ?? []).find((x: any) => x.id === customerId);
+    if (!c) return;
+    setSimpleSelectedCustomerId(customerId);
+    setSimpleCustomerPopoverOpen(false);
+    const displayName = c.lastName && c.firstName
+      ? `${c.firstName} ${c.lastName}`
+      : c.company || c.name;
+    setSimpleDebtorName(displayName);
+    setSimpleDebtorAddress(c.street || "");
+    setSimpleDebtorZip(c.zipCode || "");
+    setSimpleDebtorCity(c.city || "");
+  }, [customersList]);
+
   const [simpleDebtorName, setSimpleDebtorName] = useState("");
   const [simpleDebtorAddress, setSimpleDebtorAddress] = useState("");
   const [simpleDebtorZip, setSimpleDebtorZip] = useState("");
@@ -86,6 +104,13 @@ export default function QrBillGenerator() {
   const [simpleAmount, setSimpleAmount] = useState("");
   const [simpleCurrency, setSimpleCurrency] = useState<"CHF" | "EUR">("CHF");
   const [simpleAdditionalInfo, setSimpleAdditionalInfo] = useState("");
+
+  // ─── Leistungsdetails Toggle ───────────────────────────────────────────────
+  const [includeServiceDetails, setIncludeServiceDetails] = useState(false);
+  const { data: timeEntries } = trpc.timeTracking.listEntries.useQuery(
+    { customerId: selectedCustomerId ?? undefined },
+    { enabled: includeServiceDetails && selectedCustomerId !== null }
+  );
 
   // ─── Computed Values ───────────────────────────────────────────────────────
   const subtotal = useMemo(() => {
@@ -175,6 +200,8 @@ export default function QrBillGenerator() {
       signerName,
       signerTitle: signerTitle || undefined,
       paymentDays: parseInt(paymentDays) || 30,
+      includeServiceDetails,
+      customerId: selectedCustomerId ?? undefined,
     });
   };
 
@@ -392,8 +419,35 @@ export default function QrBillGenerator() {
           {/* Line Items */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Leistungspositionen</CardTitle>
-              <CardDescription>Fügen Sie die einzelnen Positionen der Rechnung hinzu.</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Leistungspositionen</CardTitle>
+                  <CardDescription>Fügen Sie die einzelnen Positionen der Rechnung hinzu.</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ListChecks className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="include-service-details" className="text-sm cursor-pointer">
+                    Mit Leistungsdetails
+                  </Label>
+                  <Switch
+                    id="include-service-details"
+                    checked={includeServiceDetails}
+                    onCheckedChange={setIncludeServiceDetails}
+                    disabled={!selectedCustomerId}
+                  />
+                </div>
+              </div>
+              {includeServiceDetails && selectedCustomerId && (
+                <div className="mt-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+                  <span className="font-medium">{(timeEntries ?? []).length} Zeiteinträge</span> werden als Leistungsblatt nach dem QR-Einzahlungsschein angehängt.
+                  {!selectedCustomerId && " Bitte zuerst einen Kunden wählen."}
+                </div>
+              )}
+              {includeServiceDetails && !selectedCustomerId && (
+                <div className="mt-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                  Bitte zuerst einen Kunden wählen, um Leistungsdetails anzuhängen.
+                </div>
+              )}
             </CardHeader>
             <CardContent className="space-y-3">
               {lineItems.map((item, idx) => (
@@ -525,8 +579,43 @@ export default function QrBillGenerator() {
             </Card>
 
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-base">Zahlungspflichtiger (Debtor)</CardTitle>
+                <Popover open={simpleCustomerPopoverOpen} onOpenChange={setSimpleCustomerPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <Users className="h-3.5 w-3.5" />
+                      {simpleSelectedCustomerId ? "Kunde ändern" : "Kunde wählen"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[320px] p-0" align="end">
+                    <Command>
+                      <CommandInput placeholder="Kunde suchen..." />
+                      <CommandList>
+                        <CommandEmpty>Kein Kunde gefunden.</CommandEmpty>
+                        <CommandGroup>
+                          {(customersList ?? []).map((c: any) => (
+                            <CommandItem
+                              key={c.id}
+                              value={`${c.customerNumber || ""} ${c.name} ${c.company || ""} ${c.city || ""}`}
+                              onSelect={() => handleSelectSimpleCustomer(c.id)}
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">
+                                  {c.customerNumber && <span className="font-mono text-muted-foreground mr-1">{c.customerNumber}</span>}
+                                  {c.lastName && c.firstName ? `${c.lastName} ${c.firstName}` : c.name}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {[c.company, c.city].filter(Boolean).join(" · ")}
+                                </span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>

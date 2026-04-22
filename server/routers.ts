@@ -4079,9 +4079,10 @@ Antworte NUR mit dem JSON-Objekt.`,
         description: input.description || `Beleg: ${doc.filename}`,
         source: "manual",
         fiscalYear: year,
-        status: "pending",
+        status: "approved",
         lines,
       });
+      await approveJournalEntry(entryId, ctx.user.id);
       
       // Link document to journal entry
       await db.update(docs)

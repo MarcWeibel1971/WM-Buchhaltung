@@ -1316,3 +1316,11 @@
 - [x] Backend: delete + bulkDelete-Prozeduren in documentsRouter (Admin-only, löscht S3-Dateien + DB-Einträge), storageDelete in storage.ts
 - [x] Frontend: Checkboxen in Documents.tsx (Admin-only), Toolbar mit "X Belege löschen"-Button, Select-All-Header
 - [x] Frontend: AlertDialog-Bestätigungsdialog vor Bulk-Delete
+
+## Refactoring: KK-Abrechnung Buchungslogik (22.04.2026)
+- [x] KK-Abrechnung: Zwei separate Buchungen – neues UI mit approveCcFromBankImport (Buchung 1: 1082/1032 Zahlungsbetrag editierbar; Buchung 2: Div. Aufwandkonten/1082 Sammelbuchung)
+- [x] Tab "Kontierung" für KK-Abrechnungen ausgeblendet (nicht relevant, Konten im Verbuchen-Tab)
+- [x] Tab "Zahlung": Buchungskonten-Abschnitt entfernt
+- [x] Verbuchte Belege: bookDirect setzt direkt status=approved + approveJournalEntry (kein Genehmigungsschritt)
+- [x] Nach Verbuchen: automatisch zurück zu /belege navigieren
+- [ ] Verbuchungsvorschlag auch für Einzelbuchungen automatisch anzeigen (noch offen)

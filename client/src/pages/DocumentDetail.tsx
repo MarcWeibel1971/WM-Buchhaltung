@@ -103,6 +103,7 @@ export default function DocumentDetail() {
   // KK-Sammelbuchung state
   const [kkItems, setKkItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string }>>([]);
   const [kkParsed, setKkParsed] = useState(false);
+  const [kkPaidAmount, setKkPaidAmount] = useState(""); // effektiv bezahlter Betrag (Bankbelastung)
 
   // Queries
   const { data, isLoading, isError, refetch } = trpc.documents.getById.useQuery(
@@ -146,9 +147,9 @@ export default function DocumentDetail() {
   // Direct booking mutation (for documents without bank transaction, e.g. Barauslagen)
   const bookDirectMutation = trpc.documents.bookDirect.useMutation({
     onSuccess: (result) => {
-      toast.success(`Beleg direkt verbucht (Journal #${result.entryId})`);
+      toast.success(`Beleg verbucht (Journal #${result.entryId})`);
       setIsBooking(false);
-      refetch();
+      navigate("/belege");
     },
     onError: (err: any) => {
       toast.error("Verbuchung fehlgeschlagen: " + err.message);
@@ -189,13 +190,24 @@ export default function DocumentDetail() {
     onError: (e) => toast.error(e.message),
   });
 
-  // KK-Sammelbuchung: approveWithItems
-  const approveWithItemsMutation = trpc.creditCard.approveWithItems.useMutation({
+  // KK-Sammelbuchung: approveCcFromBankImport (zwei Buchungen: 1082/1032 + Aufwand/1082)
+  const approveCcFromBankImportMutation = trpc.creditCard.approveCcFromBankImport.useMutation({
     onSuccess: (result) => {
-      toast.success(`Sammelbuchung erstellt: ${result.itemCount} Positionen, CHF ${result.totalAmount}`);
+      toast.success(`KK-Abrechnung verbucht: ${result.itemCount} Positionen, CHF ${result.totalAmount} (bezahlt: CHF ${result.paidAmount})`);
       setKkItems([]);
       setKkParsed(false);
-      refetch();
+      navigate("/belege");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // KK-Sammelbuchung: approveWithItems (Fallback ohne Banktransaktion)
+  const approveWithItemsMutation = trpc.creditCard.approveWithItems.useMutation({
+    onSuccess: (result) => {
+      toast.success(`KK-Sammelbuchung verbucht: ${result.itemCount} Positionen, CHF ${result.totalAmount}`);
+      setKkItems([]);
+      setKkParsed(false);
+      navigate("/belege");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -524,10 +536,12 @@ export default function DocumentDetail() {
                 <Receipt className="w-3.5 h-3.5" />
                 Belegdetails
               </TabsTrigger>
-              <TabsTrigger value="kontierung" className="gap-1.5 text-xs">
-                <BookOpen className="w-3.5 h-3.5" />
-                Kontierung
-              </TabsTrigger>
+              {doc.documentType !== "credit_card_statement" && (
+                <TabsTrigger value="kontierung" className="gap-1.5 text-xs">
+                  <BookOpen className="w-3.5 h-3.5" />
+                  Kontierung
+                </TabsTrigger>
+              )}
               <TabsTrigger value="zahlung" className="gap-1.5 text-xs">
                 <Banknote className="w-3.5 h-3.5" />
                 Zahlung
@@ -1023,35 +1037,7 @@ export default function DocumentDetail() {
                 )}
               </div>
 
-              {/* Buchungskonten – only show if journal entry exists */}
-              {journalEntryAccounts && (
-                <div className="bg-card border border-border rounded-xl p-4">
-                  <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-muted-foreground" />
-                    Buchungskonten (verbucht)
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <span className="text-xs text-muted-foreground">Soll (Aufwand/Aktiv)</span>
-                      <p className="font-mono font-medium mt-0.5">
-                        {journalEntryAccounts.debitAccountNumber}
-                        {journalEntryAccounts.debitAccountName && (
-                          <span className="font-sans font-normal text-muted-foreground ml-1">{journalEntryAccounts.debitAccountName}</span>
-                        )}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground">Haben (Kredit/Passiv)</span>
-                      <p className="font-mono font-medium mt-0.5">
-                        {journalEntryAccounts.creditAccountNumber}
-                        {journalEntryAccounts.creditAccountName && (
-                          <span className="font-sans font-normal text-muted-foreground ml-1">{journalEntryAccounts.creditAccountName}</span>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Buchungskonten werden im Verbuchen-Tab angezeigt, nicht hier */}
             </TabsContent>
 
             {/* ─── Tab: Verbuchen ──────────────────────────────────── */}
@@ -1147,10 +1133,35 @@ export default function DocumentDetail() {
                 <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <CreditCard className="w-5 h-5 text-purple-600" />
-                    <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Sammelbuchung</p>
+                    <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Zwei Buchungen</p>
+                  </div>
+                  {/* Buchungsübersicht */}
+                  <div className="bg-white border border-purple-200 rounded-lg p-3 space-y-1.5 text-xs">
+                    <p className="font-semibold text-purple-800 mb-1">Buchungsvorschlag:</p>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Buchung 1 (Bankzahlung):</span>
+                      <span className="font-mono">1082 Durchlaufkonto VISA <span className="text-muted-foreground">an</span> 1032 LUKB</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Buchung 2 (Sammelbuchung):</span>
+                      <span className="font-mono">Div. Aufwandkonten <span className="text-muted-foreground">an</span> 1082 Durchlaufkonto</span>
+                    </div>
+                  </div>
+                  {/* Zahlungsbetrag (effektiv bezahlt) */}
+                  <div>
+                    <Label className="text-xs text-purple-700 font-semibold">Effektiv bezahlter Betrag (Buchung 1: 1082 / 1032)</Label>
+                    <p className="text-xs text-purple-500 mb-1">Entspricht dem Bankbelastungsbetrag – kann kleiner sein als das Abrechnungstotal (z.B. wegen Guthaben vom Vormonat)</p>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={kkPaidAmount}
+                      onChange={(e) => setKkPaidAmount(e.target.value)}
+                      placeholder={docAmount > 0 ? docAmount.toFixed(2) : "0.00"}
+                      className="mt-1 font-mono"
+                    />
                   </div>
                   <p className="text-xs text-purple-600">
-                    Die KI analysiert alle Einzelpositionen und schlägt Aufwandskonten vor. Sie können die Konten vor dem Verbuchen anpassen.
+                    Die KI analysiert alle Einzelpositionen und schlägt Aufwandskonten vor. Sie können die Konten vor dem Verbuchen anpassen (Buchung 2).
                   </p>
 
                   {/* Parse-Button */}
@@ -1228,28 +1239,38 @@ export default function DocumentDetail() {
                         </table>
                       </div>
 
-                      {/* Approve button */}
+                      {/* Approve button - zwei Buchungen */}
                       <Button
                         className="w-full bg-green-600 hover:bg-green-700 text-white gap-1.5"
-                        disabled={kkItems.some(i => !i.debitAccountId) || approveWithItemsMutation.isPending}
+                        disabled={kkItems.some(i => !i.debitAccountId) || approveCcFromBankImportMutation.isPending || approveWithItemsMutation.isPending}
                         onClick={() => {
                           const statementDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
-                          approveWithItemsMutation.mutate({
-                            statementDate,
-                            counterparty: editedMeta.counterparty || doc.filename,
-                            items: kkItems.map(i => ({
-                              date: i.date,
-                              description: i.description,
-                              amount: i.amount,
-                              debitAccountId: parseInt(i.debitAccountId),
-                            })),
-                          });
+                          const counterparty = editedMeta.counterparty || doc.filename;
+                          const items = kkItems.map(i => ({
+                            date: i.date,
+                            description: i.description,
+                            amount: i.amount,
+                            debitAccountId: parseInt(i.debitAccountId),
+                          }));
+                          // Wenn Banktransaktion verknüpft: approveCcFromBankImport (zwei Buchungen)
+                          if (linkedTransaction?.id) {
+                            approveCcFromBankImportMutation.mutate({
+                              bankTransactionId: linkedTransaction.id,
+                              statementDate,
+                              counterparty,
+                              paidAmount: kkPaidAmount || undefined,
+                              items,
+                            });
+                          } else {
+                            // Ohne Banktransaktion: approveWithItems (eine Sammelbuchung)
+                            approveWithItemsMutation.mutate({ statementDate, counterparty, items });
+                          }
                         }}
                       >
-                        {approveWithItemsMutation.isPending ? (
+                        {(approveCcFromBankImportMutation.isPending || approveWithItemsMutation.isPending) ? (
                           <><Loader2 className="w-4 h-4 animate-spin" /> Wird verbucht...</>
                         ) : (
-                          <><CheckCircle2 className="w-4 h-4" /> Sammelbuchung verbuchen ({kkItems.length} Positionen)</>
+                          <><CheckCircle2 className="w-4 h-4" /> {linkedTransaction?.id ? `KK-Abrechnung verbuchen (2 Buchungen, ${kkItems.length} Positionen)` : `Sammelbuchung verbuchen (${kkItems.length} Positionen)`}</>
                         )}
                       </Button>
                       {kkItems.some(i => !i.debitAccountId) && (
@@ -1260,8 +1281,30 @@ export default function DocumentDetail() {
                 </div>
               )}
 
-              {/* Booking Form - show if not yet booked (either via tx or direct) */}
-              {!txIsBooked && !isDirectBooked ? (
+              {/* KK-Abrechnung: Verbucht-Status */}
+              {doc.documentType === "credit_card_statement" && (txIsBooked || isDirectBooked) && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="w-8 h-8 text-green-600" />
+                    <div>
+                      <p className="font-semibold text-green-800">KK-Abrechnung verbucht</p>
+                      <p className="text-sm text-green-600">Zwei Journal-Einträge wurden erstellt (1082/1032 + Aufwandkonten/1082)</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-1.5"
+                    onClick={() => navigate("/freigaben?filter=booked")}
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                    Im Journal anzeigen
+                  </Button>
+                </div>
+              )}
+
+              {/* Booking Form - show if not yet booked (either via tx or direct) - NOT for KK (handled above) */}
+              {!txIsBooked && !isDirectBooked && doc.documentType !== "credit_card_statement" ? (
                 <div className="bg-card border border-border rounded-xl p-4 space-y-3">
                   <h3 className="font-semibold text-sm flex items-center gap-2">
                     <CheckSquare className="w-4 h-4 text-muted-foreground" />

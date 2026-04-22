@@ -1315,6 +1315,7 @@ function OpeningBalancesTab() {
   const [editYear, setEditYear] = useState(fiscalYear);
   const [localBalances, setLocalBalances] = useState<Record<number, string>>({});
   const [isDirty, setIsDirty] = useState(false);
+  const [hideZeroBalance, setHideZeroBalance] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [addNumber, setAddNumber] = useState("");
   const [addName, setAddName] = useState("");
@@ -1525,10 +1526,17 @@ function OpeningBalancesTab() {
     groupRows: NonNullable<typeof rows>,
     total: number,
     group: "assets" | "liabilities"
-  ) => (
+  ) => {
+    const visibleRows = hideZeroBalance
+      ? groupRows.filter(r => (parseFloat(localBalances[r.accountId] || r.balance?.toString() || "0") || 0) !== 0)
+      : groupRows;
+    return (
     <div className="mb-6">
       <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
         {title}
+        {hideZeroBalance && visibleRows.length < groupRows.length && (
+          <span className="ml-2 text-xs font-normal text-muted-foreground/70">({groupRows.length - visibleRows.length} ausgeblendet)</span>
+        )}
       </h3>
       <div className="border border-border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
@@ -1541,9 +1549,9 @@ function OpeningBalancesTab() {
             </tr>
           </thead>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd(group)}>
-            <SortableContext items={groupRows.map(r => r.accountId)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={visibleRows.map(r => r.accountId)} strategy={verticalListSortingStrategy}>
               <tbody>
-                {groupRows.map(r => (
+                {visibleRows.map(r => (
                   <SortableOBRow
                     key={r.accountId}
                     row={r}
@@ -1563,6 +1571,7 @@ function OpeningBalancesTab() {
       </div>
     </div>
   );
+  };
 
   return (
     <div className="max-w-3xl">
@@ -1575,23 +1584,26 @@ function OpeningBalancesTab() {
             Aktiven müssen gleich Passiven sein.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <div className="flex items-center gap-2 border rounded-md px-3 py-1.5 bg-muted/50">
+            <span className="text-xs font-medium text-muted-foreground">Geschäftsjahr</span>
+            <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
+              <SelectTrigger className="w-20 h-7 text-sm border-0 bg-transparent p-0 shadow-none focus:ring-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[2026, 2025, 2024, 2023].map(y => (
+                  <SelectItem key={y} value={String(y)}>GJ {y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button variant="outline" size="sm" onClick={() => { setImportPreview([]); setSelectedImportIds(new Set()); setShowImport(true); }}>
             <Upload className="h-4 w-4 mr-1" /> Import
           </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAddAccount(true)}>
             <Plus className="h-4 w-4 mr-1" /> Neues Konto
           </Button>
-          <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
-            <SelectTrigger className="w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {[2026, 2025, 2024, 2023].map(y => (
-                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 
@@ -1599,6 +1611,18 @@ function OpeningBalancesTab() {
       <div className="flex items-start gap-2 p-3 rounded-lg mb-4 text-xs bg-blue-50 border border-blue-200 text-blue-800">
         <GripVertical className="h-4 w-4 shrink-0 mt-0.5" />
         <span>Konten per Drag & Drop umsortieren. Neue Konten werden automatisch im Kontenplan erstellt. Inaktive Konten im Kontenplan werden hier ausgeblendet.</span>
+      </div>
+
+      {/* Filter: Konten ohne Betrag ausblenden */}
+      <div className="flex items-center gap-2 mb-4">
+        <Switch
+          id="hideZero"
+          checked={hideZeroBalance}
+          onCheckedChange={setHideZeroBalance}
+        />
+        <label htmlFor="hideZero" className="text-sm text-muted-foreground cursor-pointer select-none">
+          Konten ohne Betrag ausblenden
+        </label>
       </div>
 
       {/* Balance indicator */}

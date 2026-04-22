@@ -1260,3 +1260,7 @@
 - [x] QrBillGenerator: Toggle "Mit Leistungsdetails" bei Leistungspositionen (Tab Rechnung mit QR-Zahlungsteil)
 - [x] QrBillGenerator: Beim Aktivieren von "Mit Leistungsdetails" Kunden-Zeiteinträge laden und nach QR-Seite als Leistungsblatt anhängen
 - [x] Backend: generateInvoiceAcroform um optionale Leistungsdetail-Seite erweitert (Datum, Dienstleistung, Beschreibung, Std., Ansatz, Betrag, Total)
+
+## Eröffnungssalden-Verbesserungen (22.04.2026)
+- [x] Eröffnungssalden: GJ-Selector prominenter anzeigen (Label "Geschäftsjahr" + Dropdown oben rechts)
+- [x] Eröffnungssalden: Toggle "Konten ohne Betrag ausblenden" (filtert Konten mit Saldo 0.00, zeigt Anzahl ausgeblendeter Konten)

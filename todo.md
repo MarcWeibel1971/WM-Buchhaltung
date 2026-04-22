@@ -1288,3 +1288,6 @@
 - [x] Belege: "Verbuchen"-Button statt Vorschau-Icon rechts in der Liste
 - [x] Belege: Manuelle Verknüpfung mit Banktransaktion auch in Detailansicht
 - [x] Belege-Detailansicht: KK-Abrechnungen – automatischer Verbuchungsvorschlag wie im Bankbereich
+
+## Bugfix: Debitorenkonto 1100 nicht gefunden (Apr 2026)
+- [x] invoicesRouter.ts: issue-Prozedur – Konto 1100 in DB eingefügt, MWST-Konto Default von 2200 auf 2040 korrigiert

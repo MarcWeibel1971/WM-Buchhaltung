@@ -715,7 +715,7 @@ export const invoicesRouter = router({
       debitorAccountNumber: z.string().default("1100"),
       // Fallback für Positionen ohne eigenes Ertragskonto
       defaultRevenueAccountNumber: z.string().default("3000"),
-      vatAccountNumber: z.string().default("2200"),
+      vatAccountNumber: z.string().default("2040"),
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();

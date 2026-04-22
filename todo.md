@@ -1291,3 +1291,6 @@
 
 ## Bugfix: Debitorenkonto 1100 nicht gefunden (Apr 2026)
 - [x] invoicesRouter.ts: issue-Prozedur – Konto 1100 in DB eingefügt, MWST-Konto Default von 2200 auf 2040 korrigiert
+
+## KK-Sammelbuchung in Beleg-Detailansicht (Apr 2026)
+- [x] DocumentDetail.tsx: KK-Abrechnung Verbuchen-Tab – Sammelbuchung mit allen Einzelpositionen und KI-Aufwandskonten (analog Bankbereich Kreditkartenzahlungen-Button)

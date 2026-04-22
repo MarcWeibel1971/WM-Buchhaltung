@@ -100,6 +100,10 @@ export default function DocumentDetail() {
   const [manualLinkSearch, setManualLinkSearch] = useState("");
   const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
 
+  // KK-Sammelbuchung state
+  const [kkItems, setKkItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string }>>([]);
+  const [kkParsed, setKkParsed] = useState(false);
+
   // Queries
   const { data, isLoading, isError, refetch } = trpc.documents.getById.useQuery(
     { documentId: docId! },
@@ -161,6 +165,39 @@ export default function DocumentDetail() {
       refetch();
     },
     onError: (err: any) => toast.error("Verknüpfung fehlgeschlagen: " + err.message),
+  });
+
+  // KK-Sammelbuchung: parsePdf
+  const parsePdfMutation = trpc.creditCard.parsePdf.useMutation({
+    onSuccess: (result) => {
+      if (!result.items?.length) { toast.error("Keine Positionen erkannt"); return; }
+      const mapped = result.items.map((item: any) => {
+        let debitAccountId = "";
+        if (item.suggestedAccount) {
+          const m = item.suggestedAccount.match(/^(\d{4})/);
+          if (m) {
+            const found = accountsQuery.data?.find((a: any) => a.number === m[1]);
+            if (found) debitAccountId = String(found.id);
+          }
+        }
+        return { date: item.date, description: item.description, amount: item.amount, debitAccountId };
+      });
+      setKkItems(mapped);
+      setKkParsed(true);
+      toast.success(`${result.items.length} Positionen erkannt`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // KK-Sammelbuchung: approveWithItems
+  const approveWithItemsMutation = trpc.creditCard.approveWithItems.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Sammelbuchung erstellt: ${result.itemCount} Positionen, CHF ${result.totalAmount}`);
+      setKkItems([]);
+      setKkParsed(false);
+      refetch();
+    },
+    onError: (e) => toast.error(e.message),
   });
 
   const reanalyzeMutation = trpc.documents.reanalyze.useMutation({
@@ -1107,48 +1144,119 @@ export default function DocumentDetail() {
 
               {/* KK-Abrechnung: Verbuchungsvorschlag */}
               {doc.documentType === "credit_card_statement" && !txIsBooked && !isDirectBooked && (
-                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
-                  <div className="flex items-start gap-3">
-                    <CreditCard className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Verbuchungsvorschlag</p>
-                      <p className="text-xs text-purple-600 mt-1">
-                        Kreditkartenabrechnungen werden typischerweise als Sammelposten verbucht:
-                      </p>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                        <div className="bg-white border border-purple-200 rounded p-2">
-                          <span className="text-purple-500 font-medium block">Soll (Aufwand)</span>
-                          <span className="font-mono font-semibold">2000 Kreditoren</span>
-                          <span className="text-muted-foreground block">oder 6xxx Aufwandkonto</span>
-                        </div>
-                        <div className="bg-white border border-purple-200 rounded p-2">
-                          <span className="text-purple-500 font-medium block">Haben (Bank)</span>
-                          <span className="font-mono font-semibold">1032 Bankkonto</span>
-                          <span className="text-muted-foreground block">Zahlung an Kreditkartengesellschaft</span>
-                        </div>
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-purple-600" />
+                    <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Sammelbuchung</p>
+                  </div>
+                  <p className="text-xs text-purple-600">
+                    Die KI analysiert alle Einzelpositionen und schlägt Aufwandskonten vor. Sie können die Konten vor dem Verbuchen anpassen.
+                  </p>
+
+                  {/* Parse-Button */}
+                  {!kkParsed && (
+                    <Button
+                      size="sm"
+                      className="gap-1.5 bg-purple-600 hover:bg-purple-700 text-white"
+                      disabled={parsePdfMutation.isPending || !doc.s3Url}
+                      onClick={() => parsePdfMutation.mutate({ documentUrl: doc.s3Url })}
+                    >
+                      {parsePdfMutation.isPending ? (
+                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Positionen werden analysiert...</>
+                      ) : (
+                        <><Sparkles className="w-3.5 h-3.5" /> Positionen mit KI analysieren</>
+                      )}
+                    </Button>
+                  )}
+
+                  {/* Positions table */}
+                  {kkParsed && kkItems.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-purple-700">{kkItems.length} Positionen erkannt</span>
+                        <Button
+                          variant="ghost" size="sm"
+                          className="text-xs text-purple-600 h-7 px-2"
+                          onClick={() => { setKkItems([]); setKkParsed(false); }}
+                        >
+                          Neu analysieren
+                        </Button>
                       </div>
-                      <p className="text-xs text-purple-600 mt-2">
-                        Betrag: <strong>CHF {formatCHF(docAmount)}</strong> · Gegenpartei: <strong>{editedMeta.counterparty || '–'}</strong>
-                      </p>
+                      <div className="overflow-x-auto rounded border border-purple-200">
+                        <table className="w-full text-xs">
+                          <thead className="bg-purple-100">
+                            <tr>
+                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Datum</th>
+                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Beschreibung</th>
+                              <th className="px-2 py-1.5 text-right font-medium text-purple-700">Betrag</th>
+                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Aufwandskonto</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-purple-100 bg-white">
+                            {kkItems.map((item, idx) => (
+                              <tr key={idx}>
+                                <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">{item.date}</td>
+                                <td className="px-2 py-1.5">{item.description}</td>
+                                <td className="px-2 py-1.5 text-right font-mono">{parseFloat(item.amount).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                <td className="px-2 py-1.5">
+                                  <Select
+                                    value={item.debitAccountId}
+                                    onValueChange={(v) => setKkItems(prev => prev.map((it, i) => i === idx ? { ...it, debitAccountId: v } : it))}
+                                  >
+                                    <SelectTrigger className="h-7 text-xs w-48"><SelectValue placeholder="Konto..." /></SelectTrigger>
+                                    <SelectContent>
+                                      {accountOptions
+                                        .filter((a: any) => a.number.startsWith('4') || a.number.startsWith('6') || a.number.startsWith('1'))
+                                        .map((a: any) => (
+                                          <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-purple-50">
+                            <tr>
+                              <td colSpan={2} className="px-2 py-1.5 font-semibold text-purple-800">Total</td>
+                              <td className="px-2 py-1.5 text-right font-mono font-semibold text-purple-800">
+                                CHF {kkItems.reduce((s, i) => s + parseFloat(i.amount || '0'), 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td></td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+
+                      {/* Approve button */}
                       <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-3 gap-1.5 border-purple-300 text-purple-700 hover:bg-purple-100"
+                        className="w-full bg-green-600 hover:bg-green-700 text-white gap-1.5"
+                        disabled={kkItems.some(i => !i.debitAccountId) || approveWithItemsMutation.isPending}
                         onClick={() => {
-                          // Pre-fill with typical KK booking: Soll=2000 Kreditoren, Haben=Bankkonto
-                          const creditorsAcc = accountOptions.find((a: any) => a.number === '2000');
-                          const bankAcc = accountOptions.find((a: any) => a.number === '1032');
-                          if (creditorsAcc) setBookingDebitId(creditorsAcc.id);
-                          if (bankAcc) setBookingCreditId(bankAcc.id);
-                          setBookingText(`KK-Abrechnung ${editedMeta.counterparty || ''} ${editedMeta.documentDate || ''}`.trim());
-                          toast.info("Verbuchungsvorschlag übernommen – bitte Konten prüfen");
+                          const statementDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
+                          approveWithItemsMutation.mutate({
+                            statementDate,
+                            counterparty: editedMeta.counterparty || doc.filename,
+                            items: kkItems.map(i => ({
+                              date: i.date,
+                              description: i.description,
+                              amount: i.amount,
+                              debitAccountId: parseInt(i.debitAccountId),
+                            })),
+                          });
                         }}
                       >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        Vorschlag übernehmen
+                        {approveWithItemsMutation.isPending ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" /> Wird verbucht...</>
+                        ) : (
+                          <><CheckCircle2 className="w-4 h-4" /> Sammelbuchung verbuchen ({kkItems.length} Positionen)</>
+                        )}
                       </Button>
+                      {kkItems.some(i => !i.debitAccountId) && (
+                        <p className="text-xs text-amber-600">Bitte für alle Positionen ein Aufwandskonto auswählen.</p>
+                      )}
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 

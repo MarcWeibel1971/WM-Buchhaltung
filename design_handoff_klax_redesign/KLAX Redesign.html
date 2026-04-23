@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<title>KLAX — Designrichtlinien & Mockups</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Instrument+Serif&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/tokens.css" />
+<style>
+  html, body { margin:0; padding:0; background:#f0eee9; font-family: 'Geist', 'Inter', system-ui, sans-serif; }
+  #tweak-panel {
+    position: fixed; right: 16px; bottom: 16px; z-index: 9999;
+    width: 280px; background: #1A1917; color: #F4F1EA;
+    border-radius: 12px; padding: 14px 14px 12px;
+    box-shadow: 0 20px 50px -20px rgba(0,0,0,.45);
+    font-family: 'Geist','Inter',system-ui,sans-serif; font-size: 12px;
+    display: none;
+  }
+  #tweak-panel.on { display: block; }
+  #tweak-panel h4 { margin: 0 0 10px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #C9C3B5; font-weight: 500; }
+  #tweak-panel .row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  #tweak-panel button {
+    flex: 1; min-width: 0; padding: 6px 8px; font-size: 11px;
+    background: rgba(255,255,255,0.06); color: #F4F1EA;
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; cursor: pointer;
+    font-family: inherit;
+  }
+  #tweak-panel button.on { background: #F4F1EA; color: #1A1917; border-color: #F4F1EA; }
+  #tweak-panel .sw { display:flex; gap:6px; align-items:center; }
+  #tweak-panel .sw i { width:14px; height:14px; border-radius:4px; display:inline-block; }
+</style>
+</head>
+<body>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#FBFAF7"/>
+    <rect x="30" y="30" width="40" height="40" rx="10" fill="#2F4A3A"/>
+    <text x="50" y="58" text-anchor="middle" font-family="Geist, Inter, sans-serif" font-size="24" font-weight="600" fill="#E9F0EA">K</text>
+  </svg>
+</template>
+
+<div id="app"></div>
+
+<div id="tweak-panel">
+  <h4>Tweaks</h4>
+  <div style="font-size:10.5px; color:#8F897B; margin-bottom:4px;">Akzent</div>
+  <div class="row" data-group="theme">
+    <button data-v="klee" class="on">Klee</button>
+    <button data-v="indigo">Indigo</button>
+    <button data-v="cobalt">Cobalt</button>
+    <button data-v="ember">Ember</button>
+    <button data-v="graphite">Graphite</button>
+  </div>
+  <div style="font-size:10.5px; color:#8F897B; margin-bottom:4px;">Schrift</div>
+  <div class="row" data-group="font">
+    <button data-v="geist" class="on">Geist</button>
+    <button data-v="inter">Inter</button>
+    <button data-v="serif-mix">Serif-Mix</button>
+    <button data-v="swiss">Haas Grotesk</button>
+  </div>
+  <div style="font-size:10px; color:#8F897B; margin-top:6px;">⌘ Toggle über Toolbar</div>
+</div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="components/design-canvas.jsx"></script>
+<script type="text/babel" src="components/primitives.jsx"></script>
+<script type="text/babel" src="components/pages-1.jsx"></script>
+<script type="text/babel" src="components/pages-2.jsx"></script>
+<script type="text/babel" src="components/pages-3.jsx"></script>
+<script type="text/babel" src="components/pages-ds.jsx"></script>
+<script type="text/babel" src="components/pages-mobile.jsx"></script>
+
+<script type="text/babel">
+const TWEAKS = /*EDITMODE-BEGIN*/{
+  "theme": "klee",
+  "font": "geist"
+}/*EDITMODE-END*/;
+
+function applyTweaks(t) {
+  document.documentElement.setAttribute('data-theme', t.theme);
+  document.documentElement.setAttribute('data-font', t.font);
+  document.querySelectorAll('#tweak-panel [data-group]').forEach(g => {
+    const key = g.getAttribute('data-group');
+    g.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('on', b.getAttribute('data-v') === t[key]);
+    });
+  });
+}
+const CURRENT = { ...TWEAKS };
+applyTweaks(CURRENT);
+
+// Edit mode bridge
+window.addEventListener('message', (e) => {
+  const d = e.data || {};
+  if (d.type === '__activate_edit_mode') document.getElementById('tweak-panel').classList.add('on');
+  if (d.type === '__deactivate_edit_mode') document.getElementById('tweak-panel').classList.remove('on');
+});
+window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+
+document.querySelectorAll('#tweak-panel [data-group]').forEach(g => {
+  const key = g.getAttribute('data-group');
+  g.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      CURRENT[key] = b.getAttribute('data-v');
+      applyTweaks(CURRENT);
+      window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: CURRENT[key] } }, '*');
+    });
+  });
+});
+
+const { DesignCanvas, DCSection, DCArtboard } = window;
+
+const App = () => (
+  <DesignCanvas>
+    <DCSection id="system" title="Design System" subtitle="Prinzipien, Tokens, Komponenten">
+      <DCArtboard id="ds" label="Design Guidelines" width={1440} height={1800}>
+        <PageDS />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="entry" title="Einstieg" subtitle="Login · Onboarding">
+      <DCArtboard id="login" label="Login" width={1440} height={900}>
+        <PageLogin />
+      </DCArtboard>
+      <DCArtboard id="onboarding" label="Onboarding · Bank verbinden" width={1440} height={900}>
+        <PageOnboarding />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="arbeitsplatz" title="Täglicher Arbeitsplatz" subtitle="Dashboard · Inbox">
+      <DCArtboard id="dashboard" label="Dashboard" width={1440} height={900}>
+        <PageDashboard />
+      </DCArtboard>
+      <DCArtboard id="inbox" label="Inbox · 12 Freigaben" width={1440} height={900}>
+        <PageInbox />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="belege" title="Belege" subtitle="Der Startpunkt · Liste & Detail">
+      <DCArtboard id="belege-liste" label="Belege · Liste" width={1440} height={900}>
+        <PageBelegeListe />
+      </DCArtboard>
+      <DCArtboard id="beleg-detail" label="Beleg · Detail mit KI-Panel" width={1440} height={900}>
+        <PageBelegDetail />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="bank" title="Bank & Matching">
+      <DCArtboard id="bank" label="Bank · Matching mit KI-Vorschlägen" width={1440} height={900}>
+        <PageBank />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="freigaben" title="Freigaben" subtitle="ehem. Journal">
+      <DCArtboard id="freigaben" label="Freigaben · 12 bereit" width={1440} height={900}>
+        <PageFreigaben />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="rechnungen" title="Rechnungen & Kunden">
+      <DCArtboard id="rechnungen" label="Rechnungen" width={1440} height={900}>
+        <PageRechnungen />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="berichte" title="Berichte & Auswertungen">
+      <DCArtboard id="berichte" label="Erfolgsrechnung" width={1440} height={900}>
+        <PageBerichte />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="abschluss" title="Abschluss & MWST">
+      <DCArtboard id="mwst" label="MWST · Q2/2026" width={1440} height={900}>
+        <PageMwst />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="prototyp" title="Klickbarer Prototyp" subtitle="Beleg-Flow end-to-end · auf die Stepper-Punkte klicken">
+      <DCArtboard id="flow" label="Vom Beleg zur Buchung · 5 Schritte" width={1440} height={900}>
+        <FlowProto />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="mobile" title="Mobile Varianten" subtitle="iPhone · unterwegs Belege erfassen">
+      <DCArtboard id="m-dashboard" label="Mobile · Dashboard" width={440} height={830}>
+        <MobileDashboard />
+      </DCArtboard>
+      <DCArtboard id="m-inbox" label="Mobile · Inbox" width={440} height={830}>
+        <MobileInbox />
+      </DCArtboard>
+      <DCArtboard id="m-scan" label="Mobile · Beleg scannen" width={440} height={830}>
+        <MobileScan />
+      </DCArtboard>
+    </DCSection>
+  </DesignCanvas>
+);
+
+ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+</script>
+
+</body>
+</html>

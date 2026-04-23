@@ -261,12 +261,14 @@ export default function Journal() {
   });
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="px-6 lg:px-8 py-6 space-y-4 max-w-[1280px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Journal</h2>
-          <p className="text-sm text-muted-foreground">{total} Buchungen</p>
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Journal</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            <span className="mono">{total}</span> Buchungen · Audit-Trail OR 957
+          </p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setShowExportDialog(true)}>
@@ -290,30 +292,44 @@ export default function Journal() {
         </div>
       </div>
 
-      {/* Filter-Kacheln */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Underline-Tabs (KLAX) */}
+      <div
+        className="flex items-center gap-5"
+        style={{ borderBottom: "1px solid var(--hair)" }}
+      >
         {[
-          { key: "all",      label: "Alle Buchungen",        count: journalStats.total,    accent: "from-slate-500 to-slate-600",  light: "bg-slate-50 border-slate-200 text-slate-700",  icon: <BookOpen className="w-5 h-5" /> },
-          { key: "pending",  label: "Zu genehmigen",         count: journalStats.pending,  accent: "from-amber-500 to-orange-500", light: "bg-amber-50 border-amber-200 text-amber-700",  icon: <Clock className="w-5 h-5" /> },
-          { key: "approved", label: "Verbucht",               count: journalStats.approved, accent: "from-green-500 to-emerald-600",light: "bg-green-50 border-green-200 text-green-700",  icon: <CheckCircle className="w-5 h-5" /> },
-          { key: "rejected", label: "Abgelehnt",              count: journalStats.rejected, accent: "from-red-500 to-rose-600",     light: "bg-red-50 border-red-200 text-red-700",        icon: <XCircle className="w-5 h-5" /> },
+          { key: "all",      label: "Alle",              count: journalStats.total },
+          { key: "pending",  label: "Zu genehmigen",     count: journalStats.pending },
+          { key: "approved", label: "Verbucht",          count: journalStats.approved },
+          { key: "rejected", label: "Abgelehnt",         count: journalStats.rejected },
         ].map(tile => {
           const isActive = status === tile.key;
           return (
             <button
               key={tile.key}
               onClick={() => { setStatus(tile.key); setOffset(0); }}
-              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left ${
-                isActive
-                  ? `bg-gradient-to-br ${tile.accent} text-white border-transparent shadow-lg scale-[1.02]`
-                  : `${tile.light} border-transparent hover:border-current hover:shadow-md`
-              }`}
+              className="relative py-2.5 text-[13px] flex items-center gap-2 transition-colors"
+              style={{
+                color: isActive ? "var(--ink)" : "var(--ink-3)",
+                fontWeight: isActive ? 500 : 400,
+              }}
             >
-              <div className={`mb-2 p-2 rounded-lg ${ isActive ? "bg-white/20" : "bg-white shadow-sm" }`}>
-                <span className={isActive ? "text-white" : ""}>{tile.icon}</span>
-              </div>
-              <div className={`text-2xl font-bold leading-none mb-1 ${ isActive ? "text-white" : "" }`}>{tile.count}</div>
-              <div className={`text-xs font-medium leading-tight ${ isActive ? "text-white/90" : "" }`}>{tile.label}</div>
+              <span>{tile.label}</span>
+              <span
+                className="text-[11px] mono px-1.5 py-0.5 rounded-full"
+                style={{
+                  background: isActive ? "var(--klax-accent)" : "var(--surface-2)",
+                  color: isActive ? "var(--klax-accent-ink)" : "var(--ink-3)",
+                }}
+              >
+                {tile.count}
+              </span>
+              {isActive && (
+                <span
+                  className="absolute left-0 right-0 -bottom-px h-[2px]"
+                  style={{ background: "var(--klax-accent)" }}
+                />
+              )}
             </button>
           );
         })}
@@ -393,9 +409,9 @@ export default function Journal() {
       )}
 
       {/* Table */}
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+      <div className="klax-card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="accounting-table">
+          <table className="k-table">
             <thead>
               <tr>
                 <th className="w-10 px-2">

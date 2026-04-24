@@ -15,24 +15,24 @@ import {
 import { toast } from "sonner";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useLocation } from "wouter";
+import { Pill } from "@/components/klax/Pill";
+import { AICallout } from "@/components/klax/AICallout";
 
-const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string; border: string }> = {
-  // Rechnungen (Eingang + Ausgang) → Blau
-  invoice_in:  { label: "Eingangsrechnung",  icon: <ArrowDownToLine className="w-3.5 h-3.5" />, color: "text-blue-700 bg-blue-50",   border: "border-l-4 border-l-blue-400" },
-  invoice_out: { label: "Ausgangsrechnung",  icon: <ArrowUpFromLine className="w-3.5 h-3.5" />, color: "text-blue-600 bg-blue-50",   border: "border-l-4 border-l-blue-300" },
-  // Kreditkartenabrechnungen → Lila
-  credit_card_statement: { label: "KK-Abrechnung", icon: <CreditCard className="w-3.5 h-3.5" />, color: "text-purple-700 bg-purple-50", border: "border-l-4 border-l-purple-500" },
-  // Barbelege / Quittungen → Grün
-  receipt:     { label: "Barbelegung",       icon: <Receipt className="w-3.5 h-3.5" />,         color: "text-emerald-700 bg-emerald-50", border: "border-l-4 border-l-emerald-500" },
-  // Kontoauszüge → Grau-Blau
-  bank_statement: { label: "Kontoauszug",    icon: <Building2 className="w-3.5 h-3.5" />,        color: "text-slate-600 bg-slate-50",  border: "border-l-4 border-l-slate-400" },
-  other:       { label: "Sonstiges",          icon: <StickyNote className="w-3.5 h-3.5" />,      color: "text-gray-600 bg-gray-50",   border: "border-l-4 border-l-gray-300" },
+type PillKind = "default" | "info" | "ai" | "pos" | "warn" | "neg";
+
+const DOC_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; pill: PillKind; stripe: string }> = {
+  invoice_in:  { label: "Eingangsrechnung",  icon: <ArrowDownToLine className="w-3 h-3" />, pill: "info",    stripe: "var(--info)" },
+  invoice_out: { label: "Ausgangsrechnung",  icon: <ArrowUpFromLine className="w-3 h-3" />, pill: "info",    stripe: "var(--info)" },
+  credit_card_statement: { label: "KK-Abrechnung", icon: <CreditCard className="w-3 h-3" />, pill: "ai",    stripe: "var(--ai)" },
+  receipt:     { label: "Barbelegung",       icon: <Receipt className="w-3 h-3" />,         pill: "pos",     stripe: "var(--pos)" },
+  bank_statement: { label: "Kontoauszug",    icon: <Building2 className="w-3 h-3" />,        pill: "default", stripe: "var(--hair-strong)" },
+  other:       { label: "Sonstiges",          icon: <StickyNote className="w-3 h-3" />,      pill: "default", stripe: "var(--hair-strong)" },
 };
 
-const MATCH_STATUS_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  matched:   { label: "Mit Bank abgeglichen",  icon: <CheckCircle2 className="w-3.5 h-3.5" />, color: "text-green-700 bg-green-100 border-green-200" },
-  unmatched: { label: "Nicht abgeglichen",      icon: <AlertCircle className="w-3.5 h-3.5" />,  color: "text-amber-700 bg-amber-50 border-amber-200" },
-  manual:    { label: "Manuell abgeglichen",    icon: <Link2 className="w-3.5 h-3.5" />,        color: "text-blue-700 bg-blue-50 border-blue-200" },
+const MATCH_STATUS_LABELS: Record<string, { label: string; icon: React.ReactNode; pill: PillKind }> = {
+  matched:   { label: "Mit Bank abgeglichen", icon: <CheckCircle2 className="w-3 h-3" />, pill: "pos" },
+  unmatched: { label: "Nicht abgeglichen",    icon: <AlertCircle className="w-3 h-3" />,  pill: "warn" },
+  manual:    { label: "Manuell abgeglichen",  icon: <Link2 className="w-3 h-3" />,        pill: "info" },
 };
 
 function formatBytes(bytes: number) {
@@ -224,78 +224,76 @@ export default function Documents() {
   const unmatchedCount = stats.unmatched;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1200px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold">Belege</h2>
-          <p className="text-sm text-muted-foreground">Rechnungen, Kreditkartenabrechnungen und Barbelege zentral verwalten</p>
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Belege</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            Rechnungen, Kreditkartenabrechnungen und Barbelege zentral verwalten
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (confirm(`Alle Belege neu analysieren? Dies kann einige Minuten dauern.`)) {
-                batchReanalyzeMutation.mutate();
-              }
-            }}
+          <button
+            onClick={() => { if (confirm(`Alle Belege neu analysieren? Dies kann einige Minuten dauern.`)) batchReanalyzeMutation.mutate(); }}
             disabled={batchReanalyzeMutation.isPending}
-            className="gap-2 text-xs"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
+            style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}
           >
             {batchReanalyzeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
             Neu analysieren
-          </Button>
+          </button>
         </div>
       </div>
 
-      {/* Prominenter Abgleichen-Banner wenn ungematchte Belege vorhanden */}
+      {/* AI-Callout wenn ungematchte Belege vorhanden */}
       {unmatchedCount > 0 && (
-        <div className="flex items-center justify-between gap-4 bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/30 rounded-xl px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-primary/15 rounded-lg">
-              <Link2 className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <p className="font-semibold text-sm">{unmatchedCount} Beleg{unmatchedCount !== 1 ? "e" : ""} noch nicht mit Banktransaktionen abgeglichen</p>
-              <p className="text-xs text-muted-foreground">KI sucht automatisch passende Transaktionen nach Betrag, Gegenpartei und Datum</p>
-            </div>
-          </div>
-          <Button
-            onClick={() => autoMatchMutation.mutate({ threshold: 40 })}
-            disabled={autoMatchMutation.isPending}
-            className="gap-2 shrink-0"
-            size="default"
-          >
-            {autoMatchMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {autoMatchMutation.isPending ? "Abgleiche..." : "Jetzt abgleichen"}
-          </Button>
-        </div>
+        <AICallout
+          title="Abgleich bereit"
+          icon={<Link2 className="h-3.5 w-3.5" />}
+          action={
+            <button
+              onClick={() => autoMatchMutation.mutate({ threshold: 40 })}
+              disabled={autoMatchMutation.isPending}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px] font-medium whitespace-nowrap"
+              style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
+            >
+              {autoMatchMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {autoMatchMutation.isPending ? "Abgleiche…" : "Jetzt abgleichen"}
+            </button>
+          }
+        >
+          {unmatchedCount} Beleg{unmatchedCount !== 1 ? "e" : ""} noch nicht mit Banktransaktionen
+          abgeglichen. KLAX sucht automatisch nach Betrag, Gegenpartei und Datum.
+        </AICallout>
       )}
 
-      {/* KI-Fortschrittsanzeige */}
+      {/* Progress info */}
       {(autoMatchMutation.isPending || batchReanalyzeMutation.isPending) && (
-        <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
-          <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+        <div
+          className="flex items-center gap-3 p-3 rounded-md"
+          style={{ background: "var(--ai-soft)", border: "1px solid var(--ai-line)", color: "var(--ai)" }}
+        >
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
           <div>
-            <p className="text-sm font-medium text-primary">
-              {autoMatchMutation.isPending && "KI sucht passende Belege und Transaktionen..."}
-              {batchReanalyzeMutation.isPending && "KI analysiert alle Dokumente neu..."}
+            <p className="text-[13px] font-medium">
+              {autoMatchMutation.isPending && "KLAX sucht passende Belege und Transaktionen…"}
+              {batchReanalyzeMutation.isPending && "KLAX analysiert alle Dokumente neu…"}
             </p>
-            <p className="text-xs text-muted-foreground">Bitte warten, dies kann einige Sekunden dauern.</p>
+            <p className="text-[11.5px] opacity-80">Bitte warten, dies kann einige Sekunden dauern.</p>
           </div>
         </div>
       )}
 
-      {/* Filter-Kacheln */}
+      {/* Filter-Kacheln (KLAX) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { key: null,           label: "Alle Belege",        count: stats.total,       accent: "from-slate-500 to-slate-600",   light: "bg-slate-50 border-slate-200 text-slate-700",   icon: <FileText className="w-5 h-5" /> },
-          { key: "new",          label: "Neu hochgeladen",    count: stats.newDocs,     accent: "from-blue-500 to-blue-600",     light: "bg-blue-50 border-blue-200 text-blue-700",      icon: <ArrowDownToLine className="w-5 h-5" /> },
-          { key: "ai-processed", label: "KI verarbeitet",     count: stats.aiProcessed, accent: "from-purple-500 to-purple-600", light: "bg-purple-50 border-purple-200 text-purple-700", icon: <RefreshCw className="w-5 h-5" /> },
-          { key: "review",       label: "Zu prüfen",          count: stats.review,      accent: "from-amber-500 to-orange-500",  light: "bg-amber-50 border-amber-200 text-amber-700",   icon: <Eye className="w-5 h-5" /> },
-          { key: "matched",      label: "Mit Bank abgeglichen", count: stats.matched,     accent: "from-green-500 to-emerald-600", light: "bg-green-50 border-green-200 text-green-700",   icon: <CheckCircle2 className="w-5 h-5" /> },
-          { key: "archived",     label: "Archiv",             count: stats.archived,    accent: "from-gray-400 to-gray-500",     light: "bg-gray-50 border-gray-200 text-gray-600",      icon: <StickyNote className="w-5 h-5" /> },
+          { key: null,           label: "Alle Belege",        count: stats.total,       icon: <FileText className="w-4 h-4" /> },
+          { key: "new",          label: "Neu hochgeladen",    count: stats.newDocs,     icon: <ArrowDownToLine className="w-4 h-4" /> },
+          { key: "ai-processed", label: "KI verarbeitet",     count: stats.aiProcessed, icon: <RefreshCw className="w-4 h-4" /> },
+          { key: "review",       label: "Zu prüfen",          count: stats.review,      icon: <Eye className="w-4 h-4" /> },
+          { key: "matched",      label: "Mit Bank abgeglichen", count: stats.matched,   icon: <CheckCircle2 className="w-4 h-4" /> },
+          { key: "archived",     label: "Archiv",             count: stats.archived,    icon: <StickyNote className="w-4 h-4" /> },
         ].map(tile => {
           const isActive = sidebarFilter === tile.key;
           return (
@@ -307,30 +305,31 @@ export default function Documents() {
                 else if (tile.key === "matched") setFilterMatch("matched");
                 else if (tile.key === "new" || tile.key === "review") setFilterMatch("unmatched");
               }}
-              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left ${
-                isActive
-                  ? `bg-gradient-to-br ${tile.accent} text-white border-transparent shadow-lg scale-[1.02]`
-                  : `${tile.light} border-transparent hover:border-current hover:shadow-md`
-              }`}
+              className="text-left p-4 rounded-[14px] transition-all"
+              style={{
+                background: isActive ? "var(--klax-accent)" : "var(--surface)",
+                color: isActive ? "var(--klax-accent-ink)" : "var(--ink)",
+                border: `1px solid ${isActive ? "var(--klax-accent)" : "var(--hair)"}`,
+                boxShadow: isActive ? "var(--shadow-2)" : "var(--shadow-1)",
+              }}
             >
-              <div className={`mb-2 p-2 rounded-lg ${ isActive ? "bg-white/20" : "bg-white shadow-sm" }`}>
-                <span className={isActive ? "text-white" : ""}>{tile.icon}</span>
+              <div className="flex items-center gap-2 mb-2" style={{ color: isActive ? "var(--klax-accent-ink)" : "var(--ink-3)" }}>
+                {tile.icon}
+                <span className="text-[10.5px] uppercase tracking-wider font-medium">{tile.label}</span>
               </div>
-              <div className={`text-2xl font-bold leading-none mb-1 ${ isActive ? "text-white" : "" }`}>{tile.count}</div>
-              <div className={`text-xs font-medium leading-tight ${ isActive ? "text-white/90" : "" }`}>{tile.label}</div>
+              <div className="display mono text-[26px] font-medium leading-none">{tile.count}</div>
             </button>
           );
         })}
       </div>
 
       {/* Upload Zone */}
-      <div className="bg-card border border-border rounded-xl p-5 shadow-sm">
-        <h3 className="font-semibold mb-3">Neuen Beleg hochladen</h3>
+      <div className="klax-card p-5">
+        <h3 className="text-[14px] font-semibold mb-3" style={{ color: "var(--ink)" }}>Neuen Beleg hochladen</h3>
         <DocumentUpload onUploaded={handleUploaded} fiscalYear={fiscalYear} />
-        <p className="text-xs text-muted-foreground mt-2">
-          Die KI analysiert den Beleg automatisch und extrahiert Betrag, Gegenpartei und Datum.
+        <p className="text-[11.5px] mt-2" style={{ color: "var(--ink-3)" }}>
+          KLAX analysiert den Beleg automatisch und extrahiert Betrag, Gegenpartei und Datum.
           Belege werden automatisch dem Geschäftsjahr <strong>GJ {fiscalYear}</strong> zugewiesen.
-          Nutzen Sie den «Jetzt abgleichen»-Button oben um Belege automatisch mit Banktransaktionen abzugleichen.
         </p>
       </div>
 
@@ -398,15 +397,15 @@ export default function Documents() {
       </div>
 
       {/* Document List */}
-      <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
+      <div className="klax-card overflow-hidden">
         {filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <FileText className="w-12 h-12 mb-3 opacity-30" />
-            <p className="font-medium">Keine Dokumente gefunden</p>
-            <p className="text-sm mt-1">Laden Sie oben Ihren ersten Beleg hoch</p>
+          <div className="flex flex-col items-center justify-center py-16" style={{ color: "var(--ink-3)" }}>
+            <FileText className="w-10 h-10 mb-3 opacity-40" />
+            <p className="font-medium text-[14px]" style={{ color: "var(--ink)" }}>Keine Dokumente gefunden</p>
+            <p className="text-[12.5px] mt-1">Laden Sie oben Ihren ersten Beleg hoch</p>
           </div>
         ) : (
-          <div className="divide-y divide-border">
+          <div>
             {filtered.map(doc => {
               const typeInfo = DOC_TYPE_LABELS[doc.documentType] ?? DOC_TYPE_LABELS.other;
               const matchStatus = (doc as any).matchStatus ?? "unmatched";
@@ -420,60 +419,55 @@ export default function Documents() {
               return (
                 <div
                   key={doc.id}
-                  className={`group flex items-start gap-3 p-4 hover:bg-muted/40 transition-colors cursor-pointer ${typeInfo.border}`}
+                  className="group flex items-start gap-3 p-4 transition-colors cursor-pointer"
+                  style={{ borderBottom: "1px solid var(--hair)", borderLeft: `3px solid ${typeInfo.stripe}` }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                   onClick={() => navigate(`/documents/${doc.id}`)}
                 >
                   {/* Thumbnail */}
-                  <div className="mt-0.5 flex-shrink-0 w-10 h-12 rounded border border-border overflow-hidden bg-muted/50 flex items-center justify-center">
+                  <div
+                    className="mt-0.5 flex-shrink-0 w-10 h-12 rounded overflow-hidden flex items-center justify-center"
+                    style={{ background: "var(--surface-2)", border: "1px solid var(--hair)" }}
+                  >
                     {doc.mimeType.startsWith("image/")
                       ? <img src={doc.s3Url} alt="" className="w-full h-full object-cover" />
-                      : <FileText className="w-5 h-5 text-red-400" />
+                      : <FileText className="w-5 h-5" style={{ color: "var(--neg)" }} />
                     }
                   </div>
 
                   {/* Main content */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-sm truncate">{doc.filename}</span>
-                      <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full font-medium ${typeInfo.color}`}>
-                        {typeInfo.icon}
-                        {typeInfo.label}
-                      </span>
- 
-                      <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full border font-medium ${matchInfo.color}`}>
-                        {matchInfo.icon}
+                      <span className="font-medium text-[13.5px] truncate" style={{ color: "var(--ink)" }}>{doc.filename}</span>
+                      <Pill variant={typeInfo.pill} icon={typeInfo.icon}>{typeInfo.label}</Pill>
+                      <Pill variant={matchInfo.pill} icon={matchInfo.icon}>
                         {matchInfo.label}
                         {matchScoreVal != null && matchStatus === "matched" && (
-                          <span className="ml-0.5 opacity-70">{matchScoreVal}%</span>
+                          <span className="ml-0.5 mono opacity-80">{matchScoreVal}%</span>
                         )}
-                      </span>
+                      </Pill>
                       {doc.bankTransactionId && (
-                        <Badge variant="outline" className="text-xs gap-1">
-                          <Link2 className="w-3 h-3" />
-                          Txn #{doc.bankTransactionId}
-                        </Badge>
+                        <Pill icon={<Link2 className="w-3 h-3" />}>Txn #{doc.bankTransactionId}</Pill>
                       )}
                       {doc.journalEntryId && (
-                        <Badge variant="outline" className="text-xs gap-1">
-                          <FileText className="w-3 h-3" />
-                          Buchung #{doc.journalEntryId}
-                        </Badge>
+                        <Pill icon={<FileText className="w-3 h-3" />}>Buchung #{doc.journalEntryId}</Pill>
                       )}
                     </div>
 
                     {/* AI-extracted info – only in detail mode */}
                     {viewMode === "detail" && meta && (
-                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-                        {meta.counterparty && <span>Gegenpartei: <span className="text-foreground font-medium">{meta.counterparty}</span></span>}
-                        {meta.totalAmount != null && <span>Betrag: <span className="text-foreground font-medium">CHF {formatCHF(Number(meta.totalAmount))}</span></span>}
-                        {meta.documentDate && <span>Datum: <span className="text-foreground font-medium">{meta.documentDate}</span></span>}
-                        {meta.vatRate != null && <span>MWST: <span className="text-foreground font-medium">{meta.vatRate}%</span></span>}
+                      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11.5px]" style={{ color: "var(--ink-3)" }}>
+                        {meta.counterparty && <span>Gegenpartei: <span className="font-medium" style={{ color: "var(--ink)" }}>{meta.counterparty}</span></span>}
+                        {meta.totalAmount != null && <span>Betrag: <span className="mono font-medium" style={{ color: "var(--ink)" }}>CHF {formatCHF(Number(meta.totalAmount))}</span></span>}
+                        {meta.documentDate && <span>Datum: <span className="mono font-medium" style={{ color: "var(--ink)" }}>{meta.documentDate}</span></span>}
+                        {meta.vatRate != null && <span>MWST: <span className="mono font-medium" style={{ color: "var(--ink)" }}>{meta.vatRate}%</span></span>}
                         {meta.description && <span className="truncate max-w-xs">{meta.description}</span>}
                       </div>
                     )}
 
                     {viewMode === "detail" && (
-                      <div className="mt-1 text-xs text-muted-foreground">
+                      <div className="mt-1 text-[11px]" style={{ color: "var(--ink-4)" }}>
                         {formatBytes(doc.fileSize)} · {formatDate(doc.createdAt)}
                       </div>
                     )}

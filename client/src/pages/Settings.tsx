@@ -114,33 +114,32 @@ export default function Settings() {
   })();
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   return (
-    <div className="flex h-full">
-      {/* Sidebar */}
-      <aside className="w-56 border-r bg-muted/30 p-4 flex flex-col gap-1 shrink-0">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">
-          Einstellungen
-        </h2>
+    <div className="flex h-full" style={{ background: "var(--paper)" }}>
+      {/* Sub-Navigation (KLAX) */}
+      <aside
+        className="w-56 p-3 flex flex-col gap-0.5 shrink-0"
+        style={{ borderRight: "1px solid var(--hair)", background: "var(--paper)" }}
+      >
+        <h2 className="sb-group" style={{ paddingTop: 4 }}>Einstellungen</h2>
         {TABS.map(tab => {
           const Icon = tab.icon;
+          const active = activeTab === tab.id;
           return (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors w-full text-left ${
-                activeTab === tab.id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              }`}
+              className={`sb-item ${active ? "sb-item--active" : ""}`}
+              style={{ width: "100%", textAlign: "left" }}
             >
               <Icon className="h-4 w-4 shrink-0" />
-              {tab.label}
+              <span className="flex-1 truncate">{tab.label}</span>
             </button>
           );
         })}
       </aside>
 
       {/* Content */}
-      <main className="flex-1 overflow-auto p-6">
+      <main className="flex-1 overflow-auto p-6 lg:p-8">
         {activeTab === "company" && <CompanyTab />}
         {activeTab === "bank" && <BankTab />}
         {activeTab === "chartOfAccounts" && <ChartOfAccountsTab />}
@@ -291,11 +290,11 @@ function CompanyTab() {
   if (isLoading) return <div className="text-muted-foreground">Lädt...</div>;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Unternehmensdaten</h1>
-          <p className="text-muted-foreground text-sm mt-1">Firmenstammdaten, MWST und Geschäftsjahr</p>
+          <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Unternehmensdaten</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>Firmenstammdaten, MWST und Geschäftsjahr</p>
         </div>
         {!editing ? (
           <Button onClick={startEdit} variant="outline" size="sm">

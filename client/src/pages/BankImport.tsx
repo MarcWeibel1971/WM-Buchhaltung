@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2 } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -121,7 +121,7 @@ export default function BankImport() {
     }
   }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { fiscalYear, setFiscalYear, fiscalYears, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
+  const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
   const { data: importAutomation } = trpc.importAutomation.get.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   // Always filter by selected fiscal year (consistent across all views)
@@ -612,65 +612,59 @@ export default function BankImport() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1200px] mx-auto">
+      <div>
+        <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Bankimport</h2>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          CAMT.053, MT940, CSV oder PDF importieren
+        </p>
+      </div>
 
       {/* Warnung: Geschäftsjahr geschlossen */}
       {!isCurrentYearOpen && (
-        <div className="flex items-center gap-3 bg-amber-50 border border-amber-300 text-amber-800 rounded-lg px-4 py-3 text-sm">
-          <span className="text-amber-500 text-lg">⚠️</span>
+        <div
+          className="flex items-center gap-3 rounded-md px-4 py-3 text-[13px]"
+          style={{ background: "var(--warn-soft)", border: "1px solid color-mix(in oklab, var(--warn) 20%, transparent)", color: "var(--warn)" }}
+        >
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           <span>Das Geschäftsjahr <strong>{fiscalYear}</strong> ist geschlossen. Ausstehende Transaktionen werden nicht angezeigt und neue Buchungen sind nicht möglich.</span>
         </div>
       )}
 
-      {/* Filter-Kacheln */}
+      {/* Filter-Kacheln (KLAX) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { key: "all",     label: "Alle Transaktionen", count: txStats.total,   accent: "from-slate-500 to-slate-600",  light: "bg-slate-50 border-slate-200 text-slate-700",  icon: <ArrowLeftRight className="w-5 h-5" /> },
-          { key: "pending", label: "Ausstehend",          count: txStats.pending, accent: "from-amber-500 to-orange-500", light: "bg-amber-50 border-amber-200 text-amber-700",  icon: <Clock className="w-5 h-5" /> },
-          { key: "matched", label: "Verbucht",             count: txStats.matched, accent: "from-green-500 to-emerald-600",light: "bg-green-50 border-green-200 text-green-700",  icon: <CheckCircle className="w-5 h-5" /> },
-          { key: "ignored", label: "Ignoriert",            count: txStats.ignored, accent: "from-gray-400 to-gray-500",   light: "bg-gray-50 border-gray-200 text-gray-600",    icon: <EyeOff className="w-5 h-5" /> },
+          { key: "all",     label: "Alle Transaktionen", count: txStats.total,   icon: <ArrowLeftRight className="w-4 h-4" /> },
+          { key: "pending", label: "Ausstehend",          count: txStats.pending, icon: <Clock className="w-4 h-4" /> },
+          { key: "matched", label: "Verbucht",             count: txStats.matched, icon: <CheckCircle className="w-4 h-4" /> },
+          { key: "ignored", label: "Ignoriert",            count: txStats.ignored, icon: <EyeOff className="w-4 h-4" /> },
         ].map(tile => {
           const isActive = statusFilter === tile.key;
           return (
             <button
               key={tile.key}
               onClick={() => { setStatusFilter(tile.key as any); setSelectedTxIds(new Set()); }}
-              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left ${
-                isActive
-                  ? `bg-gradient-to-br ${tile.accent} text-white border-transparent shadow-lg scale-[1.02]`
-                  : `${tile.light} border-transparent hover:border-current hover:shadow-md`
-              }`}
+              className="text-left p-4 rounded-[14px] transition-all"
+              style={{
+                background: isActive ? "var(--klax-accent)" : "var(--surface)",
+                color: isActive ? "var(--klax-accent-ink)" : "var(--ink)",
+                border: `1px solid ${isActive ? "var(--klax-accent)" : "var(--hair)"}`,
+                boxShadow: isActive ? "var(--shadow-2)" : "var(--shadow-1)",
+              }}
             >
-              <div className={`mb-2 p-2 rounded-lg ${ isActive ? "bg-white/20" : "bg-white shadow-sm" }`}>
-                <span className={isActive ? "text-white" : ""}>{tile.icon}</span>
+              <div className="flex items-center gap-2 mb-2" style={{ color: isActive ? "var(--klax-accent-ink)" : "var(--ink-3)" }}>
+                {tile.icon}
+                <span className="text-[10.5px] uppercase tracking-wider font-medium">{tile.label}</span>
               </div>
-              <div className={`text-2xl font-bold leading-none mb-1 ${ isActive ? "text-white" : "" }`}>{tile.count}</div>
-              <div className={`text-xs font-medium leading-tight ${ isActive ? "text-white/90" : "" }`}>{tile.label}</div>
+              <div className="display mono text-[26px] font-medium leading-none">{tile.count}</div>
             </button>
           );
         })}
       </div>
 
       {/* Import section */}
-      <div className="bg-card rounded-xl border border-border p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">Kontoauszug importieren</h3>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground font-medium">Geschäftsjahr:</span>
-            <Select value={String(fiscalYear)} onValueChange={v => setFiscalYear(Number(v))}>
-              <SelectTrigger className="w-32 h-9 text-sm font-semibold border-2 border-primary/50 bg-primary/8 hover:bg-primary/15 gap-1.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {fiscalYearInfos?.map(fi => (
-                  <SelectItem key={fi.year} value={String(fi.year)}>
-                    GJ {fi.year}{fi.isClosed ? " 🔒" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+      <div className="klax-card p-5">
+        <h3 className="text-[14px] font-semibold mb-4" style={{ color: "var(--ink)" }}>Kontoauszug importieren</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Bankkonto</label>
@@ -1127,10 +1121,14 @@ export default function BankImport() {
                                 <Check className="h-3 w-3 mr-1" />Übertrag verbuchen
                               </Button>
                             )}
-                            {!isTransfer && (
+                            {!isTransfer && debitAcc && creditAcc && (
                               <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
-                                title={debitAcc && creditAcc ? "Verbuchen" : "Konten prüfen und verbuchen"}
-                                onClick={() => openEditDialog(tx)}>
+                                onClick={() => approveMutation.mutate({
+                                  transactionId: tx.id,
+                                  debitAccountId: debitAcc.id,
+                                  creditAccountId: creditAcc.id,
+                                  description: tx.description ?? undefined,
+                                })}>
                                 <Check className="h-3 w-3 mr-1" />Verbuchen
                               </Button>
                             )}
@@ -1502,47 +1500,9 @@ export default function BankImport() {
           <DialogFooter>
             <Button variant="outline" onClick={() => { setEditTx(null); setEditMode("single"); }}>Abbrechen</Button>
             {editMode === "single" ? (
-              <>
-                <Button variant="outline" onClick={saveEdit} disabled={updateTxMutation.isPending}>
-                  {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
-                </Button>
-                {editTx && (() => {
-                  const debitId = editForm.debitAccountId ? parseInt(editForm.debitAccountId) : null;
-                  const creditId = editForm.creditAccountId ? parseInt(editForm.creditAccountId) : null;
-                  const canApprove = !!(debitId && creditId);
-                  return (
-                    <Button
-                      className="bg-green-600 hover:bg-green-700"
-                      disabled={!canApprove || approveMutation.isPending || updateTxMutation.isPending}
-                      title={canApprove ? "Speichern und verbuchen" : "Soll- und Haben-Konto müssen ausgefüllt sein"}
-                      onClick={() => {
-                        if (!editTx || !debitId || !creditId) return;
-                        updateTxMutation.mutate({
-                          transactionId: editTx.id,
-                          description: editForm.description || undefined,
-                          counterparty: editForm.counterparty || undefined,
-                          counterpartyIban: editForm.counterpartyIban || undefined,
-                          reference: editForm.reference || undefined,
-                          suggestedDebitAccountId: debitId,
-                          suggestedCreditAccountId: creditId,
-                        }, {
-                          onSuccess: () => {
-                            approveMutation.mutate({
-                              transactionId: editTx.id,
-                              debitAccountId: debitId,
-                              creditAccountId: creditId,
-                              description: editForm.description || editTx.description || undefined,
-                            });
-                          },
-                        });
-                      }}
-                    >
-                      <Check className="h-3.5 w-3.5 mr-1.5" />
-                      {approveMutation.isPending ? "Verbuchen..." : "Verbuchen"}
-                    </Button>
-                  );
-                })()}
-              </>
+              <Button onClick={saveEdit} disabled={updateTxMutation.isPending}>
+                {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
+              </Button>
             ) : (
               <Button
                 onClick={() => {

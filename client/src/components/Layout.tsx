@@ -3,17 +3,17 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, Inbox, FileText, Building2, CheckSquare,
   Receipt, BarChart3, LogOut, ChevronRight, ChevronDown,
-  Menu, X, Bell, Settings, CalendarCheck, Clock,
-  Brain, ShieldCheck, Upload, Sparkles, Search, Eye,
-  Link2, Archive, CreditCard, ArrowLeftRight, Wallet,
-  AlertTriangle, Users, BookOpen, PieChart, List,
-  FileCheck, AlertCircle, CheckCircle, Banknote, Bot, Bolt, Timer
+  Menu, X, Bell, Settings, CalendarCheck,
+  Brain, Users, BookOpen,
+  AlertTriangle, Bot, Bolt, Wallet, Clock, Banknote,
+  Sparkles, PieChart, List,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import CopilotDock from "@/components/CopilotDock";
 
 type NavItem = {
   href: string;
@@ -22,7 +22,11 @@ type NavItem = {
   badge?: number | string;
   children?: NavItem[];
   adminOnly?: boolean;
-  separator?: boolean;
+};
+
+type NavSection = {
+  group?: string;
+  items: NavItem[];
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -31,12 +35,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { fiscalYear, setFiscalYear, fiscalYears, fiscalYearInfos } = useFiscalYear();
 
-  // Queries for badge counts
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
   const { data: companyData } = trpc.settings.getCompanySettings.useQuery();
   const { data: myOrgs } = trpc.organizations.listMine.useQuery();
   const { data: pendingBank } = trpc.bankImport.getPendingTransactions.useQuery({});
-  const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 1 });
   const { data: allDocs } = trpc.documents.list.useQuery({ fiscalYear });
 
   const utils = trpc.useUtils();
@@ -47,7 +49,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     },
   });
 
-  // Compute badge counts
   const pendingEntries = stats?.pendingEntries ?? 0;
   const pendingBankTx = pendingBank?.length ?? 0;
   const unmatchedBankTx = pendingBank?.filter(tx => !tx.matchedDocumentId)?.length ?? 0;
@@ -56,85 +57,152 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const currentOrgName = myOrgs?.find(o => o.isCurrent)?.name ?? companyData?.companyName ?? 'Meine Firma';
   const hasMultipleOrgs = (myOrgs?.length ?? 0) > 1;
+  const userInitials = (user?.name ?? "U").split(" ").map(s => s[0]).slice(0, 2).join("").toUpperCase();
 
-  // Auto-expand sections based on current route
+  const sectionPrefixes: Record<string, string[]> = {
+    "/belege": ["/belege", "/documents"],
+    "/bank": ["/bank", "/bank-import", "/credit-card"],
+    "/freigaben": ["/freigaben", "/journal"],
+    "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen"],
+    "/berichte": ["/berichte", "/reports"],
+    "/abschluss": ["/abschluss", "/vat", "/year-end"],
+    "/einstellungen": ["/einstellungen", "/settings"],
+    "/admin": ["/admin"],
+    "/accounts": ["/accounts"],
+  };
+
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
     const initial = new Set<string>();
-    // Auto-expand the section containing the current route
-    const sectionPrefixes: Record<string, string[]> = {
-      "/belege": ["/belege", "/documents"],
-      "/bank": ["/bank", "/bank-import", "/credit-card"],
-      "/freigaben": ["/freigaben", "/journal"],
-      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen/kreditoren"],
-      "/berichte": ["/berichte", "/reports"],
-      "/abschluss": ["/abschluss", "/vat", "/year-end"],
-      "/einstellungen": ["/einstellungen", "/settings"],
-      "/admin": ["/admin"],
-    };
     for (const [section, prefixes] of Object.entries(sectionPrefixes)) {
-      if (prefixes.some(p => location.startsWith(p))) {
-        initial.add(section);
-      }
+      if (prefixes.some(p => location.startsWith(p))) initial.add(section);
     }
     return initial;
   });
 
-  // Update expanded sections when location changes
   useEffect(() => {
-    const sectionPrefixes: Record<string, string[]> = {
-      "/belege": ["/belege", "/documents"],
-      "/bank": ["/bank", "/bank-import", "/credit-card"],
-      "/freigaben": ["/freigaben", "/journal"],
-      "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen/kreditoren"],
-      "/berichte": ["/berichte", "/reports"],
-      "/abschluss": ["/abschluss", "/vat", "/year-end"],
-      "/einstellungen": ["/einstellungen", "/settings"],
-      "/admin": ["/admin"],
-    };
     setExpandedSections(prev => {
       const next = new Set(prev);
       for (const [section, prefixes] of Object.entries(sectionPrefixes)) {
-        if (prefixes.some(p => location.startsWith(p))) {
-          next.add(section);
-        }
+        if (prefixes.some(p => location.startsWith(p))) next.add(section);
       }
       return next;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location]);
 
-  const NAV_ITEMS: NavItem[] = [
-    { href: "/", icon: LayoutDashboard, label: "Dashboard" },
-    { href: "/inbox", icon: Inbox, label: "Inbox", badge: totalInbox > 0 ? totalInbox : undefined },
-    { href: "/belege", icon: FileText, label: "Belege", separator: true, badge: newDocs > 0 ? newDocs : undefined },
-    { href: "/bank", icon: Building2, label: "Bank", badge: pendingBankTx > 0 ? pendingBankTx : undefined },
-    { href: "/freigaben", icon: CheckSquare, label: "Buchungen", badge: pendingEntries > 0 ? pendingEntries : undefined },
-    { href: "/rechnungen", icon: Receipt, label: "Rechnungen", separator: true, children: [
-      { href: "/rechnungen", icon: Users, label: "Kunden (Debitoren)", children: [
-        { href: "/rechnungen", icon: FileText, label: "Ausgangsrechnungen" },
-        { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
-      ]},
-      { href: "/zahlungen/kreditoren", icon: Building2, label: "Lieferanten (Kreditoren)", children: [
-        { href: "/belege?type=incoming", icon: FileText, label: "Eingangsrechnungen (Belege)" },
-        { href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditorenzahlungen" },
-      ]},
-    ]},
-    { href: "/berichte", icon: BarChart3, label: "Berichte", children: [
-      { href: "/berichte?view=income", icon: PieChart, label: "Erfolgsrechnung" },
-      { href: "/berichte?view=balance", icon: BarChart3, label: "Bilanz" },
-      { href: "/berichte?view=accounts", icon: BookOpen, label: "Kontoblätter" },
-      { href: "/berichte?view=journal", icon: List, label: "Journal" },
-    ]},
-    { href: "/time-tracking", icon: Timer, label: "Zeiterfassung", separator: true },
-    { href: "/abschluss", icon: CalendarCheck, label: "Abschluss & MWST", children: [
-      { href: "/vat", icon: Receipt, label: "MWST" },
-      { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
-    ]},
-    { href: "/einstellungen", icon: Settings, label: "Einstellungen" },
-    { href: "/admin", icon: Brain, label: "Admin", adminOnly: true, children: [
-      { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln" },
-      { href: "/settings?tab=avatar", icon: Bot, label: "Avatar-Chatbot" },
-      { href: "/settings?tab=importAutomation", icon: Bolt, label: "Import-Automatisierung" },
-    ]},
+  const SECTIONS: NavSection[] = [
+    {
+      items: [
+        { href: "/", icon: LayoutDashboard, label: "Dashboard" },
+        { href: "/inbox", icon: Inbox, label: "Inbox", badge: totalInbox > 0 ? totalInbox : undefined },
+      ],
+    },
+    {
+      group: "Belege",
+      items: [
+        {
+          href: "/belege", icon: FileText, label: "Alle Belege",
+          badge: newDocs > 0 ? newDocs : undefined,
+          children: [
+            { href: "/belege?filter=new", icon: FileText, label: "Neu hochgeladen" },
+            { href: "/belege?filter=ai", icon: Sparkles, label: "KI-verarbeitet" },
+            { href: "/belege?filter=review", icon: CheckSquare, label: "Zu prüfen" },
+          ],
+        },
+      ],
+    },
+    {
+      group: "Bank & Zahlungen",
+      items: [
+        {
+          href: "/bank", icon: Building2, label: "Banktransaktionen",
+          badge: pendingBankTx > 0 ? pendingBankTx : undefined,
+          children: [
+            { href: "/bank?tab=unmatched", icon: AlertTriangle, label: "Ungematcht" },
+            { href: "/bank-import", icon: Wallet, label: "Konten & Karten" },
+          ],
+        },
+        {
+          href: "/kreditoren", icon: Banknote, label: "Kreditoren",
+          children: [
+            { href: "/kreditoren", icon: Clock, label: "Offene Posten" },
+          ],
+        },
+      ],
+    },
+    {
+      group: "Freigaben",
+      items: [
+        {
+          href: "/freigaben", icon: CheckSquare, label: "Bereit zur Freigabe",
+          badge: pendingEntries > 0 ? pendingEntries : undefined,
+          children: [
+            { href: "/freigaben?tab=warnings", icon: AlertTriangle, label: "Mit Warnungen" },
+            { href: "/journal", icon: List, label: "Verbucht" },
+          ],
+        },
+      ],
+    },
+    {
+      group: "Rechnungen",
+      items: [
+        {
+          href: "/rechnungen", icon: Receipt, label: "Ausgangsrechnungen",
+          children: [
+            { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },
+            { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
+          ],
+        },
+      ],
+    },
+    {
+      group: "Buchhaltung",
+      items: [
+        {
+          href: "/accounts", icon: BookOpen, label: "Kontenplan",
+          children: [
+            { href: "/accounts", icon: BookOpen, label: "Kontendetail" },
+          ],
+        },
+      ],
+    },
+    {
+      group: "Berichte",
+      items: [
+        {
+          href: "/berichte", icon: BarChart3, label: "Erfolgsrechnung",
+          children: [
+            { href: "/berichte?view=balance", icon: BarChart3, label: "Bilanz" },
+            { href: "/berichte?view=cashflow", icon: PieChart, label: "Cashflow" },
+          ],
+        },
+      ],
+    },
+    {
+      group: "Abschluss",
+      items: [
+        {
+          href: "/abschluss", icon: CalendarCheck, label: "MWST",
+          children: [
+            { href: "/vat", icon: Receipt, label: "MWST" },
+            { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
+          ],
+        },
+      ],
+    },
+    {
+      group: "Admin",
+      items: [
+        {
+          href: "/admin", icon: Brain, label: "KI-Regeln", adminOnly: true,
+          children: [
+            { href: "/admin/global-rules", icon: Brain, label: "Regeln" },
+            { href: "/settings?tab=avatar", icon: Bot, label: "Avatar-Chatbot" },
+            { href: "/settings?tab=importAutomation", icon: Bolt, label: "Import-Automatisierung" },
+          ],
+        },
+      ],
+    },
   ];
 
   const toggleSection = (href: string) => {
@@ -145,25 +213,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const isItemActive = (item: NavItem): boolean => {
-    if (item.children) {
-      return item.children.some(child => {
-        const baseHref = child.href.split("?")[0];
-        return location === baseHref || location.startsWith(baseHref + "/") ||
-          (child.href.includes("?") && location + window.location.search === child.href);
-      });
-    }
-    return location === item.href || (item.href !== "/" && location.startsWith(item.href));
-  };
+  const baseHrefOf = (href: string) => href.split("?")[0];
 
   const isChildActive = (child: NavItem): boolean => {
-    const baseHref = child.href.split("?")[0];
-    // Exact match for base routes
-    if (!child.href.includes("?")) {
-      return location === baseHref;
-    }
-    // For query-filtered routes, check if current URL matches
+    const baseHref = baseHrefOf(child.href);
+    if (!child.href.includes("?")) return location === baseHref;
     return location === baseHref && window.location.search === "?" + child.href.split("?")[1];
+  };
+
+  const isItemActive = (item: NavItem): boolean => {
+    if (item.children) {
+      return item.children.some(child => isChildActive(child)) ||
+        (location === item.href);
+    }
+    return location === item.href || (item.href !== "/" && location.startsWith(item.href));
   };
 
   const renderNavItem = (item: NavItem) => {
@@ -174,148 +237,39 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (hasChildren) {
       return (
         <div key={item.href}>
-          {item.separator && <div className="my-2 mx-3 border-t" style={{ borderColor: "oklch(0.25 0.03 240)" }} />}
           <div
             className={cn(
-              "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer"
+              "sb-item group",
+              isActive && !isExpanded && "sb-item--active"
             )}
-            style={{
-              backgroundColor: isActive && !isExpanded ? "oklch(0.25 0.08 240)" : "transparent",
-              color: isActive ? "oklch(0.88 0.01 240)" : "oklch(0.60 0.03 240)",
-            }}
-            onMouseEnter={e => {
-              if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.24 0.04 240)";
-            }}
-            onMouseLeave={e => {
-              if (!isActive || isExpanded) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-            }}
             onClick={() => toggleSection(item.href)}
           >
             <item.icon className="h-4 w-4 flex-shrink-0" />
-            <span className="flex-1 text-[13px]">{item.label}</span>
+            <span className="flex-1 truncate">{item.label}</span>
             {item.badge && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
-                style={{ backgroundColor: "oklch(0.55 0.22 25)", color: "white", minWidth: "18px", textAlign: "center" }}>
-                {typeof item.badge === 'number' && item.badge > 99 ? '99+' : item.badge}
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                style={{ backgroundColor: "var(--klax-accent)", color: "var(--klax-accent-ink)", minWidth: 18, textAlign: "center" }}
+              >
+                {typeof item.badge === "number" && item.badge > 99 ? "99+" : item.badge}
               </span>
             )}
-            {isExpanded ? (
-              <ChevronDown className="h-3 w-3 opacity-50" />
-            ) : (
-              <ChevronRight className="h-3 w-3 opacity-50" />
-            )}
+            {isExpanded
+              ? <ChevronDown className="h-3 w-3 opacity-50" />
+              : <ChevronRight className="h-3 w-3 opacity-50" />}
           </div>
           {isExpanded && (
-            <div className="ml-4 mt-0.5 space-y-0.5">
+            <div className="mt-0.5">
               {item.children!.map(child => {
-                // Gruppe mit eigenen Kindern (z.B. Kunden/Lieferanten unter Rechnungen)
-                if (child.children && child.children.length > 0) {
-                  const groupExpanded = expandedSections.has(item.href + child.href);
-                  const groupActive = child.children.some(gc => {
-                    const base = gc.href.split("?")[0];
-                    return location === base || location.startsWith(base + "/");
-                  });
-                  return (
-                    <div key={child.href}>
-                      <div
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] cursor-pointer transition-all"
-                        style={{
-                          color: groupActive ? "oklch(0.88 0.01 240)" : "oklch(0.52 0.03 240)",
-                          fontWeight: groupActive ? 600 : 400,
-                        }}
-                        onMouseEnter={e => {
-                          (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.04 240)";
-                          (e.currentTarget as HTMLElement).style.color = "oklch(0.75 0.03 240)";
-                        }}
-                        onMouseLeave={e => {
-                          (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-                          (e.currentTarget as HTMLElement).style.color = groupActive ? "oklch(0.88 0.01 240)" : "oklch(0.52 0.03 240)";
-                        }}
-                        onClick={() => {
-                          setExpandedSections(prev => {
-                            const next = new Set(prev);
-                            const key = item.href + child.href;
-                            if (next.has(key)) next.delete(key); else next.add(key);
-                            return next;
-                          });
-                        }}
-                      >
-                        <child.icon className="h-3 w-3 flex-shrink-0 opacity-70" />
-                        <span className="flex-1">{child.label}</span>
-                        {groupExpanded
-                          ? <ChevronDown className="h-2.5 w-2.5 opacity-50" />
-                          : <ChevronRight className="h-2.5 w-2.5 opacity-50" />}
-                      </div>
-                      {groupExpanded && (
-                        <div className="ml-4 mt-0.5 space-y-0.5">
-                          {child.children.map(gc => {
-                            const gcBase = gc.href.split("?")[0];
-                            const gcActive = !gc.href.includes("?")
-                              ? location === gcBase
-                              : location === gcBase && window.location.search === "?" + gc.href.split("?")[1];
-                            return (
-                              <Link key={gc.href} href={gc.href}>
-                                <div
-                                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] cursor-pointer transition-all"
-                                  style={{
-                                    backgroundColor: gcActive ? "oklch(0.30 0.10 240)" : "transparent",
-                                    color: gcActive ? "white" : "oklch(0.48 0.03 240)",
-                                    fontWeight: gcActive ? 600 : 400,
-                                  }}
-                                  onMouseEnter={e => {
-                                    if (!gcActive) {
-                                      (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.04 240)";
-                                      (e.currentTarget as HTMLElement).style.color = "oklch(0.70 0.03 240)";
-                                    }
-                                  }}
-                                  onMouseLeave={e => {
-                                    if (!gcActive) {
-                                      (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-                                      (e.currentTarget as HTMLElement).style.color = "oklch(0.48 0.03 240)";
-                                    }
-                                  }}
-                                  onClick={() => setMobileOpen(false)}
-                                >
-                                  <gc.icon className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
-                                  <span>{gc.label}</span>
-                                </div>
-                              </Link>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-                // Normales Kind ohne eigene Kinder
-                const childActive = isChildActive(child);
+                const active = isChildActive(child);
                 return (
                   <Link key={child.href} href={child.href}>
                     <div
-                      className={cn(
-                        "flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px] transition-all cursor-pointer"
-                      )}
-                      style={{
-                        backgroundColor: childActive ? "oklch(0.30 0.10 240)" : "transparent",
-                        color: childActive ? "white" : "oklch(0.52 0.03 240)",
-                        fontWeight: childActive ? 600 : 400,
-                      }}
-                      onMouseEnter={e => {
-                        if (!childActive) {
-                          (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.04 240)";
-                          (e.currentTarget as HTMLElement).style.color = "oklch(0.75 0.03 240)";
-                        }
-                      }}
-                      onMouseLeave={e => {
-                        if (!childActive) {
-                          (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-                          (e.currentTarget as HTMLElement).style.color = "oklch(0.52 0.03 240)";
-                        }
-                      }}
+                      className={cn("sb-item sb-sub", active && "sb-item--active")}
                       onClick={() => setMobileOpen(false)}
                     >
                       <child.icon className="h-3 w-3 flex-shrink-0 opacity-70" />
-                      <span>{child.label}</span>
+                      <span className="truncate">{child.label}</span>
                     </div>
                   </Link>
                 );
@@ -326,76 +280,131 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       );
     }
 
-    // Top-level items without children (Dashboard, Inbox)
     return (
       <Link key={item.href} href={item.href}>
         <div
-          className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer"
-          )}
-          style={{
-            backgroundColor: isActive ? "oklch(0.30 0.10 240)" : "transparent",
-            color: isActive ? "white" : "oklch(0.60 0.03 240)",
-          }}
-          onMouseEnter={e => {
-            if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.24 0.04 240)";
-          }}
-          onMouseLeave={e => {
-            if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-          }}
+          className={cn("sb-item", isActive && "sb-item--active")}
           onClick={() => setMobileOpen(false)}
         >
           <item.icon className="h-4 w-4 flex-shrink-0" />
-          <span className="flex-1 text-[13px]">{item.label}</span>
+          <span className="flex-1 truncate">{item.label}</span>
           {item.badge && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
-              style={{ backgroundColor: "oklch(0.55 0.22 25)", color: "white", minWidth: "18px", textAlign: "center" }}>
-              {typeof item.badge === 'number' && item.badge > 99 ? '99+' : item.badge}
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ backgroundColor: "var(--neg)", color: "#fff", minWidth: 18, textAlign: "center" }}
+            >
+              {typeof item.badge === "number" && item.badge > 99 ? "99+" : item.badge}
             </span>
           )}
-          {isActive && <ChevronRight className="h-3 w-3 opacity-50" />}
         </div>
       </Link>
     );
   };
 
-  // Find current page label for header
-  const findLabel = (items: NavItem[]): string => {
-    for (const item of items) {
-      if (item.children) {
-        for (const child of item.children) {
-          const baseHref = child.href.split("?")[0];
-          if (location === baseHref || location.startsWith(baseHref + "/")) return child.label;
+  const findLabel = (sections: NavSection[]): string => {
+    for (const sec of sections) {
+      for (const item of sec.items) {
+        if (item.children) {
+          for (const child of item.children) {
+            const base = baseHrefOf(child.href);
+            if (location === base || location.startsWith(base + "/")) return child.label;
+          }
         }
+        if (location === item.href || (item.href !== "/" && location.startsWith(item.href))) return item.label;
       }
-      if (location === item.href || (item.href !== "/" && location.startsWith(item.href))) return item.label;
     }
     return "Dashboard";
   };
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      {/* Mobile overlay */}
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{ background: "var(--paper)", color: "var(--ink)" }}
+    >
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+          className="fixed inset-0 bg-black/40 z-20 lg:hidden"
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       {/* Sidebar */}
-      <aside className={cn(
-        "fixed inset-y-0 left-0 z-30 w-60 flex flex-col transition-transform duration-200 lg:relative lg:translate-x-0",
-        mobileOpen ? "translate-x-0" : "-translate-x-full"
-      )} style={{ backgroundColor: "oklch(0.16 0.02 240)", borderRight: "1px solid oklch(0.24 0.03 240)" }}>
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-30 flex flex-col transition-transform duration-200 lg:relative lg:translate-x-0",
+          mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        )}
+        style={{
+          width: 232,
+          background: "var(--paper)",
+          borderRight: "1px solid var(--hair)",
+        }}
+      >
+        {/* Brand / Org */}
+        <div
+          className="flex items-center gap-2.5 px-4 py-4"
+          style={{ borderBottom: "1px solid var(--hair)" }}
+        >
+          <div
+            className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0"
+            style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
+          >
+            <span className="font-semibold text-[13px] tracking-wide">K</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold truncate" style={{ color: "var(--ink)" }}>
+              KLAX
+            </div>
+            <div className="text-[10.5px] tracking-wider uppercase" style={{ color: "var(--ink-4)" }}>
+              Buchhaltung
+            </div>
+          </div>
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="lg:hidden p-1 rounded"
+            style={{ color: "var(--ink-3)" }}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
 
-        {/* Logo + Org-Switcher */}
-        <div className="flex items-center justify-between px-4 py-4 border-b" style={{ borderColor: "oklch(0.24 0.03 240)" }}>
-          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-            {companyData?.logoUrl && (
-              <img src={companyData.logoUrl} alt="Logo" className="h-7 w-auto object-contain flex-shrink-0" />
-            )}
-            <div className="min-w-0 flex-1">
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto px-3 py-2">
+          {SECTIONS.map((section, idx) => {
+            const visibleItems = section.items.filter(i => !i.adminOnly || user?.role === "admin");
+            if (visibleItems.length === 0) return null;
+            return (
+              <div key={idx}>
+                {section.group && <div className="sb-group">{section.group}</div>}
+                {visibleItems.map(renderNavItem)}
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* Settings link */}
+        <div className="px-3 pt-2" style={{ borderTop: "1px solid var(--hair)" }}>
+          <Link href="/settings">
+            <div className={cn("sb-item", location.startsWith("/settings") && "sb-item--active")}>
+              <Settings className="h-4 w-4 flex-shrink-0" />
+              <span className="flex-1">Einstellungen</span>
+            </div>
+          </Link>
+        </div>
+
+        {/* User + Org section */}
+        <div className="px-3 py-3">
+          <div
+            className="flex items-center gap-2.5 rounded-md px-2 py-2 mb-1"
+            style={{ background: "var(--surface-2)" }}
+          >
+            <div
+              className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0"
+              style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
+            >
+              {userInitials}
+            </div>
+            <div className="flex-1 min-w-0">
               {hasMultipleOrgs ? (
                 <Select
                   value={String(myOrgs?.find(o => o.isCurrent)?.id ?? "")}
@@ -403,10 +412,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                   <SelectTrigger
                     className="h-auto min-h-0 px-0 py-0 border-0 bg-transparent hover:opacity-80 shadow-none focus:ring-0"
-                    style={{ color: "oklch(0.92 0.01 240)" }}
+                    style={{ color: "var(--ink)" }}
                   >
                     <SelectValue>
-                      <span className="text-sm font-bold truncate block">{currentOrgName}</span>
+                      <span className="text-[12px] font-medium truncate block">{currentOrgName}</span>
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -418,52 +427,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </SelectContent>
                 </Select>
               ) : (
-                <div className="text-sm font-bold truncate" style={{ color: "oklch(0.92 0.01 240)" }}>
+                <div className="text-[12px] font-medium truncate" style={{ color: "var(--ink)" }}>
                   {currentOrgName}
                 </div>
               )}
-              <div className="text-[10px] font-medium mt-0.5 tracking-wider" style={{ color: "oklch(0.45 0.02 240)" }}>KLAX</div>
-            </div>
-          </div>
-          <button
-            onClick={() => setMobileOpen(false)}
-            className="lg:hidden p-1 rounded flex-shrink-0"
-            style={{ color: "oklch(0.50 0.02 240)" }}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-          {NAV_ITEMS
-            .filter(item => !item.adminOnly || user?.role === "admin")
-            .map(item => renderNavItem(item))}
-        </nav>
-
-        {/* User section */}
-        <div className="px-2 py-3 border-t" style={{ borderColor: "oklch(0.24 0.03 240)" }}>
-          <div className="flex items-center gap-2.5 px-3 py-2 rounded-lg mb-1"
-            style={{ backgroundColor: "oklch(0.20 0.03 240)" }}>
-            <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
-              style={{ backgroundColor: "oklch(0.35 0.12 240)", color: "white" }}>
-              {user?.name?.charAt(0) ?? "U"}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-medium truncate" style={{ color: "oklch(0.85 0.01 240)" }}>
-                {user?.name ?? "Benutzer"}
-              </div>
-              <div className="text-[10px] truncate" style={{ color: "oklch(0.48 0.02 240)" }}>
-                {user?.email ?? ""}
+              <div className="text-[10.5px] truncate" style={{ color: "var(--ink-3)" }}>
+                GJ {fiscalYear} · {user?.name ?? ""}
               </div>
             </div>
           </div>
           <button
             onClick={() => logout()}
-            className="flex items-center gap-2.5 w-full px-3 py-1.5 rounded-lg text-[12px] transition-colors"
-            style={{ color: "oklch(0.48 0.02 240)" }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "oklch(0.85 0.01 240)"; (e.currentTarget as HTMLElement).style.backgroundColor = "oklch(0.22 0.03 240)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "oklch(0.48 0.02 240)"; (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+            className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-[12px]"
+            style={{ color: "var(--ink-3)" }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
           >
             <LogOut className="h-3.5 w-3.5" />
             <span>Abmelden</span>
@@ -471,26 +449,30 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main content */}
+      {/* Main */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top bar */}
-        <header className="flex items-center gap-4 px-4 lg:px-6 py-2.5 border-b border-border bg-card flex-shrink-0">
+        {/* Topbar */}
+        <header
+          className="flex items-center gap-3 px-4 lg:px-6 py-2.5 flex-shrink-0"
+          style={{ borderBottom: "1px solid var(--hair)", background: "var(--surface)" }}
+        >
           <button
             onClick={() => setMobileOpen(true)}
-            className="lg:hidden p-2 rounded-lg hover:bg-muted transition-colors"
+            className="lg:hidden p-2 rounded-md"
+            style={{ color: "var(--ink-3)" }}
           >
             <Menu className="h-5 w-5" />
           </button>
 
-          <div className="flex-1">
-            <h1 className="text-sm font-semibold text-foreground">
-              {findLabel(NAV_ITEMS)}
+          <div className="flex-1 min-w-0">
+            <h1 className="text-[14px] font-semibold truncate" style={{ color: "var(--ink)" }}>
+              {findLabel(SECTIONS)}
             </h1>
           </div>
 
           <div className="flex items-center gap-2">
             <Select value={String(fiscalYear)} onValueChange={v => setFiscalYear(Number(v))}>
-              <SelectTrigger className="w-32 h-9 text-sm font-semibold border-2 border-primary/40 bg-primary/5 hover:bg-primary/10 gap-1.5">
+              <SelectTrigger className="w-24 h-7 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -498,7 +480,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   const info = fiscalYearInfos?.find(fi => fi.year === y);
                   const closed = info?.isClosed ?? false;
                   return (
-                    <SelectItem key={y} value={String(y)} className="font-medium">
+                    <SelectItem key={y} value={String(y)}>
                       GJ {y}{closed ? " 🔒" : ""}
                     </SelectItem>
                   );
@@ -507,10 +489,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </Select>
             {totalInbox > 0 && (
               <Link href="/inbox">
-                <div className="relative cursor-pointer p-1.5 rounded-lg hover:bg-muted transition-colors">
-                  <Bell className="h-4 w-4 text-muted-foreground" />
-                  <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full text-[9px] flex items-center justify-center font-bold"
-                    style={{ backgroundColor: "oklch(0.55 0.22 25)", color: "white" }}>
+                <div
+                  className="relative cursor-pointer p-1.5 rounded-md"
+                  style={{ color: "var(--ink-3)" }}
+                >
+                  <Bell className="h-4 w-4" />
+                  <span
+                    className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full text-[9px] flex items-center justify-center font-semibold"
+                    style={{ backgroundColor: "var(--neg)", color: "white" }}
+                  >
                     {totalInbox > 9 ? "9+" : totalInbox}
                   </span>
                 </div>
@@ -519,10 +506,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto bg-background">
+        <main className="flex-1 overflow-y-auto" style={{ background: "var(--paper)" }}>
           {children}
         </main>
+
+        <CopilotDock />
       </div>
     </div>
   );

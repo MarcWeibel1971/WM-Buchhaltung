@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   CalendarCheck, ChevronRight, CheckCircle2, XCircle, AlertTriangle,
   ArrowRight, Loader2, FileText, Calculator, RotateCcw, Lock,
-  ChevronDown, ChevronUp, Info, Building2, TrendingDown, Receipt, ArrowLeftRight
+  ChevronDown, ChevronUp, Info, Building2, TrendingDown, Receipt, ArrowLeftRight, Sparkles
 } from "lucide-react";
 
 const BOOKING_TYPE_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
@@ -157,12 +157,14 @@ export default function YearEnd() {
   const nextNewYear = existingYears.includes(currentYear + 1) ? currentYear + 2 : currentYear + 1;
 
   return (
-    <div className="space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Jahresabschluss</h1>
-          <p className="text-muted-foreground">Geschäftsjahr abschliessen, Saldovortrag und Jahresendbuchungen</p>
+          <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Jahresabschluss</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            Geschäftsjahr abschliessen, Saldovortrag und Jahresendbuchungen
+          </p>
         </div>
         <Button
           variant="outline"
@@ -174,87 +176,137 @@ export default function YearEnd() {
         </Button>
       </div>
 
-      {/* Fiscal Year Selector */}
-      <div className="flex gap-3 flex-wrap">
-        {fiscalYears.map(fy => (
-          <Button
-            key={fy.year}
-            variant={selectedYear === fy.year ? "default" : "outline"}
-            onClick={() => setSelectedYear(fy.year)}
-            className="relative"
-          >
-            GJ {fy.year}
-            <Badge
-              variant={fy.status === "closed" ? "default" : fy.status === "closing" ? "secondary" : "outline"}
-              className="ml-2 text-xs"
+      {/* GJ-Tabs (KLAX underline style) */}
+      <div
+        className="flex items-center gap-5 overflow-x-auto"
+        style={{ borderBottom: "1px solid var(--hair)" }}
+      >
+        {fiscalYears.map(fy => {
+          const isActive = selectedYear === fy.year;
+          const statusLabel =
+            fy.status === "closed" ? "Abgeschlossen" :
+            fy.status === "closing" ? "Im Abschluss" : "Offen";
+          const pillClass =
+            fy.status === "closed" ? "pill--pos" :
+            fy.status === "closing" ? "pill--warn" : "pill--info";
+          return (
+            <button
+              key={fy.year}
+              onClick={() => setSelectedYear(fy.year)}
+              className="relative py-2.5 flex items-center gap-2 text-[13px] whitespace-nowrap"
+              style={{
+                color: isActive ? "var(--ink)" : "var(--ink-3)",
+                fontWeight: isActive ? 500 : 400,
+              }}
             >
-              {fy.status === "closed" ? "Abgeschlossen" : fy.status === "closing" ? "Im Abschluss" : "Offen"}
-            </Badge>
-          </Button>
-        ))}
+              <span>GJ {fy.year}</span>
+              <span className={`pill ${pillClass}`}>{statusLabel}</span>
+              {isActive && (
+                <span
+                  className="absolute left-0 right-0 -bottom-px h-[2px]"
+                  style={{ background: "var(--klax-accent)" }}
+                />
+              )}
+            </button>
+          );
+        })}
         {fiscalYears.length === 0 && (
-          <p className="text-muted-foreground text-sm py-2">Noch keine Geschäftsjahre vorhanden. Erstellen Sie ein neues Geschäftsjahr.</p>
+          <p className="text-[13px] py-2" style={{ color: "var(--ink-3)" }}>
+            Noch keine Geschäftsjahre vorhanden.
+          </p>
         )}
       </div>
 
       {selectedYear && (
         <>
-          {/* Progress Steps */}
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                {steps.map((s, i) => (
-                  <div key={i} className="flex items-center">
-                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      i < step ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                      i === step ? "bg-primary/10 text-primary font-medium" :
-                      "text-muted-foreground"
-                    }`}>
-                      {i < step ? <CheckCircle2 className="h-5 w-5 text-green-600" /> : s.icon}
-                      <span className="text-sm hidden lg:inline">{s.label}</span>
+          {/* 5-Step Stepper */}
+          <div className="klax-card p-5">
+            <div className="flex items-center justify-between">
+              {steps.map((s, i) => {
+                const isDone = i < step;
+                const isActive = i === step;
+                return (
+                  <div key={i} className="flex items-center flex-1">
+                    <div
+                      className="flex items-center gap-2 px-3 py-2 rounded-md transition-colors"
+                      style={{
+                        background: isDone ? "var(--pos-soft)" : isActive ? "var(--klax-accent-soft)" : "transparent",
+                        color: isDone ? "var(--pos)" : isActive ? "var(--klax-accent)" : "var(--ink-3)",
+                        fontWeight: isActive ? 500 : 400,
+                      }}
+                    >
+                      <span
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-medium"
+                        style={{
+                          background: isDone ? "var(--pos)" : isActive ? "var(--klax-accent)" : "var(--surface-2)",
+                          color: isDone || isActive ? "#fff" : "var(--ink-3)",
+                        }}
+                      >
+                        {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : i + 1}
+                      </span>
+                      <span className="text-[12.5px] hidden lg:inline">{s.label}</span>
                     </div>
-                    {i < steps.length - 1 && <ChevronRight className="h-4 w-4 text-muted-foreground mx-1" />}
+                    {i < steps.length - 1 && (
+                      <ChevronRight className="h-4 w-4 mx-1" style={{ color: "var(--ink-4)" }} />
+                    )}
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+                );
+              })}
+            </div>
+          </div>
 
-          {/* Summary Cards */}
+          {/* KI-Callout */}
+          <div
+            className="klax-card p-4 flex items-start gap-3"
+            style={{ background: "var(--ai-soft)", borderColor: "var(--ai-line)" }}
+          >
+            <span
+              className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
+              style={{ background: "var(--ai)", color: "#fff" }}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+            </span>
+            <div className="flex-1 text-[12.5px]" style={{ color: "var(--ink)" }}>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold" style={{ color: "var(--ai)" }}>KLAX Abschluss-Assistent</span>
+                <span className="pill pill--ai">Haiku 4.5</span>
+              </div>
+              <p className="mt-1" style={{ color: "var(--ink-2)" }}>
+                KLAX prüft transitorische Buchungen, Abschreibungen und offene Kreditoren
+                und schlägt Jahresendbuchungen vor.
+              </p>
+            </div>
+          </div>
+
+          {/* 4 KPI Tiles */}
           {summary && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <Card>
-                <CardContent className="pt-4 pb-4">
-                  <p className="text-xs text-muted-foreground uppercase">Status</p>
-                  <p className="text-lg font-semibold mt-1">
-                    {currentFY?.status === "closed" ? "Abgeschlossen" :
-                     currentFY?.status === "closing" ? "Im Abschluss" : "Offen"}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-4 pb-4">
-                  <p className="text-xs text-muted-foreground uppercase">Vorschläge</p>
-                  <p className="text-lg font-semibold mt-1">{suggestedCount} offen</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-4 pb-4">
-                  <p className="text-xs text-muted-foreground uppercase">Genehmigt</p>
-                  <p className="text-lg font-semibold mt-1 text-green-600">{approvedCount}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-4 pb-4">
-                  <p className="text-xs text-muted-foreground uppercase">Saldovortrag</p>
-                  <p className="text-lg font-semibold mt-1">
-                    {currentFY?.balanceCarriedForward ?
-                      <span className="text-green-600">Erledigt</span> :
-                      <span className="text-muted-foreground">Ausstehend</span>
-                    }
-                  </p>
-                </CardContent>
-              </Card>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="klax-card p-4">
+                <div className="text-[10.5px] uppercase tracking-wider" style={{ color: "var(--ink-3)" }}>Status</div>
+                <div className="text-[14px] font-semibold mt-1.5" style={{ color: "var(--ink)" }}>
+                  {currentFY?.status === "closed" ? "Abgeschlossen" :
+                   currentFY?.status === "closing" ? "Im Abschluss" : "Offen"}
+                </div>
+              </div>
+              <div className="klax-card p-4">
+                <div className="text-[10.5px] uppercase tracking-wider" style={{ color: "var(--ink-3)" }}>Vorschläge</div>
+                <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--warn)" }}>
+                  {suggestedCount}
+                </div>
+                <div className="text-[11px]" style={{ color: "var(--ink-4)" }}>offen</div>
+              </div>
+              <div className="klax-card p-4">
+                <div className="text-[10.5px] uppercase tracking-wider" style={{ color: "var(--ink-3)" }}>Genehmigt</div>
+                <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--pos)" }}>
+                  {approvedCount}
+                </div>
+              </div>
+              <div className="klax-card p-4">
+                <div className="text-[10.5px] uppercase tracking-wider" style={{ color: "var(--ink-3)" }}>Saldovortrag</div>
+                <div className="text-[14px] font-semibold mt-1.5" style={{ color: currentFY?.balanceCarriedForward ? "var(--pos)" : "var(--ink-3)" }}>
+                  {currentFY?.balanceCarriedForward ? "Erledigt" : "Ausstehend"}
+                </div>
+              </div>
             </div>
           )}
 

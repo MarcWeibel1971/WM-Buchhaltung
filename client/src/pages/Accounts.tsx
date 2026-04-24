@@ -608,17 +608,55 @@ export default function Accounts() {
     );
   }
 
+  // Type-specific accent stripes
+  const TYPE_STRIPE: Record<string, string> = {
+    asset: "var(--pos)",
+    liability: "var(--neg)",
+    equity: "var(--klax-accent)",
+    revenue: "var(--info)",
+    expense: "var(--warn)",
+  };
+
+  // 5 KPI totals per type
+  const typeTotals: Record<string, number> = {};
+  for (const [type, accs] of Object.entries(grouped)) {
+    typeTotals[type] = 0; // filled async by AccountRow queries; show count instead
+  }
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-muted-foreground">
-          {accounts?.length ?? 0} Konten | Klicken Sie auf ein Konto für die Detailansicht
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
+      <div>
+        <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Kontenplan</h2>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          <span className="mono">{accounts?.length ?? 0}</span> Konten · Klicken Sie auf ein Konto für die Detailansicht
         </p>
+      </div>
+
+      {/* 5 Summary Tiles */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        {["asset", "liability", "equity", "revenue", "expense"].map(type => {
+          const count = grouped[type]?.length ?? 0;
+          return (
+            <div
+              key={type}
+              className="klax-card p-4"
+              style={{ borderLeft: `3px solid ${TYPE_STRIPE[type]}` }}
+            >
+              <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>
+                {ACCOUNT_TYPE_LABELS[type]}
+              </div>
+              <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>
+                {count}
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}>Konten</div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: "var(--ink-4)" }} />
           <Input
             placeholder="Konto suchen (Nr. oder Name)..."
             value={search}
@@ -637,20 +675,28 @@ export default function Accounts() {
             ))}
           </SelectContent>
         </Select>
-
       </div>
 
       {/* Grouped account list */}
       {Object.entries(grouped).map(([type, accs]) => (
-        <div key={type} className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 bg-muted/30 border-b border-border">
-            <h3 className="text-sm font-semibold text-foreground">
+        <div
+          key={type}
+          className="klax-card overflow-hidden"
+          style={{ borderLeft: `3px solid ${TYPE_STRIPE[type]}` }}
+        >
+          <div
+            className="px-4 py-2.5"
+            style={{ borderBottom: "1px solid var(--hair)", background: "var(--surface-2)" }}
+          >
+            <h3 className="text-[13px] font-semibold" style={{ color: "var(--ink)" }}>
               {ACCOUNT_TYPE_LABELS[type] ?? type}
-              <span className="text-xs font-normal text-muted-foreground ml-2">({accs.length} Konten)</span>
+              <span className="text-[11px] font-normal ml-2" style={{ color: "var(--ink-3)" }}>
+                ({accs.length} Konten)
+              </span>
             </h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="accounting-table">
+            <table className="k-table">
               <thead>
                 <tr>
                   <th className="w-24">Nr.</th>
@@ -675,9 +721,9 @@ export default function Accounts() {
       ))}
 
       {Object.keys(grouped).length === 0 && (
-        <div className="bg-card rounded-xl border border-border p-12 text-center">
-          <BookOpen className="h-8 w-8 mx-auto mb-2 text-muted-foreground opacity-30" />
-          <p className="text-muted-foreground">Keine Konten gefunden</p>
+        <div className="klax-card p-12 text-center">
+          <BookOpen className="h-8 w-8 mx-auto mb-2 opacity-30" style={{ color: "var(--ink-3)" }} />
+          <p style={{ color: "var(--ink-3)" }}>Keine Konten gefunden</p>
         </div>
       )}
     </div>

@@ -582,11 +582,13 @@ export default function Payroll() {
   });
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Lohnbuchhaltung</h2>
-          <p className="text-sm text-muted-foreground">Lohnabrechnung für mw und jm</p>
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Lohnbuchhaltung</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            Schweizer Lohnabrechnung mit AHV / IV / EO / ALV / BVG / UVG
+          </p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" className="gap-2"
@@ -599,7 +601,7 @@ export default function Payroll() {
             onClick={() => syncMutation.mutate({ year })}
             disabled={syncMutation.isPending}>
             <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
-            Aus Journal synchronisieren
+            Synchronisieren
           </Button>
           <Button size="sm" className="gap-2" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4" /> Lohnabrechnung
@@ -607,21 +609,44 @@ export default function Payroll() {
         </div>
       </div>
 
+      {/* Sozialversicherungssätze-Leiste {year} */}
+      <div className="klax-card--soft p-3 flex items-center gap-4 flex-wrap text-[12px]" style={{ color: "var(--ink-2)" }}>
+        <span className="k-label" style={{ marginRight: 4 }}>Sozialvers. {year}</span>
+        {[
+          { label: "AHV/IV/EO", val: "10.6%" },
+          { label: "ALV", val: "2.2%" },
+          { label: "BVG", val: "var." },
+          { label: "UVG", val: "0.86%" },
+          { label: "KTG", val: "1.5%" },
+        ].map(s => (
+          <span key={s.label} className="inline-flex items-center gap-1.5">
+            <span style={{ color: "var(--ink-3)" }}>{s.label}</span>
+            <span className="mono font-medium">{s.val}</span>
+          </span>
+        ))}
+      </div>
+
       {/* Employees overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {employees?.map(emp => (
-          <div key={emp.id} className="bg-card rounded-xl border border-border p-5 shadow-sm">
+          <div key={emp.id} className="klax-card p-5">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center font-semibold"
+                style={{ background: "var(--klax-accent-soft)", color: "var(--klax-accent)" }}
+              >
                 {emp.code.toUpperCase()}
               </div>
               <div>
-                <div className="font-semibold">{emp.firstName} {emp.lastName}</div>
-                <div className="text-xs text-muted-foreground">{emp.code}</div>
+                <div className="text-[13.5px] font-semibold" style={{ color: "var(--ink)" }}>
+                  {emp.firstName} {emp.lastName}
+                </div>
+                <div className="text-[11px]" style={{ color: "var(--ink-3)" }}>{emp.code}</div>
               </div>
             </div>
-            <div className="text-sm">
-              <span className="text-muted-foreground text-xs">AHV-Nr.:</span> {emp.ahvNumber ?? "–"}
+            <div className="text-[12.5px]">
+              <span className="text-[11px]" style={{ color: "var(--ink-3)" }}>AHV-Nr.: </span>
+              <span className="mono" style={{ color: "var(--ink)" }}>{emp.ahvNumber ?? "–"}</span>
             </div>
           </div>
         ))}

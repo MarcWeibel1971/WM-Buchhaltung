@@ -112,11 +112,11 @@ export default function Reports() {
   const profitPrev = totalRevenuePrev - totalExpensesPrev;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Berichte</h2>
-          <p className="text-sm text-muted-foreground">Erfolgsrechnung, Bilanz und Konten</p>
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Berichte</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>Erfolgsrechnung, Bilanz und Konten</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="gap-2" onClick={() => {
@@ -138,36 +138,36 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* KPI Summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Bilanzsumme</div>
-          <div className="text-xl font-bold font-mono">CHF {formatCHF(totalAssets)}</div>
+      {/* KPI Summary (KLAX Tiles) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="klax-card p-4">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Bilanzsumme</div>
+          <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{formatCHF(totalAssets)}</div>
           {totalAssetsPrev > 0 && (
-            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(totalAssetsPrev)}</div>
+            <div className="text-[11px] mt-1" style={{ color: "var(--ink-4)" }}>Vorjahr <span className="mono">{formatCHF(totalAssetsPrev)}</span></div>
           )}
         </div>
-        <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Ertrag</div>
-          <div className="text-xl font-bold font-mono amount-positive">CHF {formatCHF(totalRevenue)}</div>
+        <div className="klax-card p-4">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Ertrag</div>
+          <div className="display text-[22px] font-medium mt-1.5 amt-pos">{formatCHF(totalRevenue)}</div>
           {totalRevenuePrev > 0 && (
-            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(totalRevenuePrev)}</div>
+            <div className="text-[11px] mt-1" style={{ color: "var(--ink-4)" }}>Vorjahr <span className="mono">{formatCHF(totalRevenuePrev)}</span></div>
           )}
         </div>
-        <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Aufwand</div>
-          <div className="text-xl font-bold font-mono amount-negative">CHF {formatCHF(totalExpenses)}</div>
+        <div className="klax-card p-4">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Aufwand</div>
+          <div className="display text-[22px] font-medium mt-1.5 amt-neg">{formatCHF(totalExpenses)}</div>
           {totalExpensesPrev > 0 && (
-            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(totalExpensesPrev)}</div>
+            <div className="text-[11px] mt-1" style={{ color: "var(--ink-4)" }}>Vorjahr <span className="mono">{formatCHF(totalExpensesPrev)}</span></div>
           )}
         </div>
-        <div className={`bg-card rounded-xl border p-4 shadow-sm ${profit >= 0 ? "border-green-200" : "border-red-200"}`}>
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Ergebnis</div>
-          <div className={`text-xl font-bold font-mono ${profit >= 0 ? "amount-positive" : "amount-negative"}`}>
-            CHF {formatCHF(profit)}
+        <div className="klax-card p-4" style={{ background: "var(--klax-accent-soft)", borderColor: "var(--klax-accent-line)" }}>
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--klax-accent)" }}>Ergebnis</div>
+          <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: profit >= 0 ? "var(--pos)" : "var(--neg)" }}>
+            {formatCHF(profit)}
           </div>
           {profitPrev !== 0 && (
-            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(profitPrev)}</div>
+            <div className="text-[11px] mt-1" style={{ color: "var(--ink-3)" }}>Vorjahr <span className="mono">{formatCHF(profitPrev)}</span></div>
           )}
         </div>
       </div>

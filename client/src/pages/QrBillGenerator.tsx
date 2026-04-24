@@ -302,14 +302,11 @@ export default function QrBillGenerator() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
+    <div className="px-6 lg:px-8 py-6 max-w-[1100px] mx-auto space-y-5">
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-3">
-          <QrCode className="h-7 w-7 text-primary" />
-          QR-Rechnung erstellen
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Erstellen Sie eine professionelle Rechnung mit QR-Zahlungsteil oder einen einfachen QR-Einzahlungsschein.
+        <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>QR-Rechnung erstellen</h1>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          Professionelle Rechnung mit Swiss QR-Zahlungsteil oder einfacher QR-Einzahlungsschein.
         </p>
       </div>
 
@@ -326,22 +323,20 @@ export default function QrBillGenerator() {
         </TabsList>
 
         {/* ─── Invoice Template Tab ─────────────────────────────────────────── */}
-        <TabsContent value="invoice" className="space-y-6 mt-6">
+        <TabsContent value="invoice" className="space-y-5 mt-6">
           {/* Creditor info (read-only from settings) */}
-          <Card className="bg-muted/30">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Absender (aus Firmeneinstellungen)</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm">
+          <div className="klax-card--soft p-4">
+            <div className="k-label mb-2">Absender (aus Firmeneinstellungen)</div>
+            <div className="text-[13px]" style={{ color: "var(--ink)" }}>
               <p className="font-semibold">{companySettings?.companyName}</p>
               {companySettings?.street && <p>{companySettings.street}</p>}
               <p>{companySettings?.zipCode} {companySettings?.city}</p>
               {companySettings?.phone && <p>Tel: {companySettings.phone}</p>}
               {companySettings?.email && <p>{companySettings.email}</p>}
-              {companySettings?.uid && <p className="text-xs mt-1">MWST-Nr. {companySettings.uid}</p>}
-              <p className="text-xs mt-1 font-mono">IBAN: {qrSettings.iban}</p>
-            </CardContent>
-          </Card>
+              {companySettings?.uid && <p className="text-[11px] mt-1" style={{ color: "var(--ink-3)" }}>MWST-Nr. {companySettings.uid}</p>}
+              <p className="text-[11px] mt-1 mono" style={{ color: "var(--ink-3)" }}>IBAN: {qrSettings.iban}</p>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Recipient */}

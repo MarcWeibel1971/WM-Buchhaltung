@@ -422,37 +422,42 @@ export default function DocumentDetail() {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" style={{ background: "var(--paper)" }}>
       {/* Header */}
-      <div className="flex items-center gap-3 p-4 border-b border-border bg-card">
+      <div
+        className="flex items-center gap-3 p-4"
+        style={{ borderBottom: "1px solid var(--hair)", background: "var(--surface)" }}
+      >
         <Button variant="ghost" size="icon" onClick={() => navigate("/documents")}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-bold truncate">{doc.filename}</h2>
-          <div className="flex items-center gap-2 mt-0.5">
-            <Badge variant="outline" className="text-xs">
+          <h2 className="display text-[18px] font-medium truncate" style={{ color: "var(--ink)" }}>
+            {doc.filename}
+          </h2>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            <span className="pill">
               {DOC_TYPE_LABELS[doc.documentType] || doc.documentType}
-            </Badge>
+            </span>
             {doc.matchStatus === "matched" || doc.matchStatus === "manual" ? (
-              <Badge className="text-xs bg-green-100 text-green-700 border-green-200">
-                <CheckCircle2 className="w-3 h-3 mr-1" />
+              <span className="pill pill--pos">
+                <CheckCircle2 className="w-3 h-3" />
                 Mit Bank abgeglichen
-              </Badge>
+              </span>
             ) : (
-              <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
-                <AlertCircle className="w-3 h-3 mr-1" />
+              <span className="pill pill--warn">
+                <AlertCircle className="w-3 h-3" />
                 Nicht verbucht
-              </Badge>
+              </span>
             )}
             {bookingSuggestion && (
-              <Badge className={`text-xs ${bookingSuggestion.source === 'auto_learn' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-purple-100 text-purple-700 border-purple-200'}`}>
+              <span className={bookingSuggestion.source === 'auto_learn' ? 'pill pill--info' : 'pill pill--ai'}>
                 {bookingSuggestion.source === 'auto_learn' ? (
-                  <><GraduationCap className="w-3 h-3 mr-1" />Gelernt</>
+                  <><GraduationCap className="w-3 h-3" />Gelernt</>
                 ) : (
-                  <><Sparkles className="w-3 h-3 mr-1" />KI-Vorschlag</>
+                  <><Sparkles className="w-3 h-3" />KI-Vorschlag</>
                 )}
-              </Badge>
+              </span>
             )}
           </div>
         </div>
@@ -464,11 +469,7 @@ export default function DocumentDetail() {
             disabled={reanalyzeMutation.isPending}
             className="gap-1.5"
           >
-            {reanalyzeMutation.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
+            {reanalyzeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Neu analysieren
           </Button>
           <Button
@@ -477,11 +478,7 @@ export default function DocumentDetail() {
             disabled={!isDirty || updateMutation.isPending}
             className="gap-1.5"
           >
-            {updateMutation.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Save className="w-4 h-4" />
-            )}
+            {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Speichern
           </Button>
         </div>
@@ -489,13 +486,17 @@ export default function DocumentDetail() {
 
       {/* Split Panel */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Document Preview */}
-        <div className="w-1/2 border-r border-border bg-muted/30 flex flex-col">
-          <div className="flex-1 overflow-auto p-2">
+        {/* Left: Document Preview — KLAX paper surface */}
+        <div
+          className="w-1/2 flex flex-col"
+          style={{ borderRight: "1px solid var(--hair)", background: "var(--surface-2)" }}
+        >
+          <div className="flex-1 overflow-auto p-3">
             {isPdf ? (
               <iframe
                 src={doc.s3Url}
-                className="w-full h-full min-h-[70vh] rounded-lg border border-border"
+                className="w-full h-full min-h-[70vh]"
+                style={{ background: "var(--surface)", border: "1px solid var(--hair)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2)" }}
                 title="PDF Vorschau"
               />
             ) : isImage ? (
@@ -503,18 +504,20 @@ export default function DocumentDetail() {
                 <img
                   src={doc.s3Url}
                   alt={doc.filename}
-                  className="max-w-full max-h-full object-contain rounded-lg shadow-sm"
+                  className="max-w-full max-h-full object-contain"
+                  style={{ borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2)" }}
                 />
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                <FileText className="w-16 h-16 mb-3 opacity-30" />
-                <p>Vorschau nicht verfügbar</p>
+              <div className="flex flex-col items-center justify-center h-full" style={{ color: "var(--ink-3)" }}>
+                <FileText className="w-14 h-14 mb-3 opacity-30" />
+                <p className="text-[13px]">Vorschau nicht verfügbar</p>
                 <a
                   href={doc.s3Url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary mt-2 text-sm flex items-center gap-1"
+                  className="mt-2 text-[12.5px] flex items-center gap-1 hover:underline"
+                  style={{ color: "var(--klax-accent)" }}
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   Datei öffnen

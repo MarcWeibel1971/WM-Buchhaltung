@@ -88,17 +88,89 @@ export default function CreditCard() {
     setExpandedId(prev => prev === id ? null : id);
   };
 
+  // Aggregate KPIs across statements
+  const kpiTotalAmount = (statements ?? []).reduce((s, st: any) => s + parseFloat(st.totalAmount || "0"), 0);
+  const kpiOpenCount = (statements ?? []).filter((st: any) => st.status !== "approved").length;
+  const kpiBookedCount = (statements ?? []).filter((st: any) => st.status === "approved").length;
+  const kpiCreditLimit = 20000; // visual placeholder — could come from settings
+  const kpiUtilization = Math.min(100, Math.round((kpiTotalAmount / kpiCreditLimit) * 100));
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       <div>
-        <h2 className="text-xl font-bold">Kreditkarte</h2>
-        <p className="text-sm text-muted-foreground">VISA mw – Sammelbelastung über Konto 1082</p>
+        <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Kreditkarte</h2>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          VISA mw – Sammelbelastung über Durchlaufkonto 1082
+        </p>
+      </div>
+
+      {/* Card Visualisierung + 4 KPIs */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
+        {/* Card Visual */}
+        <div
+          className="lg:col-span-2 p-6 rounded-[14px] flex flex-col justify-between text-white relative overflow-hidden"
+          style={{
+            background: "linear-gradient(135deg, var(--ink) 0%, #2A2822 60%, var(--klax-accent) 130%)",
+            minHeight: 180,
+            boxShadow: "var(--shadow-2)",
+          }}
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="text-[10.5px] uppercase tracking-wider opacity-70">Visa Business</div>
+              <div className="display text-[16px] font-medium mt-1">KLAX · Buchhaltung</div>
+            </div>
+            <CreditCardIcon className="h-6 w-6 opacity-80" />
+          </div>
+          <div>
+            <div className="font-mono text-[15px] tracking-[0.3em] opacity-90">•••• •••• •••• 4218</div>
+            <div className="flex items-center gap-4 mt-3 text-[10.5px] opacity-70">
+              <span>VALID THRU <span className="mono opacity-100">12/27</span></span>
+              <span>HOLDER <span className="opacity-100">M. WEIBEL</span></span>
+            </div>
+          </div>
+        </div>
+
+        {/* 4 KPIs */}
+        <div className="lg:col-span-3 grid grid-cols-2 gap-3">
+          <div className="klax-card p-4">
+            <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Abrechnung</div>
+            <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>
+              CHF {kpiTotalAmount.toLocaleString("de-CH", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}><span className="mono">{statements?.length ?? 0}</span> Abrechnungen</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Verbucht</div>
+            <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--pos)" }}>{kpiBookedCount}</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Zu prüfen</div>
+            <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--warn)" }}>{kpiOpenCount}</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Kreditlimit</div>
+            <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>
+              CHF {kpiCreditLimit.toLocaleString("de-CH")}
+            </div>
+            <div className="mt-1.5 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--hair)" }}>
+              <div
+                style={{
+                  width: `${kpiUtilization}%`,
+                  height: "100%",
+                  background: kpiUtilization > 80 ? "var(--neg)" : kpiUtilization > 50 ? "var(--warn)" : "var(--pos)",
+                }}
+              />
+            </div>
+            <div className="text-[10.5px] mt-1 mono" style={{ color: "var(--ink-3)" }}>{kpiUtilization}% genutzt</div>
+          </div>
+        </div>
       </div>
 
       {/* Upload */}
-      <div className="bg-card rounded-xl border border-border p-5 shadow-sm">
-        <h3 className="font-semibold mb-3">Kreditkartenabrechnung hochladen</h3>
-        <p className="text-sm text-muted-foreground mb-4">
+      <div className="klax-card p-5">
+        <h3 className="text-[14px] font-semibold mb-2" style={{ color: "var(--ink)" }}>Kreditkartenabrechnung hochladen</h3>
+        <p className="text-[12.5px] mb-3" style={{ color: "var(--ink-3)" }}>
           Laden Sie die monatliche VISA-Abrechnung als PDF hoch. Die Belastungen werden als
           Sammelbelastung über das Durchlaufkonto 1082 verbucht.
         </p>
@@ -119,23 +191,26 @@ export default function CreditCard() {
           {uploading ? "Wird verarbeitet..." : "PDF hochladen"}
         </Button>
         {uploading && (
-          <div className="mt-3 flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
-            <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+          <div
+            className="mt-3 flex items-center gap-3 p-3 rounded-md"
+            style={{ background: "var(--ai-soft)", border: "1px solid var(--ai-line)", color: "var(--ai)" }}
+          >
+            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
             <div>
-              <p className="text-sm font-medium text-primary">KI liest Kreditkartenabrechnung...</p>
-              <p className="text-xs text-muted-foreground">Beträge und Positionen werden extrahiert. Bitte warten (15–30 Sek.).</p>
+              <p className="text-[13px] font-medium">KLAX liest Kreditkartenabrechnung…</p>
+              <p className="text-[11.5px] opacity-80">Beträge und Positionen werden extrahiert (15–30 Sek.).</p>
             </div>
           </div>
         )}
       </div>
 
       {/* Statements list */}
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-border">
-          <h3 className="font-semibold">Kreditkartenabrechnungen</h3>
+      <div className="klax-card overflow-hidden">
+        <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--hair)" }}>
+          <h3 className="text-[14px] font-semibold" style={{ color: "var(--ink)" }}>Kreditkartenabrechnungen</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="accounting-table">
+          <table className="k-table">
             <thead>
               <tr>
                 <th className="w-8"></th>

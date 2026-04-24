@@ -222,85 +222,79 @@ export default function Kreditoren() {
   };
 
   return (
-    <div className="p-4 lg:p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Banknote className="h-6 w-6 text-primary" />
-            Kreditorenzahlungen
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
+          <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Kreditorenzahlungen</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
             ISO 20022 Zahlungsdatei (pain.001) aus offenen Eingangsrechnungen erstellen
           </p>
         </div>
       </div>
 
       {/* Settings bar */}
-      <Card>
-        <CardContent className="pt-4 pb-4">
-          <div className="flex flex-wrap gap-4 items-end">
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Belastungskonto</Label>
-              <Select value={selectedBankAccountId} onValueChange={setSelectedBankAccountId}>
-                <SelectTrigger className="w-72">
-                  <SelectValue placeholder="Bankkonto wählen..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {(bankAccs ?? []).filter((b: any) => b.bankAccount.iban && b.bankAccount.isActive).map((b: any) => (
-                    <SelectItem key={b.bankAccount.id} value={String(b.bankAccount.id)}>
-                      <div className="flex items-center gap-2">
-                        <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span>{b.bankAccount.name}</span>
-                        <span className="text-xs text-muted-foreground font-mono">{b.bankAccount.iban}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Ausführungsdatum</Label>
-              <Input type="date" value={execDate} onChange={e => setExecDate(e.target.value)} className="w-44" />
-            </div>
-            <div className="flex gap-2 items-center ml-auto">
-              <Badge variant="outline" className="text-green-700 border-green-300">
-                <FileCheck className="h-3 w-3 mr-1" /> {paidInvoices.length} bezahlt
-              </Badge>
-              <Badge variant="outline" className="text-red-700 border-red-300">
-                <FileX className="h-3 w-3 mr-1" /> {unpaidInvoices.length} offen
-              </Badge>
-              <Button size="sm" variant="ghost" className="h-7 text-xs"
-                onClick={() => setShowPaid(!showPaid)}>
-                {showPaid ? "Nur offene" : "Alle anzeigen"}
-              </Button>
-            </div>
+      <div className="klax-card p-4">
+        <div className="flex flex-wrap gap-4 items-end">
+          <div className="space-y-1.5">
+            <Label className="text-[11px]" style={{ color: "var(--ink-3)" }}>Belastungskonto</Label>
+            <Select value={selectedBankAccountId} onValueChange={setSelectedBankAccountId}>
+              <SelectTrigger className="w-72">
+                <SelectValue placeholder="Bankkonto wählen..." />
+              </SelectTrigger>
+              <SelectContent>
+                {(bankAccs ?? []).filter((b: any) => b.bankAccount.iban && b.bankAccount.isActive).map((b: any) => (
+                  <SelectItem key={b.bankAccount.id} value={String(b.bankAccount.id)}>
+                    <div className="flex items-center gap-2">
+                      <Building2 className="h-3.5 w-3.5" style={{ color: "var(--ink-3)" }} />
+                      <span>{b.bankAccount.name}</span>
+                      <span className="text-[11px] mono" style={{ color: "var(--ink-3)" }}>{b.bankAccount.iban}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </CardContent>
-      </Card>
+          <div className="space-y-1.5">
+            <Label className="text-[11px]" style={{ color: "var(--ink-3)" }}>Ausführungsdatum</Label>
+            <Input type="date" value={execDate} onChange={e => setExecDate(e.target.value)} className="w-44" />
+          </div>
+          <div className="flex gap-2 items-center ml-auto">
+            <span className="pill pill--pos">
+              <FileCheck className="h-3 w-3" /> {paidInvoices.length} bezahlt
+            </span>
+            <span className="pill pill--warn">
+              <FileX className="h-3 w-3" /> {unpaidInvoices.length} offen
+            </span>
+            <Button size="sm" variant="ghost" className="h-7 text-xs"
+              onClick={() => setShowPaid(!showPaid)}>
+              {showPaid ? "Nur offene" : "Alle anzeigen"}
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Invoice table */}
-      <Card>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50">
-                <tr>
-                  <th className="p-3 text-left w-8">
-                    <Checkbox
-                      checked={displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).length > 0 && displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).every(inv => selectedIds.has(inv.id))}
-                      onCheckedChange={(checked) => toggleAll(!!checked)}
-                    />
-                  </th>
-                  <th className="p-3 text-left">Kreditor</th>
-                  <th className="p-3 text-left">IBAN</th>
-                  <th className="p-3 text-left">Ort / Land</th>
-                  <th className="p-3 text-left">Rechnungsdatum</th>
-                  <th className="p-3 text-left">Fällig am</th>
-                  <th className="p-3 text-right">Betrag</th>
-                  <th className="p-3 text-left">Referenz</th>
-                  <th className="p-3 text-center">Status</th>
-                </tr>
-              </thead>
+      <div className="klax-card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="k-table">
+            <thead>
+              <tr>
+                <th className="w-8">
+                  <Checkbox
+                    checked={displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).length > 0 && displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).every(inv => selectedIds.has(inv.id))}
+                    onCheckedChange={(checked) => toggleAll(!!checked)}
+                  />
+                </th>
+                <th>Kreditor</th>
+                <th>IBAN</th>
+                <th>Ort / Land</th>
+                <th>Rechnungsdatum</th>
+                <th>Fällig am</th>
+                <th className="text-right">Betrag</th>
+                <th>Referenz</th>
+                <th className="text-center">Status</th>
+              </tr>
+            </thead>
               <tbody>
                 {displayedInvoices.length === 0 ? (
                   <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Keine Eingangsrechnungen gefunden</td></tr>
@@ -428,8 +422,7 @@ export default function Kreditoren() {
               </tbody>
             </table>
           </div>
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Footer with totals and export button */}
       <div className="flex justify-between items-center">

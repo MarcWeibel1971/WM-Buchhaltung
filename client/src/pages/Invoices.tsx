@@ -144,15 +144,13 @@ export default function Invoices() {
   const handleEdit = (id: number) => { setEditingId(id); setEditorOpen(true); };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <FileText className="h-6 w-6" /> Rechnungen
-          </h2>
-          <p className="text-muted-foreground text-sm mt-1">
-            Ausgangsrechnungen mit QR-Einzahlungsschein, Positionen und Zahlungs­status.
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Rechnungen</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            Ausgangsrechnungen mit QR-Einzahlungsschein, Positionen und Zahlungsstatus.
           </p>
         </div>
         <Button onClick={handleNew} className="gap-2">
@@ -160,29 +158,30 @@ export default function Invoices() {
         </Button>
       </div>
 
-      {/* KPI-Kacheln */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Offene Rechnungen</div>
-            <div className="text-2xl font-bold">{formatCHF(stats.openSum)}</div>
-            <div className="text-xs text-muted-foreground mt-1">{stats.openCount} Rechnungen</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Davon überfällig</div>
-            <div className="text-2xl font-bold text-red-600">{formatCHF(stats.overdueSum)}</div>
-            <div className="text-xs text-muted-foreground mt-1">{stats.overdueCount} Rechnungen</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Alle Rechnungen</div>
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <div className="text-xs text-muted-foreground mt-1">im aktuellen Geschäftsjahr</div>
-          </CardContent>
-        </Card>
+      {/* KPI-Kacheln (KLAX Tiles) */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <div className="klax-card p-5">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Offen</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{formatCHF(stats.openSum)}</div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>{stats.openCount} Rechnungen</div>
+        </div>
+        <div className="klax-card p-5">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Überfällig</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--neg)" }}>{formatCHF(stats.overdueSum)}</div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>{stats.overdueCount} Rechnungen</div>
+        </div>
+        <div className="klax-card p-5">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Alle</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{stats.total}</div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>im aktuellen Geschäftsjahr</div>
+        </div>
+        <div className="klax-card p-5" style={{ background: "var(--klax-accent-soft)", borderColor: "var(--klax-accent-line)" }}>
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--klax-accent)" }}>Bezahlt</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--klax-accent)" }}>
+            {stats.total - stats.openCount}
+          </div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>Rechnungen YTD</div>
+        </div>
       </div>
 
       {/* Filter + Search */}
@@ -198,7 +197,7 @@ export default function Invoices() {
           </TabsList>
         </Tabs>
         <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: "var(--ink-4)" }} />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}

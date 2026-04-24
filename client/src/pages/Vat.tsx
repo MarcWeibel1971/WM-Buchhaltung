@@ -65,11 +65,11 @@ export default function Vat() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">MWST-Abrechnung</h2>
-          <p className="text-sm text-muted-foreground">
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>MWST-Abrechnung</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
             {vatMethod === "saldo"
               ? `Saldosteuersatz-Methode (${saldoRate}%)`
               : "Schweizer Mehrwertsteuer (8.1% / 2.6% / 3.8%)"}
@@ -82,43 +82,43 @@ export default function Vat() {
         </div>
       </div>
 
-      {/* MWST Rates Info */}
+      {/* MWST Rates Info (KLAX Tiles) */}
       {vatMethod === "saldo" ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="bg-card rounded-xl border border-border p-4 shadow-sm text-center">
-            <div className="text-2xl font-bold text-primary">{saldoRate}%</div>
-            <div className="text-sm font-medium mt-1">Saldosteuersatz</div>
-            <div className="text-xs text-muted-foreground">Auf den Bruttoumsatz</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="klax-card p-5 text-center" style={{ background: "var(--klax-accent-soft)", borderColor: "var(--klax-accent-line)" }}>
+            <div className="display mono text-[32px] font-medium" style={{ color: "var(--klax-accent)" }}>{saldoRate}%</div>
+            <div className="text-[12.5px] font-medium mt-1" style={{ color: "var(--ink)" }}>Saldosteuersatz</div>
+            <div className="text-[11px]" style={{ color: "var(--ink-3)" }}>Auf den Bruttoumsatz</div>
           </div>
-          <div className="bg-card rounded-xl border border-border p-4 shadow-sm text-center">
-            <div className="text-2xl font-bold text-muted-foreground">0%</div>
-            <div className="text-sm font-medium mt-1">Vorsteuer</div>
-            <div className="text-xs text-muted-foreground">Kein Vorsteuerabzug bei Saldosteuersatz</div>
+          <div className="klax-card p-5 text-center">
+            <div className="display mono text-[32px] font-medium" style={{ color: "var(--ink-4)" }}>0%</div>
+            <div className="text-[12.5px] font-medium mt-1" style={{ color: "var(--ink)" }}>Vorsteuer</div>
+            <div className="text-[11px]" style={{ color: "var(--ink-3)" }}>Kein Abzug bei Saldosteuersatz</div>
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-3">
           {[
             { rate: "8.1%", label: "Normalsatz", desc: "Standardleistungen" },
             { rate: "2.6%", label: "Sondersatz", desc: "Beherbergung" },
             { rate: "3.8%", label: "Redukt. Satz", desc: "Lebensmittel etc." },
           ].map(r => (
-            <div key={r.rate} className="bg-card rounded-xl border border-border p-4 shadow-sm text-center">
-              <div className="text-2xl font-bold text-primary">{r.rate}</div>
-              <div className="text-sm font-medium mt-1">{r.label}</div>
-              <div className="text-xs text-muted-foreground">{r.desc}</div>
+            <div key={r.rate} className="klax-card p-5 text-center">
+              <div className="display mono text-[30px] font-medium" style={{ color: "var(--klax-accent)" }}>{r.rate}</div>
+              <div className="text-[12.5px] font-medium mt-1" style={{ color: "var(--ink)" }}>{r.label}</div>
+              <div className="text-[11px]" style={{ color: "var(--ink-3)" }}>{r.desc}</div>
             </div>
           ))}
         </div>
       )}
 
       {/* VAT Periods */}
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-border">
-          <h3 className="font-semibold">Abrechnungsperioden {year}</h3>
+      <div className="klax-card overflow-hidden">
+        <div className="px-5 py-4" style={{ borderBottom: "1px solid var(--hair)" }}>
+          <h3 className="text-[14px] font-semibold" style={{ color: "var(--ink)" }}>Abrechnungsperioden {year}</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="accounting-table">
+          <table className="k-table">
             <thead>
               <tr>
                 <th className="w-8"></th>

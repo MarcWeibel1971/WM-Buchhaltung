@@ -118,68 +118,70 @@ export default function OpenPositions() {
   const suggestionCount = positions.filter(p => p.suggestedLevel).length;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <Clock className="h-6 w-6" /> Offene Posten &amp; Mahnwesen
-        </h2>
-        <p className="text-muted-foreground text-sm mt-1">
+        <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Offene Posten &amp; Mahnwesen</h2>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
           Überfällige Rechnungen mit automatischem Mahn-Vorschlag (3-stufig).
         </p>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Offen total</div>
-            <div className="text-2xl font-bold">{formatCHF(totalOpen)}</div>
-            <div className="text-xs text-muted-foreground mt-1">{positions.length} Rechnungen</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Überfällig</div>
-            <div className="text-2xl font-bold text-red-600">{formatCHF(totalOverdue)}</div>
-            <div className="text-xs text-muted-foreground mt-1">{overdueOnly.length} Rechnungen</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Mahn-Vorschläge</div>
-            <div className="text-2xl font-bold text-orange-600">{suggestionCount}</div>
-            <div className="text-xs text-muted-foreground mt-1">bereit zum Auslösen</div>
-          </CardContent>
-        </Card>
+      {/* 4 KLAX KPI Tiles */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="klax-card p-4">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Offen total</div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{formatCHF(totalOpen)}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}><span className="mono">{positions.length}</span> Rechnungen</div>
+        </div>
+        <div className="klax-card p-4" style={{ borderLeft: "3px solid var(--neg)" }}>
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--neg)" }}>Überfällig</div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--neg)" }}>{formatCHF(totalOverdue)}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}><span className="mono">{overdueOnly.length}</span> Rechnungen</div>
+        </div>
+        <div className="klax-card p-4">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Mahn-Vorschläge</div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--warn)" }}>{suggestionCount}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}>bereit zum Auslösen</div>
+        </div>
+        <div className="klax-card p-4" style={{ background: "var(--ai-soft)", borderColor: "var(--ai-line)" }}>
+          <div className="text-[10.5px] uppercase tracking-wider font-medium flex items-center gap-1" style={{ color: "var(--ai)" }}>
+            <span className="w-3.5 h-3.5 rounded-sm flex items-center justify-center" style={{ background: "var(--ai)", color: "#fff" }}>
+              <span className="text-[8px]">★</span>
+            </span>
+            KLAX-Prognose
+          </div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--ai)" }}>
+            {Math.round(((overdueOnly.length || 0) / Math.max(positions.length, 1)) * 100)}%
+          </div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-3)" }}>Mahn-Wahrscheinlichkeit</div>
+        </div>
       </div>
 
       {/* Policy-Hinweis */}
       {policyQuery.data && (
-        <Card className="bg-muted/30 border-dashed">
-          <CardContent className="p-4 text-sm">
-            <div className="font-semibold mb-2 flex items-center gap-2">
-              <Bell className="h-4 w-4" /> Mahn-Policy
-            </div>
-            <ul className="space-y-1 text-muted-foreground">
-              <li>
-                <strong>Zahlungserinnerung</strong> ab {policyQuery.data.level1.minDaysOverdue} Tagen überfällig
-                ({formatCHF(policyQuery.data.level1.feeAmount)} Gebühr,
-                {" "}{policyQuery.data.level1.gracePeriodDays} Tage neue Frist)
-              </li>
-              <li>
-                <strong>1. Mahnung</strong> ab {policyQuery.data.level2.minDaysOverdue} Tagen überfällig
-                ({formatCHF(policyQuery.data.level2.feeAmount)} Gebühr,
-                {" "}{policyQuery.data.level2.gracePeriodDays} Tage neue Frist)
-              </li>
-              <li>
-                <strong>2. Mahnung</strong> ab {policyQuery.data.level3.minDaysOverdue} Tagen überfällig
-                ({formatCHF(policyQuery.data.level3.feeAmount)} Gebühr,
-                {" "}{policyQuery.data.level3.gracePeriodDays} Tage neue Frist)
-              </li>
-            </ul>
-          </CardContent>
-        </Card>
+        <div className="klax-card--soft p-4 text-[13px]">
+          <div className="font-semibold mb-2 flex items-center gap-2 text-[13px]" style={{ color: "var(--ink)" }}>
+            <Bell className="h-4 w-4" /> Mahn-Policy
+          </div>
+          <ul className="space-y-1 text-[12.5px]" style={{ color: "var(--ink-3)" }}>
+            <li>
+              <strong style={{ color: "var(--ink-2)" }}>Zahlungserinnerung</strong> ab <span className="mono">{policyQuery.data.level1.minDaysOverdue}</span> Tagen überfällig
+              ({formatCHF(policyQuery.data.level1.feeAmount)} Gebühr,
+              {" "}{policyQuery.data.level1.gracePeriodDays} Tage neue Frist)
+            </li>
+            <li>
+              <strong style={{ color: "var(--ink-2)" }}>1. Mahnung</strong> ab <span className="mono">{policyQuery.data.level2.minDaysOverdue}</span> Tagen überfällig
+              ({formatCHF(policyQuery.data.level2.feeAmount)} Gebühr,
+              {" "}{policyQuery.data.level2.gracePeriodDays} Tage neue Frist)
+            </li>
+            <li>
+              <strong style={{ color: "var(--ink-2)" }}>2. Mahnung</strong> ab <span className="mono">{policyQuery.data.level3.minDaysOverdue}</span> Tagen überfällig
+              ({formatCHF(policyQuery.data.level3.feeAmount)} Gebühr,
+              {" "}{policyQuery.data.level3.gracePeriodDays} Tage neue Frist)
+            </li>
+          </ul>
+        </div>
       )}
 
       {/* Tabs */}

@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { BarChart3, Download, TrendingUp, TrendingDown } from "lucide-react";
+import { useMemo } from "react";
+import { BarChart3, Download, TrendingUp, TrendingDown, Sparkles, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -74,6 +75,32 @@ function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
 }
 
+// ─── KI-Insights-Komponente ─────────────────────────────────────────────────
+type InsightLevel = 'positive' | 'warning' | 'info';
+interface Insight { level: InsightLevel; text: string; }
+
+function KIInsights({ insights }: { insights: Insight[] }) {
+  if (!insights.length) return null;
+  return (
+    <div className="klax-card p-4 mt-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Sparkles className="h-4 w-4" style={{ color: 'var(--klax-accent)' }} />
+        <span className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--klax-accent)' }}>KI-Insights</span>
+      </div>
+      <div className="space-y-2">
+        {insights.map((ins, i) => (
+          <div key={i} className="flex items-start gap-2.5 text-[12.5px]">
+            {ins.level === 'positive' && <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" style={{ color: 'var(--pos)' }} />}
+            {ins.level === 'warning' && <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" style={{ color: 'var(--neg)' }} />}
+            {ins.level === 'info' && <Info className="h-4 w-4 mt-0.5 shrink-0" style={{ color: 'var(--ink-3)' }} />}
+            <span style={{ color: 'var(--ink-2)' }}>{ins.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AccountRow({ account, balance, indent = 0 }: { account: any; balance: number; indent?: number }) {
   if (Math.abs(balance) < 0.01) return null;
   return (
@@ -110,6 +137,66 @@ export default function Reports() {
   const totalRevenuePrev = isPrev?.revenues.reduce((s, r) => s + r.balance, 0) ?? 0;
   const totalExpensesPrev = isPrev?.expenses.reduce((s, e) => s + e.balance, 0) ?? 0;
   const profitPrev = totalRevenuePrev - totalExpensesPrev;
+
+  // KI-Insights berechnen
+  const insights = useMemo(() => {
+    const result: Array<{ level: 'positive' | 'warning' | 'info'; text: string }> = [];
+    if (!bs || !is) return result;
+
+    // 1. Eigenkapitalquote
+    if (totalAssets > 0) {
+      const ekQuote = (totalEquity / totalAssets) * 100;
+      if (ekQuote >= 40) {
+        result.push({ level: 'positive', text: `Eigenkapitalquote ${ekQuote.toFixed(1)}% – solide Kapitalstruktur (Richtwert ≥30%).` });
+      } else if (ekQuote >= 20) {
+        result.push({ level: 'info', text: `Eigenkapitalquote ${ekQuote.toFixed(1)}% – im mittleren Bereich. Richtwert für KMU: ≥30%.` });
+      } else {
+        result.push({ level: 'warning', text: `Eigenkapitalquote ${ekQuote.toFixed(1)}% – unter 20%. Fremdfinanzierung dominiert.` });
+      }
+    }
+
+    // 2. Umsatzentwicklung vs. Vorjahr
+    if (totalRevenuePrev > 0 && totalRevenue > 0) {
+      const revGrowth = ((totalRevenue - totalRevenuePrev) / totalRevenuePrev) * 100;
+      if (revGrowth > 5) {
+        result.push({ level: 'positive', text: `Umsatz +${revGrowth.toFixed(1)}% vs. Vorjahr – positives Wachstum.` });
+      } else if (revGrowth < -5) {
+        result.push({ level: 'warning', text: `Umsatz ${revGrowth.toFixed(1)}% vs. Vorjahr – Rückgang prüfen.` });
+      } else {
+        result.push({ level: 'info', text: `Umsatz stabil (${revGrowth > 0 ? '+' : ''}${revGrowth.toFixed(1)}% vs. Vorjahr).` });
+      }
+    }
+
+    // 3. EBIT-Marge
+    if (totalRevenue > 0) {
+      const margin = (profit / totalRevenue) * 100;
+      if (margin >= 10) {
+        result.push({ level: 'positive', text: `Gewinnmarge ${margin.toFixed(1)}% – überdurchschnittlich für Dienstleister.` });
+      } else if (margin >= 0) {
+        result.push({ level: 'info', text: `Gewinnmarge ${margin.toFixed(1)}% – positiv aber Optimierungspotenzial vorhanden.` });
+      } else {
+        result.push({ level: 'warning', text: `Verlust ${Math.abs(margin).toFixed(1)}% der Erträge – Aufwandpositionen prüfen.` });
+      }
+    }
+
+    // 4. Liquidität (Kasse + Bank vs. kurzfristige Verbindlichkeiten)
+    const liquid = bs.assets
+      .filter(a => a.account.number.startsWith('10') || a.account.number.startsWith('11'))
+      .reduce((s, a) => s + a.balance, 0);
+    const shortTermLiab = bs.liabilities
+      .filter(a => a.account.number.startsWith('20'))
+      .reduce((s, a) => s + a.balance, 0);
+    if (liquid > 0 && shortTermLiab > 0) {
+      const liquidRatio = (liquid / shortTermLiab) * 100;
+      if (liquidRatio >= 100) {
+        result.push({ level: 'positive', text: `Liquidität 1. Grades ${liquidRatio.toFixed(0)}% – kurzfristige Verbindlichkeiten gedeckt.` });
+      } else {
+        result.push({ level: 'warning', text: `Liquidität 1. Grades ${liquidRatio.toFixed(0)}% – flüssige Mittel decken kurzfristige Verbindlichkeiten nur teilweise.` });
+      }
+    }
+
+    return result.slice(0, 4); // Max 4 Insights
+  }, [bs, is, totalAssets, totalEquity, totalRevenue, totalRevenuePrev, totalExpenses, profit]);
 
   return (
     <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
@@ -171,6 +258,9 @@ export default function Reports() {
           )}
         </div>
       </div>
+
+      {/* KI-Insights */}
+      <KIInsights insights={insights} />
 
       <Tabs defaultValue="income-statement">
         <TabsList>

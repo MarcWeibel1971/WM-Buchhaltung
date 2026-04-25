@@ -1339,6 +1339,61 @@ export default function DocumentDetail() {
                     Buchung erstellen
                   </h3>
 
+                  {/* Buchungsvorschlag-Banner */}
+                  {bookingSuggestion && (
+                    <div className={`rounded-lg border p-3 text-xs ${
+                      bookingSuggestion.source === 'auto_learn'
+                        ? 'bg-blue-50 border-blue-200'
+                        : 'bg-purple-50 border-purple-200'
+                    }`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          {bookingSuggestion.source === 'auto_learn' ? (
+                            <><GraduationCap className="w-3.5 h-3.5 text-blue-600" />
+                            <span className="font-semibold text-blue-700">Gelernte Buchungsregel</span></>
+                          ) : (
+                            <><Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                            <span className="font-semibold text-purple-700">KI-Buchungsvorschlag</span></>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={`h-6 px-2 text-xs ${
+                            bookingSuggestion.source === 'auto_learn'
+                              ? 'text-blue-700 hover:bg-blue-100'
+                              : 'text-purple-700 hover:bg-purple-100'
+                          }`}
+                          onClick={() => {
+                            if (bookingSuggestion.accountId) {
+                              const amt = linkedTransaction ? parseFloat(linkedTransaction.amount) : -(docAmount);
+                              const bankAccountId = linkedBankAccount?.accountId || null;
+                              if (amt < 0) {
+                                setBookingDebitId(bookingSuggestion.accountId);
+                                if (bankAccountId) setBookingCreditId(bankAccountId);
+                              } else {
+                                if (bankAccountId) setBookingDebitId(bankAccountId);
+                                setBookingCreditId(bookingSuggestion.accountId);
+                              }
+                              if (bookingSuggestion.bookingText) setBookingText(bookingSuggestion.bookingText);
+                            }
+                          }}
+                        >
+                          ↺ Vorschlag übernehmen
+                        </Button>
+                      </div>
+                      <div className="mt-1.5 space-y-0.5" style={{ color: bookingSuggestion.source === 'auto_learn' ? 'var(--blue-700, #1d4ed8)' : '#7c3aed' }}>
+                        <p><span className="opacity-70">Konto:</span> <span className="font-mono font-medium">{bookingSuggestion.accountNumber} {bookingSuggestion.accountName}</span></p>
+                        {bookingSuggestion.vatRate != null && (
+                          <p><span className="opacity-70">MWST:</span> <span className="font-medium">{bookingSuggestion.vatRate}%</span></p>
+                        )}
+                        {bookingSuggestion.bookingText && (
+                          <p><span className="opacity-70">Buchungstext:</span> <span className="font-medium">{bookingSuggestion.bookingText}</span></p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 gap-3">
                     <div>
                       <Label className="text-xs text-muted-foreground">Buchungstext</Label>

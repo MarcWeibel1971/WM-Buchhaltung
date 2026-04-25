@@ -1344,3 +1344,9 @@
 - [x] Priorität 1a: Konfidenz-Score bei KK-Buchungsvorschlägen – farbige %-Badges (grün/gelb/rot) + "📚 Regel" / "🤖 KI" Label + Tooltip mit Erklärung
 - [x] Priorität 1b: Aging-Buckets in Rechnungsliste – 4 klickbare Kacheln (1-30 / 31-60 / 61-90 / 90+ Tage), Farbkodierung, Filter-Integration
 - [x] Priorität 1c: Sparklines im Dashboard – echte Monatsdaten (getMonthlyAggregates), Recharts LineChart, Tooltip mit CHF-Beträgen
+
+## Priorität 2: UX-Verbesserungen (KLAX Best-Practice)
+
+- [x] 2a: Live-PDF-Preview im Rechnungseditor (Split-Screen, Echtzeit-Vorschau mit Firmen-/Kundendaten, Positionen, QR-Platzhalter)
+- [x] 2b: KI-Insights in Berichten (Eigenkapitalquote, Umsatzentwicklung, Gewinnmarge, Liquidität 1. Grades)
+- [x] 2c: Buchungsvorschlag-Banner im Verbuchen-Tab (Quelle: Regel vs. KI, "Vorschlag übernehmen"-Button)

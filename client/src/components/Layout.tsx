@@ -67,7 +67,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     "/berichte": ["/berichte", "/reports"],
     "/abschluss": ["/abschluss", "/vat", "/year-end"],
     "/einstellungen": ["/einstellungen", "/settings"],
-    "/admin": ["/admin"],
+    "/admin": ["/admin", "/admin/global-rules"],
     "/accounts": ["/accounts"],
   };
 
@@ -123,9 +123,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           ],
         },
         {
-          href: "/kreditoren", icon: Banknote, label: "Kreditoren",
+          href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditoren",
           children: [
-            { href: "/kreditoren", icon: Clock, label: "Offene Posten" },
+            { href: "/zahlungen/kreditoren", icon: Clock, label: "Offene Posten" },
           ],
         },
       ],
@@ -194,7 +194,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       group: "Admin",
       items: [
         {
-          href: "/admin", icon: Brain, label: "KI-Regeln", adminOnly: true,
+          href: "/admin/global-rules", icon: Brain, label: "KI-Regeln", adminOnly: true,
           children: [
             { href: "/admin/global-rules", icon: Brain, label: "Regeln" },
             { href: "/settings?tab=avatar", icon: Bot, label: "Avatar-Chatbot" },

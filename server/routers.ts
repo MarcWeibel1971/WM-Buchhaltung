@@ -4335,8 +4335,21 @@ const avatarChatRouter = router({
           .orderBy(desc(documents.createdAt))
           .limit(5);
 
+        // Financial context from income statement
+        const currentYear = new Date().getFullYear();
+        const dashStats = await getDashboardStats(orgId, currentYear);
+        const incomeStmt = await getIncomeStatement(orgId, currentYear);
+        const totalRevenue = incomeStmt?.revenues?.reduce((s: number, r: {balance: number}) => s + (r.balance || 0), 0) ?? 0;
+        const totalExpenses = incomeStmt?.expenses?.reduce((s: number, r: {balance: number}) => s + (r.balance || 0), 0) ?? 0;
         contextText = `
-## Aktuelle Buchhaltungsdaten der Organisation:
+## Aktuelle Buchhaltungsdaten der Organisation (GJ ${currentYear}):
+
+### Finanzstatus:
+- Ertrag YTD: CHF ${totalRevenue.toFixed(2)}
+- Aufwand YTD: CHF ${totalExpenses.toFixed(2)}
+- Ergebnis: CHF ${(totalRevenue - totalExpenses).toFixed(2)}
+- Ausstehende Buchungen: ${dashStats?.pendingEntries ?? 0}
+- Ungematchte Banktransaktionen: ${dashStats?.pendingBankTransactions ?? 0}
 
 ### Letzte Journalbuchungen (${recentJournals.length}):
 ${recentJournals.map(j => `- ${j.bookingDate}: ${j.description} | Status: ${j.status}`).join('\n')}

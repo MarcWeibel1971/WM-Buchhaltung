@@ -149,6 +149,7 @@ function AppRouter() {
     <Switch>
       {/* Neue Hauptrouten */}
       <Route path="/" component={Dashboard} />
+      <Route path="/dashboard" component={Dashboard} />
       <Route path="/inbox" component={Inbox} />
       <Route path="/belege" component={Belege} />
       <Route path="/bank" component={Bank} />

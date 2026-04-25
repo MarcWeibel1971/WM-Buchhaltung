@@ -1324,3 +1324,23 @@
 - [x] Verbuchte Belege: bookDirect setzt direkt status=approved + approveJournalEntry (kein Genehmigungsschritt)
 - [x] Nach Verbuchen: automatisch zurück zu /belege navigieren
 - [ ] Verbuchungsvorschlag auch für Einzelbuchungen automatisch anzeigen (noch offen)
+
+## Best-Practice Optimierungen Priorität 1 (Apr 2026)
+- [ ] Konfidenz-Score bei KK-Buchungsvorschlägen anzeigen (Embedding-Score als %-Badge + "Why?"-Erklärung)
+- [ ] Aging-Buckets in der Rechnungsliste (0-30 / 31-60 / 61-90+ Tage offen, Zusammenfassungskarte rechts)
+- [ ] Sparklines in den KPI-Karten auf dem Dashboard (Mini-Liniendiagramm der letzten 6 Monate)
+
+## Best-Practice Optimierungen Priorität 2 (Apr 2026)
+- [ ] Live-PDF-Preview im QrBillGenerator (Split-Screen: Formular links, PDF-Preview rechts)
+- [ ] KI-Insights in Reports (P&L, Bilanz): 2-3 automatisch generierte Erkenntnisse via LLM
+- [ ] Vollständiger Verbuchungsvorschlag bei Belegöffnung (Konto Soll / Haben vorausgefüllt)
+
+## Best-Practice Optimierungen Priorität 3 (Apr 2026)
+- [ ] KI-Chat-Assistent "Ask KLAX" (Slide-over Panel, Quick-Action-Chips, LLM-Integration)
+- [ ] Cashflow-Forecast (13 Wochen, Base/Best/Worst-Case, Konfidenzband)
+- [ ] Mobile Beleg-Scanner (Kamera-Integration, Live-OCR, Kategorievorschlag)
+
+## Priorität 1: KLAX Best-Practice-Optimierungen (infinity.swiss-Analyse)
+- [x] Priorität 1a: Konfidenz-Score bei KK-Buchungsvorschlägen – farbige %-Badges (grün/gelb/rot) + "📚 Regel" / "🤖 KI" Label + Tooltip mit Erklärung
+- [x] Priorität 1b: Aging-Buckets in Rechnungsliste – 4 klickbare Kacheln (1-30 / 31-60 / 61-90 / 90+ Tage), Farbkodierung, Filter-Integration
+- [x] Priorität 1c: Sparklines im Dashboard – echte Monatsdaten (getMonthlyAggregates), Recharts LineChart, Tooltip mit CHF-Beträgen

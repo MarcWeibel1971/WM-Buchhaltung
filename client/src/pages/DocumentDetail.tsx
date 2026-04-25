@@ -101,7 +101,7 @@ export default function DocumentDetail() {
   const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
 
   // KK-Sammelbuchung state
-  const [kkItems, setKkItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string }>>([]);
+  const [kkItems, setKkItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string; confidence?: number; matchSource?: string; matchRulePattern?: string | null }>>([]);
   const [kkParsed, setKkParsed] = useState(false);
   const [kkPaidAmount, setKkPaidAmount] = useState(""); // effektiv bezahlter Betrag (Bankbelastung)
 
@@ -181,7 +181,7 @@ export default function DocumentDetail() {
             if (found) debitAccountId = String(found.id);
           }
         }
-        return { date: item.date, description: item.description, amount: item.amount, debitAccountId };
+        return { date: item.date, description: item.description, amount: item.amount, debitAccountId, confidence: item.confidence, matchSource: item.matchSource, matchRulePattern: item.matchRulePattern };
       });
       setKkItems(mapped);
       setKkParsed(true);
@@ -1204,6 +1204,7 @@ export default function DocumentDetail() {
                               <th className="px-2 py-1.5 text-left font-medium text-purple-700">Beschreibung</th>
                               <th className="px-2 py-1.5 text-right font-medium text-purple-700">Betrag</th>
                               <th className="px-2 py-1.5 text-left font-medium text-purple-700">Aufwandskonto</th>
+                              <th className="px-2 py-1.5 text-center font-medium text-purple-700">Konfidenz</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-purple-100 bg-white">
@@ -1227,6 +1228,29 @@ export default function DocumentDetail() {
                                     </SelectContent>
                                   </Select>
                                 </td>
+                                <td className="px-2 py-1.5 text-center">
+                                  {item.confidence != null && (
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <span
+                                        title={item.matchSource === 'rule'
+                                          ? `Gelernte Buchungsregel: "${item.matchRulePattern}" passt – sehr hohe Konfidenz`
+                                          : item.matchSource === 'llm_known_account'
+                                          ? 'KI-Vorschlag: bekanntes Konto aus Kontenplan verwendet'
+                                          : 'KI-Schätzung: kein direkter Regelabgleich möglich'}
+                                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold cursor-help ${
+                                          item.confidence >= 90 ? 'bg-green-100 text-green-700 border border-green-200'
+                                          : item.confidence >= 75 ? 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+                                          : 'bg-red-100 text-red-600 border border-red-200'
+                                        }`}
+                                      >
+                                        {item.confidence}%
+                                      </span>
+                                      <span className="text-[9px] text-muted-foreground">
+                                        {item.matchSource === 'rule' ? '📚 Regel' : '🤖 KI'}
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -1236,6 +1260,7 @@ export default function DocumentDetail() {
                               <td className="px-2 py-1.5 text-right font-mono font-semibold text-purple-800">
                                 CHF {kkItems.reduce((s, i) => s + parseFloat(i.amount || '0'), 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </td>
+                              <td></td>
                               <td></td>
                             </tr>
                           </tfoot>

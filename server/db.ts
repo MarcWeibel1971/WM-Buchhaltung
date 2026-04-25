@@ -692,6 +692,68 @@ export async function getDashboardStats(orgId: number, fiscalYear: number) {
 }
 
 
+/**
+ * Returns monthly revenue/expense/profit aggregates for the last N months.
+ * Used for sparkline charts on the dashboard.
+ */
+export async function getMonthlyAggregates(orgId: number, months = 6) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Build list of last N months (YYYY-MM format)
+  const result: Array<{ month: string; revenue: number; expenses: number; profit: number }> = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const yearStart = `${monthStr}-01`;
+    const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    const monthEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+
+    // Get all approved journal lines for this month
+    const lines = await db
+      .select({
+        amount: journalLines.amount,
+        side: journalLines.side,
+        accountNumber: accounts.number,
+      })
+      .from(journalLines)
+      .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+      .innerJoin(accounts, eq(journalLines.accountId, accounts.id))
+      .where(and(
+        eq(journalEntries.organizationId, orgId),
+        eq(journalEntries.status, 'approved'),
+        sql`${journalEntries.bookingDate} >= ${yearStart}`,
+        sql`${journalEntries.bookingDate} < ${monthEnd}`,
+      ));
+
+    let revenue = 0;
+    let expenses = 0;
+    for (const line of lines) {
+      const num = line.accountNumber;
+      const amt = parseFloat(String(line.amount)) || 0;
+      // Revenue accounts: 3xxx (Ertrag)
+      if (num.startsWith('3')) {
+        if (line.side === 'credit') revenue += amt;
+        else revenue -= amt;
+      }
+      // Expense accounts: 4xxx-6xxx (Aufwand)
+      if (num.startsWith('4') || num.startsWith('5') || num.startsWith('6')) {
+        if (line.side === 'debit') expenses += amt;
+        else expenses -= amt;
+      }
+    }
+
+    result.push({
+      month: monthStr,
+      revenue: Math.max(0, revenue),
+      expenses: Math.max(0, expenses),
+      profit: revenue - expenses,
+    });
+  }
+  return result;
+}
+
 // ─── Booking Rules (Gelernte Buchungsregeln) ─────────────────────────────────
 
 /**

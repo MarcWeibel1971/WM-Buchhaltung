@@ -144,7 +144,7 @@ export default function Invoices() {
     onError: (e) => toast.error(e.message),
   });
 
-  const rows = listQuery.data ?? [];
+  const [agingFilter, setAgingFilter] = useState<number | null>(null); // index into aging buckets
 
   // Kennzahlen über alle (ungefiltert) – für Headerkacheln
   const allQuery = trpc.invoices.list.useQuery({ limit: 500 });
@@ -154,6 +154,13 @@ export default function Invoices() {
     let overdueSum = 0;
     let openCount = 0;
     let overdueCount = 0;
+    // Aging buckets: 1-30, 31-60, 61-90, 90+ days overdue
+    const aging = [
+      { label: '1–30 Tage', min: 1, max: 30, count: 0, sum: 0, color: 'amber' },
+      { label: '31–60 Tage', min: 31, max: 60, count: 0, sum: 0, color: 'orange' },
+      { label: '61–90 Tage', min: 61, max: 90, count: 0, sum: 0, color: 'red' },
+      { label: '90+ Tage', min: 91, max: Infinity, count: 0, sum: 0, color: 'rose' },
+    ];
     for (const r of all) {
       if (r.status === "sent" || r.status === "partially_paid") {
         openSum += r.openAmount;
@@ -161,11 +168,34 @@ export default function Invoices() {
         if (r.isOverdue) {
           overdueSum += r.openAmount;
           overdueCount++;
+          const days = r.daysOverdue ?? 0;
+          for (const bucket of aging) {
+            if (days >= bucket.min && days <= bucket.max) {
+              bucket.count++;
+              bucket.sum += r.openAmount;
+              break;
+            }
+          }
         }
       }
     }
-    return { openSum, overdueSum, openCount, overdueCount, total: all.length };
+    return { openSum, overdueSum, openCount, overdueCount, total: all.length, aging };
   }, [allQuery.data]);
+
+  const rawRows = listQuery.data ?? [];
+  // Apply aging filter if active (filter by daysOverdue range)
+  const AGING_RANGES = [
+    { min: 1, max: 30 },
+    { min: 31, max: 60 },
+    { min: 61, max: 90 },
+    { min: 91, max: Infinity },
+  ];
+  const rows = useMemo(() => {
+    if (agingFilter === null) return rawRows;
+    const bucket = AGING_RANGES[agingFilter];
+    if (!bucket) return rawRows;
+    return rawRows.filter(r => r.isOverdue && (r.daysOverdue ?? 0) >= bucket.min && (r.daysOverdue ?? 0) <= bucket.max);
+  }, [rawRows, agingFilter]);
 
   const [, navigate] = useLocation();
   const handleNew = () => navigate("/rechnungen/neu");
@@ -225,6 +255,52 @@ export default function Invoices() {
           <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>Rechnungen YTD</div>
         </div>
       </div>
+
+      {/* Aging-Buckets – nur anzeigen wenn überfällige Rechnungen vorhanden */}
+      {stats.overdueCount > 0 && (
+        <div className="klax-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--ink-3)' }}>Fälligkeitsanalyse (Aging)</div>
+            {agingFilter !== null && (
+              <button
+                onClick={() => setAgingFilter(null)}
+                className="text-[11px] underline"
+                style={{ color: 'var(--klax-accent)' }}
+              >
+                Filter aufheben
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {stats.aging.map((bucket, idx) => {
+              const isActive = agingFilter === idx;
+              const colorMap: Record<string, { bg: string; text: string; border: string }> = {
+                amber: { bg: '#fffbeb', text: '#92400e', border: '#fde68a' },
+                orange: { bg: '#fff7ed', text: '#9a3412', border: '#fed7aa' },
+                red: { bg: '#fef2f2', text: '#991b1b', border: '#fecaca' },
+                rose: { bg: '#fff1f2', text: '#9f1239', border: '#fecdd3' },
+              };
+              const c = colorMap[bucket.color] ?? colorMap.amber;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => { setAgingFilter(isActive ? null : idx); setTab('overdue'); }}
+                  className="rounded-lg p-3 text-left transition-all border-2 hover:opacity-90"
+                  style={{
+                    background: isActive ? c.text : c.bg,
+                    borderColor: isActive ? c.text : c.border,
+                    color: isActive ? '#fff' : c.text,
+                  }}
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80">{bucket.label}</div>
+                  <div className="text-[20px] font-bold mono mt-1">{bucket.count}</div>
+                  <div className="text-[11px] font-medium mt-0.5 opacity-80">{formatCHF(bucket.sum)}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Filter + Search */}
       <div className="flex items-center justify-between gap-3 flex-wrap">

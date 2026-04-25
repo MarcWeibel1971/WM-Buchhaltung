@@ -1,5 +1,5 @@
-import { trpc } from "@/lib/trpc";
 import { useMemo } from "react";
+import { trpc } from "@/lib/trpc";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Link } from "wouter";
@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Pill } from "@/components/klax/Pill";
 import { AICallout } from "@/components/klax/AICallout";
+import { LineChart, Line, ResponsiveContainer, Tooltip } from "recharts";
 
 function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", minimumFractionDigits: 2 }).format(val);
@@ -30,6 +31,7 @@ export default function Dashboard() {
   const { data: pendingBank } = trpc.bankImport.getPendingTransactions.useQuery({});
   const { data: allDocs } = trpc.documents.list.useQuery({ fiscalYear: year });
   const { data: company } = trpc.settings.getCompanySettings.useQuery();
+  const { data: monthlyData } = trpc.reports.monthlyAggregates.useQuery({ months: 6 });
 
   const totalRevenue = useMemo(() =>
     incomeStatement?.revenues?.reduce((s, r) => s + r.balance, 0) ?? 0,
@@ -60,9 +62,16 @@ export default function Dashboard() {
     { icon: Receipt, label: "Offene Rechnungen", count: 0, href: "/rechnungen?tab=open" },
   ];
 
-  // Mini bar chart, ertrag/aufwand mock per monat (abgeleitet vom Total, verteilt)
-  const months = ["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
-  const maxY = Math.max(totalRevenue / 12, totalExpenses / 12, 1) * 1.4;
+  // Sparkline data aus echten Monatsdaten
+  const sparkData = useMemo(() => {
+    if (!monthlyData?.length) return [];
+    return monthlyData.map(m => ({
+      name: m.month.slice(5), // MM
+      revenue: m.revenue,
+      expenses: m.expenses,
+      profit: m.profit,
+    }));
+  }, [monthlyData]);
 
   return (
     <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px] mx-auto">
@@ -225,31 +234,39 @@ export default function Dashboard() {
             <KpiStat label="Aufwand YTD" value={formatCHF(totalExpenses)} tone="neg" />
           </div>
 
-          {/* Mini Balkendiagramm */}
-          <div className="flex items-end gap-2 h-24 pt-2" style={{ borderTop: "1px solid var(--hair)" }}>
-            {months.map((m, i) => {
-              const rev = (totalRevenue / 12) * (0.6 + Math.random() * 0.8);
-              const exp = (totalExpenses / 12) * (0.6 + Math.random() * 0.8);
-              const revH = (rev / maxY) * 100;
-              const expH = (exp / maxY) * 100;
-              return (
-                <div key={m} className="flex-1 flex flex-col items-center gap-1">
-                  <div className="w-full flex items-end gap-0.5 h-[80px]">
-                    <div className="flex-1 rounded-t" style={{ background: "var(--pos)", height: `${revH}%`, minHeight: 2 }} />
-                    <div className="flex-1 rounded-t" style={{ background: "var(--neg-soft)", borderTop: "2px solid var(--neg)", height: `${expH}%`, minHeight: 2 }} />
-                  </div>
-                  <div className="text-[10px]" style={{ color: "var(--ink-4)" }}>{m}</div>
+          {/* Sparkline Chart (echte Monatsdaten) */}
+          <div style={{ borderTop: "1px solid var(--hair)", paddingTop: 12 }}>
+            {sparkData.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height={80}>
+                  <LineChart data={sparkData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
+                    <Tooltip
+                      contentStyle={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--hair)', background: 'var(--surface)' }}
+                      formatter={(val: number, name: string) => [
+                        new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', minimumFractionDigits: 0 }).format(val),
+                        name === 'revenue' ? 'Ertrag' : name === 'expenses' ? 'Aufwand' : 'Gewinn'
+                      ]}
+                      labelFormatter={(label) => `Monat ${label}`}
+                    />
+                    <Line type="monotone" dataKey="revenue" stroke="var(--pos)" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="expenses" stroke="var(--neg)" strokeWidth={2} dot={false} strokeDasharray="4 2" />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div className="flex items-center gap-4 mt-2 text-[11px]" style={{ color: 'var(--ink-3)' }}>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block w-5 h-0.5 rounded" style={{ background: 'var(--pos)' }} /> Ertrag
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block w-5 h-0.5 rounded" style={{ background: 'var(--neg)', borderTop: '1px dashed var(--neg)' }} /> Aufwand
+                  </span>
+                  <span className="ml-auto text-[10px]" style={{ color: 'var(--ink-4)' }}>Letzte 6 Monate</span>
                 </div>
-              );
-            })}
-          </div>
-          <div className="flex items-center gap-4 mt-3 text-[11px]" style={{ color: "var(--ink-3)" }}>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "var(--pos)" }} /> Ertrag
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "var(--neg-soft)", border: "1px solid var(--neg)" }} /> Aufwand
-            </span>
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-20 text-[12px]" style={{ color: 'var(--ink-4)' }}>
+                Noch keine Buchungsdaten für Sparklines verfügbar.
+              </div>
+            )}
           </div>
         </div>
       </div>

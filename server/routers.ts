@@ -13,7 +13,7 @@ import {
   getBankAccounts, getPendingBankTransactions, getBankTransactionsByStatus, saveBankTransaction, approveBankTransaction, updateBankTransaction, getBankTransactionsByIds,
   getEmployees, getPayrollEntries,
   getBalanceSheet, getIncomeStatement,
-  getVatPeriods, getCreditCardStatements, getDashboardStats,
+  getVatPeriods, getCreditCardStatements, getDashboardStats, getMonthlyAggregates,
   getDb,
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
@@ -2060,13 +2060,47 @@ Antwort NUR als JSON-Array, keine Erklärung:
       if (!jsonMatch) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "KI konnte keine Positionen extrahieren" });
 
       try {
-        const items = JSON.parse(jsonMatch[0]);
-        return { items: items.map((i: any) => ({
-          date: i.date ?? "",
-          description: i.description ?? "",
-          amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
-          suggestedAccount: i.suggestedAccount ?? "",
-        })) };
+        const rawItems = JSON.parse(jsonMatch[0]);
+        // Enrich each item with confidence score and matched rule info
+        const enrichedItems = await Promise.all(rawItems.map(async (i: any) => {
+          const description = i.description ?? "";
+          const suggestedAccount = i.suggestedAccount ?? "";
+          // Check if a learned rule matches this description
+          const matchedRule = await findMatchingRule(ctx.organizationId, description);
+          let confidence = 70; // Default LLM confidence
+          let matchSource = "llm";
+          let matchRulePattern: string | null = null;
+          if (matchedRule) {
+            // Rule matched: high confidence
+            confidence = 95;
+            matchSource = "rule";
+            matchRulePattern = matchedRule.counterpartyPattern;
+          } else {
+            // LLM: estimate confidence based on whether account number was found in rules context
+            const accountNum = suggestedAccount.match(/^(\d{4})/)?.[1];
+            const ruleForAccount = allRules.find(r => {
+              const acct = acctMap[r.debitAccountId!];
+              return acct && acct.number === accountNum;
+            });
+            if (ruleForAccount) {
+              confidence = 80; // LLM used a known account
+              matchSource = "llm_known_account";
+            } else {
+              confidence = 65; // LLM guessed
+              matchSource = "llm_guess";
+            }
+          }
+          return {
+            date: i.date ?? "",
+            description,
+            amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
+            suggestedAccount,
+            confidence,
+            matchSource,
+            matchRulePattern,
+          };
+        }));
+        return { items: enrichedItems };
       } catch {
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
       }
@@ -3035,6 +3069,10 @@ const reportsRouter = router({
   dashboard: orgProcedure
     .input(z.object({ fiscalYear: z.number() }))
     .query(({ input, ctx }) => getDashboardStats(ctx.organizationId, input.fiscalYear)),
+
+  monthlyAggregates: orgProcedure
+    .input(z.object({ months: z.number().optional() }))
+    .query(({ input, ctx }) => getMonthlyAggregates(ctx.organizationId, input.months ?? 6)),
 });
 
 // ─── VAT Router ───────────────────────────────────────────────────────────────

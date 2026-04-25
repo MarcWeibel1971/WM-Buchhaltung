@@ -1350,3 +1350,9 @@
 - [x] 2a: Live-PDF-Preview im Rechnungseditor (Split-Screen, Echtzeit-Vorschau mit Firmen-/Kundendaten, Positionen, QR-Platzhalter)
 - [x] 2b: KI-Insights in Berichten (Eigenkapitalquote, Umsatzentwicklung, Gewinnmarge, Liquidität 1. Grades)
 - [x] 2c: Buchungsvorschlag-Banner im Verbuchen-Tab (Quelle: Regel vs. KI, "Vorschlag übernehmen"-Button)
+
+## Priorität 3: KI-Assistent & Forecast (KLAX Best-Practice)
+
+- [x] 3a: KI-Chat-Assistent (CopilotDock mit echtem avatarChat.chat Backend, Gesprächsverlauf, Vorschläge, Reset)
+- [x] 3b: Cashflow-Forecast (13-Wochen-Vorschau, Balkendiagramm, Bestandsverlauf-Tabelle, kritische Wochen)
+- [x] 3c: Mobile Scanner (bereits in DocumentUpload implementiert – Kamera-Button mit capture="environment")

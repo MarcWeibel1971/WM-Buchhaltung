@@ -1,7 +1,8 @@
 import { trpc } from "@/lib/trpc";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useMemo } from "react";
-import { BarChart3, Download, TrendingUp, TrendingDown, Sparkles, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { BarChart3, Download, TrendingUp, TrendingDown, Sparkles, AlertTriangle, CheckCircle2, Info, TrendingUp as TrendUp } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -113,6 +114,112 @@ function AccountRow({ account, balance, indent = 0 }: { account: any; balance: n
         {formatCHF(Math.abs(balance))}
       </td>
     </tr>
+  );
+}
+
+// ─── Cashflow-Forecast-Komponente ──────────────────────────────────────────
+function CashflowForecast() {
+  const { data, isLoading } = trpc.reports.cashflowForecast.useQuery();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-48">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: 'var(--klax-accent)' }} />
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const minBalance = Math.min(...data.weeks.map(w => w.balance));
+  const maxBalance = Math.max(...data.weeks.map(w => w.balance));
+  const criticalWeeks = data.weeks.filter(w => w.balance < 0).length;
+
+  return (
+    <div className="space-y-4">
+      {/* KPI-Kacheln */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="klax-card p-4">
+          <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: 'var(--ink-3)' }}>Aktueller Bankbestand</div>
+          <div className={`text-xl font-bold mono ${data.currentBalance >= 0 ? '' : 'text-red-600'}`}>
+            CHF {formatCHF(data.currentBalance)}
+          </div>
+        </div>
+        <div className="klax-card p-4">
+          <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: 'var(--ink-3)' }}>Min. Bestand (13 Wo.)</div>
+          <div className={`text-xl font-bold mono ${minBalance >= 0 ? '' : 'text-red-600'}`}>
+            CHF {formatCHF(minBalance)}
+          </div>
+        </div>
+        <div className="klax-card p-4">
+          <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: 'var(--ink-3)' }}>Kritische Wochen</div>
+          <div className={`text-xl font-bold ${criticalWeeks > 0 ? 'text-red-600' : 'text-green-600'}`}>
+            {criticalWeeks} / 13
+          </div>
+        </div>
+      </div>
+
+      {criticalWeeks > 0 && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>In <strong>{criticalWeeks} Woche{criticalWeeks > 1 ? 'n' : ''}</strong> wird der Bankbestand negativ. Bitte Liquidität prüfen.</span>
+        </div>
+      )}
+
+      {/* Balkendiagramm */}
+      <div className="klax-card p-4">
+        <div className="flex items-center gap-2 mb-4">
+          <BarChart3 className="h-4 w-4" style={{ color: 'var(--klax-accent)' }} />
+          <span className="text-sm font-semibold">13-Wochen Cashflow-Forecast</span>
+          <span className="text-xs text-muted-foreground ml-auto">Ø Wochenausgaben: CHF {formatCHF(data.weeklyExpenseBase)}</span>
+        </div>
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart data={data.weeks} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--hair)" />
+            <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="var(--ink-3)" />
+            <YAxis tick={{ fontSize: 10 }} stroke="var(--ink-3)" tickFormatter={v => `${Math.round(v / 1000)}k`} />
+            <Tooltip
+              formatter={(value: number, name: string) => [
+                `CHF ${formatCHF(value)}`,
+                name === 'inflow' ? 'Einnahmen' : name === 'outflow' ? 'Ausgaben' : 'Bestand'
+              ]}
+              contentStyle={{ fontSize: 12, background: 'var(--surface)', border: '1px solid var(--hair)' }}
+            />
+            <Legend formatter={v => v === 'inflow' ? 'Einnahmen' : v === 'outflow' ? 'Ausgaben' : 'Bestand'} />
+            <ReferenceLine y={0} stroke="var(--neg)" strokeDasharray="4 2" />
+            <Bar dataKey="inflow" fill="#22c55e" opacity={0.8} radius={[3, 3, 0, 0]} />
+            <Bar dataKey="outflow" fill="#ef4444" opacity={0.8} radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Bestandsverlauf */}
+      <div className="klax-card p-4">
+        <div className="text-sm font-semibold mb-3">Bestandsverlauf</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ color: 'var(--ink-3)' }}>
+                <th className="text-left py-1 pr-3">Woche</th>
+                <th className="text-right py-1 pr-3">Einnahmen</th>
+                <th className="text-right py-1 pr-3">Ausgaben</th>
+                <th className="text-right py-1">Bestand</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.weeks.map(w => (
+                <tr key={w.week} className={`border-t ${w.balance < 0 ? 'bg-red-50' : ''}`} style={{ borderColor: 'var(--hair)' }}>
+                  <td className="py-1.5 pr-3 font-medium">{w.label}</td>
+                  <td className="text-right py-1.5 pr-3 text-green-600 mono">{w.inflow > 0 ? `+${formatCHF(w.inflow)}` : '-'}</td>
+                  <td className="text-right py-1.5 pr-3 text-red-600 mono">{w.outflow > 0 ? `-${formatCHF(w.outflow)}` : '-'}</td>
+                  <td className={`text-right py-1.5 mono font-semibold ${w.balance < 0 ? 'text-red-600' : ''}`}>{formatCHF(w.balance)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -266,6 +373,7 @@ export default function Reports() {
         <TabsList>
           <TabsTrigger value="income-statement">Erfolgsrechnung</TabsTrigger>
           <TabsTrigger value="balance-sheet">Bilanz</TabsTrigger>
+          <TabsTrigger value="cashflow">Cashflow-Forecast</TabsTrigger>
           <TabsTrigger value="accounts">Konten</TabsTrigger>
           <TabsTrigger value="journal">Journal</TabsTrigger>
         </TabsList>
@@ -435,6 +543,11 @@ export default function Reports() {
               </table>
             </div>
           </div>
+        </TabsContent>
+
+        {/* Cashflow-Forecast */}
+        <TabsContent value="cashflow">
+          <CashflowForecast />
         </TabsContent>
 
         {/* Konten */}

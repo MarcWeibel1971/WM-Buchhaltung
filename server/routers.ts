@@ -3073,9 +3073,99 @@ const reportsRouter = router({
   monthlyAggregates: orgProcedure
     .input(z.object({ months: z.number().optional() }))
     .query(({ input, ctx }) => getMonthlyAggregates(ctx.organizationId, input.months ?? 6)),
+  cashflowForecast: orgProcedure
+    .query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      const orgId = ctx.organizationId;
+      // Current bank balance (Konto 1020, 1021, 1032)
+      const bankAccNums = ['1020', '1021', '1032'];
+      const bankAccRows = await db.select({ number: accounts.number, id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.organizationId, orgId), inArray(accounts.number, bankAccNums)));
+      const bankAccIds = bankAccRows.map(a => a.id);
+      let currentBalance = 0;
+      if (bankAccIds.length > 0) {
+        const lines = await db.select({ side: journalLines.side, amount: journalLines.amount })
+          .from(journalLines)
+          .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+          .where(and(
+            eq(journalEntries.organizationId, orgId),
+            eq(journalEntries.status, 'approved'),
+            inArray(journalLines.accountId, bankAccIds),
+          ));
+        for (const l of lines) {
+          const amt = parseFloat(String(l.amount));
+          currentBalance += l.side === 'debit' ? amt : -amt;
+        }
+      }
+      // Open invoices (receivables) – next 13 weeks
+      const today = new Date();
+      const weeks: Array<{ week: number; label: string; inflow: number; outflow: number; balance: number }> = [];
+      let runningBalance = currentBalance;
+      // Get open invoices from invoices table
+      let openInvoices: Array<{ dueDate: string | null; totalAmount: string | null; type: string }> = [];
+      try {
+        const invoicesTable = (await import('../drizzle/schema')).invoices;
+        const rawInvoices = await db.select({ dueDate: invoicesTable.dueDate, total: invoicesTable.total })
+          .from(invoicesTable)
+          .where(and(
+            eq(invoicesTable.organizationId, orgId),
+            inArray(invoicesTable.status, ['sent', 'partially_paid']),
+          ));
+        // All open invoices are outgoing (receivables) in this system
+        openInvoices = rawInvoices.map(inv => ({ dueDate: inv.dueDate, totalAmount: inv.total, type: 'outgoing' }));
+      } catch { /* invoices table may not exist */ }
+      // Average monthly expenses from last 3 months
+      const threeMonthsAgo = new Date(today);
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      const expenseLines = await db.select({ amount: journalLines.amount })
+        .from(journalLines)
+        .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+        .innerJoin(accounts, eq(journalLines.accountId, accounts.id))
+        .where(and(
+          eq(journalEntries.organizationId, orgId),
+          eq(journalEntries.status, 'approved'),
+          eq(journalLines.side, 'debit'),
+          eq(accounts.accountType, 'expense'),
+          gte(journalEntries.bookingDate, threeMonthsAgo.toISOString().substring(0, 10)),
+        ));
+      const totalExpenses3M = expenseLines.reduce((s, l) => s + parseFloat(String(l.amount)), 0);
+      const weeklyExpenseBase = totalExpenses3M / 13; // 3 months ≈ 13 weeks
+      for (let w = 0; w < 13; w++) {
+        const weekStart = new Date(today);
+        weekStart.setDate(weekStart.getDate() + w * 7);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        const weekStartStr = weekStart.toISOString().substring(0, 10);
+        const weekEndStr = weekEnd.toISOString().substring(0, 10);
+        // Inflows: invoices due this week
+        const inflow = openInvoices
+          .filter(inv => inv.type === 'outgoing' && inv.dueDate && inv.dueDate >= weekStartStr && inv.dueDate <= weekEndStr)
+          .reduce((s, inv) => s + parseFloat(String(inv.totalAmount ?? '0')), 0);
+        // Outflows: invoices to pay + estimated expenses
+        const outflowInvoices = openInvoices
+          .filter(inv => inv.type === 'incoming' && inv.dueDate && inv.dueDate >= weekStartStr && inv.dueDate <= weekEndStr)
+          .reduce((s, inv) => s + parseFloat(String(inv.totalAmount ?? '0')), 0);
+        const outflow = outflowInvoices + weeklyExpenseBase;
+        runningBalance += inflow - outflow;
+        const label = `KW${String(weekStart.getMonth() + 1).padStart(2, '0')}/${String(weekStart.getDate()).padStart(2, '0')}`;
+        weeks.push({
+          week: w + 1,
+          label,
+          inflow: Math.round(inflow * 100) / 100,
+          outflow: Math.round(outflow * 100) / 100,
+          balance: Math.round(runningBalance * 100) / 100,
+        });
+      }
+      return {
+        currentBalance: Math.round(currentBalance * 100) / 100,
+        weeks,
+        weeklyExpenseBase: Math.round(weeklyExpenseBase * 100) / 100,
+      };
+    }),
 });
-
-// ─── VAT Router ───────────────────────────────────────────────────────────────
+// ─── VAT Routerr ───────────────────────────────────────────────────────────────
 const vatRouter = router({
   list: orgProcedure
     .input(z.object({ year: z.number().optional() }))

@@ -33,11 +33,10 @@ import TimeTracking from "./pages/TimeTracking";
 import Onboarding from "./pages/Onboarding";
 import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
-import GlobalRules from "./pages/GlobalRules";
 import Layout from "./components/Layout";
 import AvatarChatWidget from "./components/AvatarChatWidget";
-import Accounts from "./pages/Accounts";
 import AcceptInvitation from "./pages/AcceptInvitation";
+import Admin from "./pages/Admin";
 
 /**
  * AuthGuard: Prüft ob der User eingeloggt ist.
@@ -147,11 +146,12 @@ function AppRouter() {
       <Route path="/abschluss" component={VatPage} />
       <Route path="/vat" component={VatPage} />
       <Route path="/year-end" component={YearEnd} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/einstellungen" component={Settings} />
-      <Route path="/einstellungen/:tab" component={Settings} />
-      <Route path="/accounts" component={Accounts} />
-      <Route path="/admin/global-rules" component={GlobalRules} />
+      {/* Einstellungen (persönlich/Workspace) – Tabs via ?tab=… */}
+      <Route path="/einstellungen">{() => <Settings />}</Route>
+      <Route path="/settings">{() => <Settings />}</Route>
+
+      {/* Admin (organisationsweit) – Tabs via ?tab=… */}
+      <Route path="/admin" component={Admin} />
 
       {/* Detail-Routen */}
       <Route path="/documents/:id" component={DocumentDetail} />
@@ -173,6 +173,22 @@ function AppRouter() {
       <Route path="/reports">{() => <RedirectTo to="/berichte" />}</Route>
       <Route path="/zahlungen">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>
       <Route path="/qr-rechnung">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>
+
+      {/* Redirects: alte Admin/Settings-Pfade → neue Tab-URLs */}
+      <Route path="/admin/global-rules">{() => <RedirectTo to="/admin?tab=globalRules" />}</Route>
+      <Route path="/admin/users">{() => <RedirectTo to="/admin?tab=users" />}</Route>
+      <Route path="/admin/benutzer">{() => <RedirectTo to="/admin?tab=users" />}</Route>
+      <Route path="/admin/kontenplan">{() => <RedirectTo to="/admin?tab=chartOfAccounts" />}</Route>
+      <Route path="/admin/buchungsregeln">{() => <RedirectTo to="/admin?tab=rules" />}</Route>
+      <Route path="/admin/audit">{() => <RedirectTo to="/admin?tab=dsg" />}</Route>
+      <Route path="/admin/abonnement">{() => <RedirectTo to="/admin?tab=subscription" />}</Route>
+      <Route path="/accounts">{() => <RedirectTo to="/admin?tab=chartOfAccounts" />}</Route>
+      <Route path="/einstellungen/:tab">
+        {(params: { tab: string }) => <RedirectTo to={`/einstellungen?tab=${params.tab}`} />}
+      </Route>
+      <Route path="/settings/:tab">
+        {(params: { tab: string }) => <RedirectTo to={`/einstellungen?tab=${params.tab}`} />}
+      </Route>
 
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

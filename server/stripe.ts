@@ -121,8 +121,8 @@ export async function createCheckoutSession(opts: {
     locale: "de",
     payment_method_types: ["card"],
     line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${opts.origin}/settings?tab=subscription&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${opts.origin}/settings?tab=subscription&canceled=true`,
+    success_url: `${opts.origin}/admin?tab=subscription&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${opts.origin}/admin?tab=subscription&canceled=true`,
     subscription_data: {
       trial_period_days: 30,
       metadata: {

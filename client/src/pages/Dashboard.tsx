@@ -1,12 +1,12 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Link } from "wouter";
 import {
   FileText, Building2, CheckSquare, Receipt,
-  ArrowRight, Upload, Sparkles,
-  AlertCircle,
+  ArrowRight, Upload, Sparkles, CheckCircle,
+  Link2, Eye, Inbox as InboxIcon, AlertCircle,
 } from "lucide-react";
 import { Pill } from "@/components/klax/Pill";
 import { AICallout } from "@/components/klax/AICallout";
@@ -16,18 +16,15 @@ function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", minimumFractionDigits: 2 }).format(val);
 }
 
-function formatNumberShort(val: number) {
-  if (Math.abs(val) >= 1_000_000) return (val / 1_000_000).toFixed(1) + "M";
-  if (Math.abs(val) >= 1_000) return (val / 1_000).toFixed(1) + "k";
-  return val.toFixed(0);
-}
+type TaskKey = "all" | "newDocs" | "pendingEntries" | "unmatchedBankTx" | "openInvoices";
 
 export default function Dashboard() {
   const { fiscalYear: year } = useFiscalYear();
   const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<TaskKey>("all");
 
   const { data: incomeStatement } = trpc.reports.incomeStatement.useQuery({ fiscalYear: year });
-  const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 5 });
+  const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 50 });
   const { data: pendingBank } = trpc.bankImport.getPendingTransactions.useQuery({});
   const { data: allDocs } = trpc.documents.list.useQuery({ fiscalYear: year });
   const { data: company } = trpc.settings.getCompanySettings.useQuery();
@@ -50,23 +47,29 @@ export default function Dashboard() {
   const totalDocs = allDocs?.length ?? 0;
   const autoRate = totalDocs > 0 ? Math.round((aiProcessedDocs / totalDocs) * 100) : 0;
   const matchRate = totalDocs > 0 ? Math.round((matchedDocs / totalDocs) * 100) : 0;
+  const openInvoices = 0;
 
   const firstName = (user?.name ?? "").split(" ")[0] || "dir";
   const companyName = company?.companyName ?? "Meine Firma";
   const kw = getKW(new Date());
 
-  const todoItems = [
-    { icon: FileText, label: "Neue Belege", count: newDocs, href: "/belege?filter=new" },
-    { icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/freigaben" },
-    { icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/bank?tab=unmatched" },
-    { icon: Receipt, label: "Offene Rechnungen", count: 0, href: "/rechnungen?tab=open" },
+  // Aufgaben-Hub: konsolidierte Tabs (ehemalige Tiles + Filter-Rail)
+  const tasks: { key: TaskKey; icon: any; label: string; count: number; href: string; description: string }[] = [
+    { key: "newDocs", icon: FileText, label: "Neue Belege", count: newDocs, href: "/workflow?tab=docs&filter=new", description: "Warten auf KI-Analyse" },
+    { key: "pendingEntries", icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/workflow?tab=approvals", description: "Buchungsvorschläge bereit" },
+    { key: "unmatchedBankTx", icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/workflow?tab=bank&filter=unmatched", description: "Ohne zugeordneten Beleg" },
+    { key: "openInvoices", icon: Receipt, label: "Offene Rechnungen", count: openInvoices, href: "/rechnungen?tab=open", description: "Fällige Zahlungen" },
   ];
 
-  // Sparkline data aus echten Monatsdaten
+  const totalActive = tasks.reduce((s, t) => s + t.count, 0);
+  const visibleTasks = activeTab === "all"
+    ? tasks
+    : tasks.filter(t => t.key === activeTab);
+
   const sparkData = useMemo(() => {
     if (!monthlyData?.length) return [];
     return monthlyData.map(m => ({
-      name: m.month.slice(5), // MM
+      name: m.month.slice(5),
       revenue: m.revenue,
       expenses: m.expenses,
       profit: m.profit,
@@ -74,8 +77,8 @@ export default function Dashboard() {
   }, [monthlyData]);
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px] mx-auto">
-      {/* Topbar greeting */}
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1280px] mx-auto">
+      {/* Greeting + Quick-Actions */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h2 className="display text-[26px] font-medium" style={{ color: "var(--ink)" }}>
@@ -86,13 +89,13 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Link href="/belege">
+          <Link href="/workflow?action=upload">
             <button className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-medium"
               style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)", boxShadow: "var(--shadow-1)" }}>
               <Upload className="h-3.5 w-3.5" /> Beleg hochladen
             </button>
           </Link>
-          <Link href="/rechnungen">
+          <Link href="/rechnungen/neu">
             <button className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-medium"
               style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)", boxShadow: "var(--shadow-1)" }}>
               <Receipt className="h-3.5 w-3.5" /> Rechnung erstellen
@@ -101,18 +104,18 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* KI Hero Card */}
+      {/* Kompakte KI-Hero Card */}
       <div
-        className="rounded-[14px] p-6 relative overflow-hidden"
+        className="rounded-[14px] p-5 relative overflow-hidden"
         style={{
           background: "linear-gradient(135deg, var(--paper) 0%, #F6F2EB 100%)",
           border: "1px solid var(--hair)",
           boxShadow: "var(--shadow-1)",
         }}
       >
-        <div className="flex flex-col lg:flex-row gap-6 items-start">
+        <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-2">
               <span
                 className="w-6 h-6 rounded-md flex items-center justify-center"
                 style={{ background: "linear-gradient(135deg, var(--ai) 0%, #6B5AA8 100%)", color: "#fff" }}
@@ -123,97 +126,169 @@ export default function Dashboard() {
                 KLAX hat für dich vorbereitet
               </span>
             </div>
-            <p className="text-[17px] leading-relaxed" style={{ color: "var(--ink)" }}>
-              Heute warten{" "}
-              <Link href="/belege?filter=new">
-                <span className="underline decoration-dotted underline-offset-4 cursor-pointer" style={{ textDecorationColor: "var(--klax-accent)" }}>
-                  <strong className="font-semibold">{newDocs}</strong> neue Belege
-                </span>
-              </Link>{" "}
-              auf die KI-Analyse, und{" "}
-              <Link href="/freigaben">
-                <span className="underline decoration-dotted underline-offset-4 cursor-pointer" style={{ textDecorationColor: "var(--klax-accent)" }}>
-                  <strong className="font-semibold">{pendingEntries} Buchungen</strong>
-                </span>
-              </Link>{" "}
-              sind bereit zur Freigabe.
-              {unmatchedBankTx > 0 && <> Zusätzlich gibt es{" "}
-                <Link href="/bank?tab=unmatched">
-                  <span className="underline decoration-dotted underline-offset-4 cursor-pointer" style={{ textDecorationColor: "var(--klax-accent)" }}>
-                    <strong className="font-semibold">{unmatchedBankTx}</strong> ungematchte Banktransaktionen
-                  </span>
-                </Link>.
-              </>}
+            <p className="text-[15px] leading-snug" style={{ color: "var(--ink)" }}>
+              {totalActive > 0 ? (
+                <>
+                  <strong className="font-semibold">{totalActive}</strong> offene Aufgaben warten auf dich.
+                  {aiProcessedDocs > 0 && <> Davon wurden <strong className="font-semibold">{aiProcessedDocs}</strong> automatisch erkannt.</>}
+                </>
+              ) : (
+                <>Alles erledigt. Keine offenen Aufgaben.</>
+              )}
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link href="/inbox">
-                <button
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px] font-medium"
-                  style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
-                >
-                  Zur Inbox <ArrowRight className="h-3 w-3" />
-                </button>
-              </Link>
-              <Link href="/freigaben">
-                <button
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
-                  style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}
-                >
-                  Buchungen freigeben
-                </button>
-              </Link>
-            </div>
           </div>
 
-          {/* KPI-Block rechts */}
+          {/* Kompakter KPI-Block */}
           <div className="grid grid-cols-3 gap-4 w-full lg:w-auto lg:flex-shrink-0">
-            <div className="min-w-[92px]">
-              <div className="display text-[28px] mono font-medium" style={{ color: "var(--ink)" }}>
-                {autoRate}<span className="text-[18px]" style={{ color: "var(--ink-3)" }}>%</span>
+            <div className="min-w-[78px]">
+              <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
+                {autoRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span>
               </div>
-              <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-3)" }}>Automatisierung</div>
+              <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Automatisierung</div>
             </div>
-            <div className="min-w-[92px]">
-              <div className="display text-[28px] mono font-medium" style={{ color: "var(--ink)" }}>
-                {matchRate}<span className="text-[18px]" style={{ color: "var(--ink-3)" }}>%</span>
+            <div className="min-w-[78px]">
+              <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
+                {matchRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span>
               </div>
-              <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-3)" }}>Match-Quote</div>
+              <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Match-Quote</div>
             </div>
-            <div className="min-w-[92px]">
-              <div className="display text-[28px] mono font-medium" style={{ color: "var(--ink)" }}>
+            <div className="min-w-[78px]">
+              <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
                 {aiProcessedDocs}
               </div>
-              <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-3)" }}>Verarbeitet</div>
+              <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Verarbeitet</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Heute zu erledigen — 4 Kacheln */}
-      <div className="space-y-3">
-        <h3 className="k-label">Heute zu erledigen</h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {todoItems.map((item) => (
-            <Link key={item.href} href={item.href}>
-              <div className="klax-card p-4 cursor-pointer group transition-shadow hover:shadow-[var(--shadow-2)]">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0"
-                    style={{ background: "var(--surface-2)", color: "var(--ink-2)" }}
+      {/* Aufgaben-Hub: Filter-Rail + Task-Liste */}
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
+        {/* Filter-Rail (links) */}
+        <aside className="space-y-4">
+          <div className="klax-card p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <InboxIcon className="h-4 w-4" style={{ color: "var(--ink-3)" }} />
+              <h3 className="k-label">Heute zu erledigen</h3>
+            </div>
+            <div className="space-y-1">
+              <button
+                onClick={() => setActiveTab("all")}
+                className={`sb-item w-full text-left ${activeTab === "all" ? "sb-item--active" : ""}`}
+              >
+                <CheckSquare className="h-3.5 w-3.5" />
+                <span className="flex-1 text-[13px]">Alle</span>
+                {totalActive > 0 && (
+                  <span
+                    className="text-[10.5px] px-1.5 py-0.5 rounded-full font-medium mono"
+                    style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
                   >
-                    <item.icon className="h-4 w-4" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="display text-[22px] mono font-medium leading-none" style={{ color: "var(--ink)" }}>
-                      {item.count}
+                    {totalActive}
+                  </span>
+                )}
+              </button>
+              {tasks.map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setActiveTab(t.key)}
+                  className={`sb-item w-full text-left ${activeTab === t.key ? "sb-item--active" : ""}`}
+                >
+                  <t.icon className="h-3.5 w-3.5" />
+                  <span className="flex-1 text-[13px]">{t.label}</span>
+                  {t.count > 0 && (
+                    <span
+                      className="text-[10.5px] px-1.5 py-0.5 rounded-full font-medium mono"
+                      style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
+                    >
+                      {t.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="klax-card p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="h-4 w-4" style={{ color: "var(--ai)" }} />
+              <h3 className="k-label">KI-Pipeline</h3>
+            </div>
+            <div className="space-y-3">
+              <PipelineRow label="Automatisch erkannt" value={aiProcessedDocs} icon={<Sparkles className="h-3 w-3" />} tone="ai" />
+              <PipelineRow label="Gematcht" value={matchedDocs} icon={<Link2 className="h-3 w-3" />} tone="pos" />
+              <PipelineRow label="Zur Prüfung" value={pendingEntries} icon={<Eye className="h-3 w-3" />} tone="warn" />
+            </div>
+          </div>
+        </aside>
+
+        {/* Task-Liste (rechts) */}
+        <div className="min-w-0 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="display text-[18px] font-medium" style={{ color: "var(--ink)" }}>
+              {activeTab === "all" ? "Alle Aufgaben" : tasks.find(t => t.key === activeTab)?.label}
+            </h3>
+            <span className="text-[12px]" style={{ color: "var(--ink-3)" }}>
+              {totalActive > 0 ? `${totalActive} offen` : "alles erledigt"}
+            </span>
+          </div>
+
+          {visibleTasks.some(t => t.count > 0) ? (
+            <div className="space-y-2">
+              {visibleTasks.filter(t => t.count > 0).map(task => (
+                <Link key={task.key} href={task.href}>
+                  <div className="klax-card p-4 cursor-pointer group transition-shadow hover:shadow-[var(--shadow-2)]">
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0"
+                        style={{ background: "var(--surface-2)", color: "var(--ink-2)" }}
+                      >
+                        <task.icon className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[14px] font-medium" style={{ color: "var(--ink)" }}>
+                            {task.label}
+                          </span>
+                          <Pill variant="accent">{task.count}</Pill>
+                        </div>
+                        <p className="text-[12px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+                          {task.description}
+                        </p>
+                      </div>
+                      <ArrowRight
+                        className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity"
+                        style={{ color: "var(--ink-3)" }}
+                      />
                     </div>
-                    <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>{item.label}</div>
                   </div>
-                  <ArrowRight className="h-3.5 w-3.5 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--ink-3)" }} />
-                </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="klax-card p-10 text-center">
+              <CheckCircle className="h-10 w-10 mx-auto mb-3" style={{ color: "var(--pos)" }} />
+              <h3 className="display text-[18px] font-medium mb-1" style={{ color: "var(--ink)" }}>
+                Alles erledigt.
+              </h3>
+              <p className="text-[13px] max-w-md mx-auto" style={{ color: "var(--ink-3)" }}>
+                Alle Vorschläge sind verbucht und alle Transaktionen zugeordnet.
+              </p>
+              <div className="flex gap-2 justify-center mt-5">
+                <Link href="/workflow?action=upload">
+                  <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
+                    style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
+                    <Upload className="h-3.5 w-3.5" /> Beleg hochladen
+                  </button>
+                </Link>
+                <Link href="/workflow?action=bank-import">
+                  <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
+                    style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
+                    <Building2 className="h-3.5 w-3.5" /> Bank importieren
+                  </button>
+                </Link>
               </div>
-            </Link>
-          ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -234,7 +309,6 @@ export default function Dashboard() {
             <KpiStat label="Aufwand YTD" value={formatCHF(totalExpenses)} tone="neg" />
           </div>
 
-          {/* Sparkline Chart (echte Monatsdaten) */}
           <div style={{ borderTop: "1px solid var(--hair)", paddingTop: 12 }}>
             {sparkData.length > 0 ? (
               <>
@@ -257,7 +331,7 @@ export default function Dashboard() {
                     <span className="inline-block w-5 h-0.5 rounded" style={{ background: 'var(--pos)' }} /> Ertrag
                   </span>
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block w-5 h-0.5 rounded" style={{ background: 'var(--neg)', borderTop: '1px dashed var(--neg)' }} /> Aufwand
+                    <span className="inline-block w-5 h-0.5 rounded" style={{ background: 'var(--neg)' }} /> Aufwand
                   </span>
                   <span className="ml-auto text-[10px]" style={{ color: 'var(--ink-4)' }}>Letzte 6 Monate</span>
                 </div>
@@ -276,7 +350,7 @@ export default function Dashboard() {
         <div className="klax-card p-5 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h3 className="k-label">Aktivität</h3>
-            <Link href="/journal">
+            <Link href="/workflow?tab=approvals">
               <span className="text-[12px] cursor-pointer" style={{ color: "var(--klax-accent)" }}>
                 Alle anzeigen →
               </span>
@@ -326,6 +400,27 @@ function KpiStat({ label, value, tone }: { label: string; value: string; tone: "
     <div>
       <div className="text-[11px] mb-1" style={{ color: "var(--ink-3)" }}>{label}</div>
       <div className="display text-[22px] mono font-medium" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+function PipelineRow({ label, value, icon, tone }: { label: string; value: number; icon: React.ReactNode; tone: "ai" | "pos" | "warn" }) {
+  const color = tone === "ai" ? "var(--ai)" : tone === "pos" ? "var(--pos)" : "var(--warn)";
+  const bg = tone === "ai" ? "var(--ai-soft)" : tone === "pos" ? "var(--pos-soft)" : "var(--warn-soft)";
+  return (
+    <div className="flex items-center gap-2.5">
+      <span
+        className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+        style={{ background: bg, color }}
+      >
+        {icon}
+      </span>
+      <span className="flex-1 text-[12.5px]" style={{ color: "var(--ink-2)" }}>
+        {label}
+      </span>
+      <span className="mono text-[13px] font-medium" style={{ color: "var(--ink)" }}>
+        {value}
+      </span>
     </div>
   );
 }

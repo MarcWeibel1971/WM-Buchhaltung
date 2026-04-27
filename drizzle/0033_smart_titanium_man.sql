@@ -1,0 +1,60 @@
+CREATE TABLE `ebics_config` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`organizationId` int NOT NULL,
+	`bankName` varchar(100) NOT NULL,
+	`hostId` varchar(50) NOT NULL,
+	`bankUrl` varchar(500) NOT NULL,
+	`partnerId` varchar(50) NOT NULL,
+	`userId` varchar(50) NOT NULL,
+	`version` enum('2.5','3.0') NOT NULL DEFAULT '3.0',
+	`initStatus` enum('not_initialized','ini_sent','hia_sent','active') NOT NULL DEFAULT 'not_initialized',
+	`signatureKeyPem` text,
+	`authKeyPem` text,
+	`encKeyPem` text,
+	`bankSignatureKeyHash` varchar(128),
+	`bankAuthKeyHash` varchar(128),
+	`bankEncKeyHash` varchar(128),
+	`bankAccountId` int,
+	`isActive` boolean NOT NULL DEFAULT false,
+	`lastSyncAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `ebics_config_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `pos_config` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`organizationId` int NOT NULL,
+	`provider` enum('stripe_terminal','sumup') NOT NULL,
+	`apiKey` varchar(500),
+	`merchantCode` varchar(100),
+	`webhookSecret` varchar(500),
+	`bankAccountId` int,
+	`revenueAccountId` int,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `pos_config_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `pos_transactions` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`organizationId` int NOT NULL,
+	`provider` enum('stripe_terminal','sumup') NOT NULL,
+	`externalId` varchar(200) NOT NULL,
+	`amount` decimal(15,2) NOT NULL,
+	`currency` varchar(3) NOT NULL DEFAULT 'CHF',
+	`paymentMethod` varchar(50),
+	`cardBrand` varchar(50),
+	`cardLast4` varchar(4),
+	`description` varchar(500),
+	`status` enum('pending','completed','refunded','failed') NOT NULL DEFAULT 'completed',
+	`paidAt` timestamp NOT NULL,
+	`invoiceId` int,
+	`journalEntryId` int,
+	`bankTransactionId` int,
+	`rawPayload` json,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `pos_transactions_id` PRIMARY KEY(`id`),
+	CONSTRAINT `pos_transactions_externalId_unique` UNIQUE(`externalId`)
+);

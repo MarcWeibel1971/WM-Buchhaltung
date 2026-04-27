@@ -1356,3 +1356,23 @@
 - [x] 3a: KI-Chat-Assistent (CopilotDock mit echtem avatarChat.chat Backend, Gesprächsverlauf, Vorschläge, Reset)
 - [x] 3b: Cashflow-Forecast (13-Wochen-Vorschau, Balkendiagramm, Bestandsverlauf-Tabelle, kritische Wochen)
 - [x] 3c: Mobile Scanner (bereits in DocumentUpload implementiert – Kamera-Button mit capture="environment")
+
+## Schritt 1: POS/EC-Karten Integration
+
+- [ ] Stripe Terminal Webhook-Endpoint `/api/webhooks/stripe` implementieren
+- [ ] Stripe Terminal: automatische Buchungslogik (Zahlung → Journal-Eintrag)
+- [ ] Stripe Terminal: Matching mit offener Rechnung
+- [ ] Stripe Terminal: Konfigurationsseite in Einstellungen (Webhook-Secret)
+- [ ] SumUp Webhook-Endpoint `/api/webhooks/sumup` implementieren
+- [ ] SumUp: automatische Buchungslogik (Zahlung → Journal-Eintrag)
+- [ ] SumUp: Konfigurationsseite in Einstellungen (API-Key, Merchant-Code)
+- [ ] POS-Transaktionen in Banktransaktionen-Liste anzeigen (Quelle: Stripe/SumUp Badge)
+
+## Schritt 2: EBICS 3.0 Anbindung
+
+- [ ] EBICS-Konfigurationsseite in Einstellungen (Bank, Host-ID, User-ID, Partner-ID, URL)
+- [ ] EBICS-Schlüsselverwaltung (INI/HIA-Brief, RSA-Schlüsselgenerierung)
+- [ ] EBICS-Verbindungstest (HPB-Abruf, Bankschlüssel verifizieren)
+- [ ] EBICS-Auftragstypen: C53 (CAMT.053 Kontoauszug), C54 (CAMT.054 Buchungsdetails)
+- [ ] Automatischer CAMT-Abruf via EBICS (täglich/stündlich Scheduler)
+- [ ] EBICS-Transaktionen automatisch in Banktransaktionen importieren

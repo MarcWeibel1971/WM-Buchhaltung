@@ -41,6 +41,8 @@ import { toast } from "sonner";
 import UsersTab from "./UsersTab";
 import ServicesTab from "./ServicesTab";
 import QrSettingsTab from "./QrSettingsTab";
+import PosSettingsTab from "./PosSettingsTab";
+import EbicsSettingsTab from "./EbicsSettingsTab";
 
 // ─── Tab definitions ──────────────────────────────────────────────────────────
 
@@ -63,6 +65,8 @@ const TABS = [
   { id: "subscription", label: "Abonnement", icon: CreditCard },
   { id: "avatar", label: "Avatar-Chatbot", icon: Bot },
   { id: "qr", label: "QR-Rechnung", icon: QrCode },
+  { id: "pos", label: "POS / Kartenzahlung", icon: CreditCard },
+  { id: "ebics", label: "EBICS Banking", icon: Landmark },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -158,6 +162,8 @@ export default function Settings() {
         {activeTab === "users" && <UsersTab />}
         {activeTab === "services" && <ServicesTab />}
         {activeTab === "qr" && <QrSettingsTab />}
+        {activeTab === "pos" && <PosSettingsTab />}
+        {activeTab === "ebics" && <EbicsSettingsTab />}
       </main>
     </div>
   );

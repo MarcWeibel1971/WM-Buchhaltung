@@ -232,6 +232,13 @@
       "when": 1776857429835,
       "tag": "0032_dashing_odin",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "5",
+      "when": 1777271422731,
+      "tag": "0033_smart_titanium_man",
+      "breakpoints": true
     }
   ]
 }

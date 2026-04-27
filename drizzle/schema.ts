@@ -1195,3 +1195,68 @@ export const invitations = mysqlTable("invitations", {
 });
 export type Invitation = typeof invitations.$inferSelect;
 export type InsertInvitation = typeof invitations.$inferInsert;
+
+// ─── POS / EC-Karten Integration ─────────────────────────────────────────────
+export const posConfig = mysqlTable("pos_config", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  provider: mysqlEnum("provider", ["stripe_terminal", "sumup"]).notNull(),
+  apiKey: varchar("apiKey", { length: 500 }),
+  merchantCode: varchar("merchantCode", { length: 100 }),
+  webhookSecret: varchar("webhookSecret", { length: 500 }),
+  bankAccountId: int("bankAccountId"),
+  revenueAccountId: int("revenueAccountId"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PosConfig = typeof posConfig.$inferSelect;
+export type InsertPosConfig = typeof posConfig.$inferInsert;
+
+export const posTransactions = mysqlTable("pos_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  provider: mysqlEnum("provider", ["stripe_terminal", "sumup"]).notNull(),
+  externalId: varchar("externalId", { length: 200 }).notNull().unique(),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("CHF").notNull(),
+  paymentMethod: varchar("paymentMethod", { length: 50 }),
+  cardBrand: varchar("cardBrand", { length: 50 }),
+  cardLast4: varchar("cardLast4", { length: 4 }),
+  description: varchar("description", { length: 500 }),
+  status: mysqlEnum("status", ["pending", "completed", "refunded", "failed"]).default("completed").notNull(),
+  paidAt: timestamp("paidAt").notNull(),
+  invoiceId: int("invoiceId"),
+  journalEntryId: int("journalEntryId"),
+  bankTransactionId: int("bankTransactionId"),
+  rawPayload: json("rawPayload"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type PosTransaction = typeof posTransactions.$inferSelect;
+export type InsertPosTransaction = typeof posTransactions.$inferInsert;
+
+// ─── EBICS-Konfiguration ──────────────────────────────────────────────────────
+export const ebicsConfig = mysqlTable("ebics_config", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  bankName: varchar("bankName", { length: 100 }).notNull(),
+  hostId: varchar("hostId", { length: 50 }).notNull(),
+  bankUrl: varchar("bankUrl", { length: 500 }).notNull(),
+  partnerId: varchar("partnerId", { length: 50 }).notNull(),
+  userId: varchar("userId", { length: 50 }).notNull(),
+  version: mysqlEnum("version", ["2.5", "3.0"]).default("3.0").notNull(),
+  initStatus: mysqlEnum("initStatus", ["not_initialized", "ini_sent", "hia_sent", "active"]).default("not_initialized").notNull(),
+  signatureKeyPem: text("signatureKeyPem"),
+  authKeyPem: text("authKeyPem"),
+  encKeyPem: text("encKeyPem"),
+  bankSignatureKeyHash: varchar("bankSignatureKeyHash", { length: 128 }),
+  bankAuthKeyHash: varchar("bankAuthKeyHash", { length: 128 }),
+  bankEncKeyHash: varchar("bankEncKeyHash", { length: 128 }),
+  bankAccountId: int("bankAccountId"),
+  isActive: boolean("isActive").default(false).notNull(),
+  lastSyncAt: timestamp("lastSyncAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type EbicsConfig = typeof ebicsConfig.$inferSelect;
+export type InsertEbicsConfig = typeof ebicsConfig.$inferInsert;

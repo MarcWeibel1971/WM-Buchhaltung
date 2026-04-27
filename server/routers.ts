@@ -33,6 +33,8 @@ import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
 import { remindersRouter } from "./remindersRouter";
 import { stripeRouter } from "./stripeRouter";
+import { posRouter } from "./posRouter";
+import { ebicsRouter } from "./ebicsRouter";
 import { searchCompanies } from "./uidSearch";
 import { invitationsRouter } from "./invitationsRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
@@ -4592,6 +4594,8 @@ export const appRouter = router({
   avatarSettings: avatarSettingsRouter,
   importAutomation: importAutomationRouter,
   invitations: invitationsRouter,
+  pos: posRouter,
+  ebics: ebicsRouter,
   uidSearch: router({
     search: publicProcedure
       .input(z.object({ name: z.string().min(2).max(200) }))
@@ -4609,3 +4613,8 @@ export const appRouter = router({
 
 export type AppRouter = typeof appRouter;
 
+
+// ─── POS Router (wird direkt in appRouter eingebunden) ───────────────────────
+// Hinweis: posRouter wird am Ende dieser Datei nach appRouter definiert und
+// dann via Patch in den appRouter eingefügt – da appRouter bereits exportiert
+// ist, erstellen wir einen separaten Export.

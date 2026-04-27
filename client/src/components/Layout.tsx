@@ -1,14 +1,12 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  LayoutDashboard, Inbox, FileText, Building2, CheckSquare,
-  Receipt, BarChart3, LogOut, ChevronRight, ChevronDown,
+  LayoutDashboard, FileText, BarChart3, LogOut,
   Menu, X, Bell, Settings, CalendarCheck,
-  Brain, Users, BookOpen,
-  AlertTriangle, Bot, Bolt, Wallet, Clock, Banknote,
-  Sparkles, PieChart, List,
+  Brain, Receipt, Plus, ChevronDown, Upload, Building2,
+  Sparkles, Wallet,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
@@ -20,19 +18,15 @@ type NavItem = {
   icon: any;
   label: string;
   badge?: number | string;
-  children?: NavItem[];
   adminOnly?: boolean;
 };
 
-type NavSection = {
-  group?: string;
-  items: NavItem[];
-};
-
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
+  const newDropdownRef = useRef<HTMLDivElement | null>(null);
   const { fiscalYear, setFiscalYear, fiscalYears, fiscalYearInfos } = useFiscalYear();
 
   const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear });
@@ -51,235 +45,69 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const pendingEntries = stats?.pendingEntries ?? 0;
   const pendingBankTx = pendingBank?.length ?? 0;
-  const unmatchedBankTx = pendingBank?.filter(tx => !tx.matchedDocumentId)?.length ?? 0;
   const newDocs = allDocs?.filter(d => d.matchStatus === "unmatched" || !d.matchStatus)?.length ?? 0;
   const totalInbox = pendingEntries + pendingBankTx + newDocs;
+  const workflowBadge = newDocs + pendingBankTx;
 
   const currentOrgName = myOrgs?.find(o => o.isCurrent)?.name ?? companyData?.companyName ?? 'Meine Firma';
   const hasMultipleOrgs = (myOrgs?.length ?? 0) > 1;
   const userInitials = (user?.name ?? "U").split(" ").map(s => s[0]).slice(0, 2).join("").toUpperCase();
 
-  const sectionPrefixes: Record<string, string[]> = {
-    "/belege": ["/belege", "/documents"],
-    "/bank": ["/bank", "/bank-import", "/credit-card"],
-    "/freigaben": ["/freigaben", "/journal"],
-    "/rechnungen": ["/rechnungen", "/mahnwesen", "/zahlungen"],
-    "/berichte": ["/berichte", "/reports"],
-    "/abschluss": ["/abschluss", "/vat", "/year-end"],
-    "/einstellungen": ["/einstellungen", "/settings"],
-    "/admin": ["/admin", "/admin/global-rules"],
-    "/accounts": ["/accounts"],
-  };
-
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
-    const initial = new Set<string>();
-    for (const [section, prefixes] of Object.entries(sectionPrefixes)) {
-      if (prefixes.some(p => location.startsWith(p))) initial.add(section);
-    }
-    return initial;
-  });
-
+  // Schliesse Dropdown beim Klick ausserhalb
   useEffect(() => {
-    setExpandedSections(prev => {
-      const next = new Set(prev);
-      for (const [section, prefixes] of Object.entries(sectionPrefixes)) {
-        if (prefixes.some(p => location.startsWith(p))) next.add(section);
+    if (!newOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (newDropdownRef.current && !newDropdownRef.current.contains(e.target as Node)) {
+        setNewOpen(false);
       }
-      return next;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location]);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [newOpen]);
 
-  const SECTIONS: NavSection[] = [
-    {
-      items: [
-        { href: "/", icon: LayoutDashboard, label: "Dashboard" },
-        { href: "/inbox", icon: Inbox, label: "Inbox", badge: totalInbox > 0 ? totalInbox : undefined },
-      ],
-    },
-    {
-      group: "Belege",
-      items: [
-        {
-          href: "/belege", icon: FileText, label: "Alle Belege",
-          badge: newDocs > 0 ? newDocs : undefined,
-          children: [
-            { href: "/belege?filter=new", icon: FileText, label: "Neu hochgeladen" },
-            { href: "/belege?filter=ai", icon: Sparkles, label: "KI-verarbeitet" },
-            { href: "/belege?filter=review", icon: CheckSquare, label: "Zu prüfen" },
-          ],
-        },
-      ],
-    },
-    {
-      group: "Bank & Zahlungen",
-      items: [
-        {
-          href: "/bank", icon: Building2, label: "Banktransaktionen",
-          badge: pendingBankTx > 0 ? pendingBankTx : undefined,
-          children: [
-            { href: "/bank?tab=unmatched", icon: AlertTriangle, label: "Ungematcht" },
-            { href: "/bank-import", icon: Wallet, label: "Konten & Karten" },
-          ],
-        },
-        {
-          href: "/zahlungen/kreditoren", icon: Banknote, label: "Kreditoren",
-          children: [
-            { href: "/zahlungen/kreditoren", icon: Clock, label: "Offene Posten" },
-          ],
-        },
-      ],
-    },
-    {
-      group: "Freigaben",
-      items: [
-        {
-          href: "/freigaben", icon: CheckSquare, label: "Bereit zur Freigabe",
-          badge: pendingEntries > 0 ? pendingEntries : undefined,
-          children: [
-            { href: "/freigaben?tab=warnings", icon: AlertTriangle, label: "Mit Warnungen" },
-            { href: "/journal", icon: List, label: "Verbucht" },
-          ],
-        },
-      ],
-    },
-    {
-      group: "Rechnungen",
-      items: [
-        {
-          href: "/rechnungen", icon: Receipt, label: "Ausgangsrechnungen",
-          children: [
-            { href: "/rechnungen?tab=open", icon: Clock, label: "Offene Forderungen" },
-            { href: "/mahnwesen", icon: AlertTriangle, label: "Mahnwesen" },
-          ],
-        },
-      ],
-    },
-    {
-      group: "Buchhaltung",
-      items: [
-        {
-          href: "/accounts", icon: BookOpen, label: "Kontenplan",
-          children: [
-            { href: "/accounts", icon: BookOpen, label: "Kontendetail" },
-          ],
-        },
-      ],
-    },
-    {
-      group: "Berichte",
-      items: [
-        {
-          href: "/berichte", icon: BarChart3, label: "Erfolgsrechnung",
-          children: [
-            { href: "/berichte?view=balance", icon: BarChart3, label: "Bilanz" },
-            { href: "/berichte?view=cashflow", icon: PieChart, label: "Cashflow" },
-          ],
-        },
-      ],
-    },
-    {
-      group: "Abschluss",
-      items: [
-        {
-          href: "/abschluss", icon: CalendarCheck, label: "MWST",
-          children: [
-            { href: "/vat", icon: Receipt, label: "MWST" },
-            { href: "/year-end", icon: CalendarCheck, label: "Jahresabschluss" },
-          ],
-        },
-      ],
-    },
-    {
-      group: "Admin",
-      items: [
-        {
-          href: "/admin/global-rules", icon: Brain, label: "KI-Regeln", adminOnly: true,
-          children: [
-            { href: "/admin/global-rules", icon: Brain, label: "Regeln" },
-            { href: "/settings?tab=avatar", icon: Bot, label: "Avatar-Chatbot" },
-            { href: "/settings?tab=importAutomation", icon: Bolt, label: "Import-Automatisierung" },
-          ],
-        },
-      ],
-    },
+  // 5-Bereiche-Navigation: Dashboard / Belege & Bank (Workflow) / Rechnungen / Berichte / Abschluss
+  const NAV_ITEMS: NavItem[] = [
+    { href: "/", icon: LayoutDashboard, label: "Dashboard", badge: totalInbox > 0 ? totalInbox : undefined },
+    { href: "/workflow", icon: Wallet, label: "Belege & Bank", badge: workflowBadge > 0 ? workflowBadge : undefined },
+    { href: "/rechnungen", icon: Receipt, label: "Rechnungen" },
+    { href: "/berichte", icon: BarChart3, label: "Berichte" },
+    { href: "/abschluss", icon: CalendarCheck, label: "Abschluss" },
   ];
 
-  const toggleSection = (href: string) => {
-    setExpandedSections(prev => {
-      const next = new Set(prev);
-      if (next.has(href)) next.delete(href); else next.add(href);
-      return next;
-    });
-  };
-
-  const baseHrefOf = (href: string) => href.split("?")[0];
-
-  const isChildActive = (child: NavItem): boolean => {
-    const baseHref = baseHrefOf(child.href);
-    if (!child.href.includes("?")) return location === baseHref;
-    return location === baseHref && window.location.search === "?" + child.href.split("?")[1];
-  };
+  const ADMIN_ITEMS: NavItem[] = [
+    { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln", adminOnly: true },
+  ];
 
   const isItemActive = (item: NavItem): boolean => {
-    if (item.children) {
-      return item.children.some(child => isChildActive(child)) ||
-        (location === item.href);
+    if (item.href === "/") return location === "/";
+    if (item.href === "/workflow") {
+      return location.startsWith("/workflow") ||
+        location.startsWith("/belege") ||
+        location.startsWith("/bank") ||
+        location.startsWith("/freigaben") ||
+        location.startsWith("/documents") ||
+        location.startsWith("/journal") ||
+        location.startsWith("/bank-import") ||
+        location.startsWith("/credit-card");
     }
-    return location === item.href || (item.href !== "/" && location.startsWith(item.href));
+    if (item.href === "/rechnungen") {
+      return location.startsWith("/rechnungen") ||
+        location.startsWith("/mahnwesen") ||
+        location.startsWith("/zahlungen");
+    }
+    if (item.href === "/berichte") {
+      return location.startsWith("/berichte") || location.startsWith("/reports");
+    }
+    if (item.href === "/abschluss") {
+      return location.startsWith("/abschluss") ||
+        location.startsWith("/vat") ||
+        location.startsWith("/year-end");
+    }
+    return location === item.href || location.startsWith(item.href + "/");
   };
 
   const renderNavItem = (item: NavItem) => {
-    const hasChildren = item.children && item.children.length > 0;
     const isActive = isItemActive(item);
-    const isExpanded = expandedSections.has(item.href);
-
-    if (hasChildren) {
-      return (
-        <div key={item.href}>
-          <div
-            className={cn(
-              "sb-item group",
-              isActive && !isExpanded && "sb-item--active"
-            )}
-            onClick={() => toggleSection(item.href)}
-          >
-            <item.icon className="h-4 w-4 flex-shrink-0" />
-            <span className="flex-1 truncate">{item.label}</span>
-            {item.badge && (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-                style={{ backgroundColor: "var(--klax-accent)", color: "var(--klax-accent-ink)", minWidth: 18, textAlign: "center" }}
-              >
-                {typeof item.badge === "number" && item.badge > 99 ? "99+" : item.badge}
-              </span>
-            )}
-            {isExpanded
-              ? <ChevronDown className="h-3 w-3 opacity-50" />
-              : <ChevronRight className="h-3 w-3 opacity-50" />}
-          </div>
-          {isExpanded && (
-            <div className="mt-0.5">
-              {item.children!.map(child => {
-                const active = isChildActive(child);
-                return (
-                  <Link key={child.href} href={child.href}>
-                    <div
-                      className={cn("sb-item sb-sub", active && "sb-item--active")}
-                      onClick={() => setMobileOpen(false)}
-                    >
-                      <child.icon className="h-3 w-3 flex-shrink-0 opacity-70" />
-                      <span className="truncate">{child.label}</span>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      );
-    }
-
     return (
       <Link key={item.href} href={item.href}>
         <div
@@ -291,7 +119,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {item.badge && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-              style={{ backgroundColor: "var(--neg)", color: "#fff", minWidth: 18, textAlign: "center" }}
+              style={{ backgroundColor: "var(--klax-accent)", color: "var(--klax-accent-ink)", minWidth: 18, textAlign: "center" }}
             >
               {typeof item.badge === "number" && item.badge > 99 ? "99+" : item.badge}
             </span>
@@ -301,20 +129,48 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const findLabel = (sections: NavSection[]): string => {
-    for (const sec of sections) {
-      for (const item of sec.items) {
-        if (item.children) {
-          for (const child of item.children) {
-            const base = baseHrefOf(child.href);
-            if (location === base || location.startsWith(base + "/")) return child.label;
-          }
-        }
-        if (location === item.href || (item.href !== "/" && location.startsWith(item.href))) return item.label;
-      }
-    }
-    return "Dashboard";
+  const findLabel = (): string => {
+    if (location === "/") return "Dashboard";
+    if (location.startsWith("/workflow") ||
+      location.startsWith("/belege") ||
+      location.startsWith("/bank") ||
+      location.startsWith("/freigaben") ||
+      location.startsWith("/journal") ||
+      location.startsWith("/bank-import") ||
+      location.startsWith("/credit-card") ||
+      location.startsWith("/documents")) return "Belege & Bank";
+    if (location.startsWith("/rechnungen") || location.startsWith("/mahnwesen") || location.startsWith("/zahlungen")) return "Rechnungen";
+    if (location.startsWith("/berichte") || location.startsWith("/reports")) return "Berichte";
+    if (location.startsWith("/abschluss") || location.startsWith("/vat") || location.startsWith("/year-end")) return "Abschluss";
+    if (location.startsWith("/settings") || location.startsWith("/einstellungen")) return "Einstellungen";
+    if (location.startsWith("/admin")) return "Admin";
+    if (location.startsWith("/accounts")) return "Kontenplan";
+    return "KLAX";
   };
+
+  // "+ Neu"-Dropdown Aktionen
+  const newActions: { label: string; icon: any; onClick: () => void }[] = [
+    {
+      label: "Beleg hochladen",
+      icon: Upload,
+      onClick: () => { setNewOpen(false); setLocation("/workflow?action=upload"); },
+    },
+    {
+      label: "Bank importieren",
+      icon: Building2,
+      onClick: () => { setNewOpen(false); setLocation("/workflow?action=bank-import"); },
+    },
+    {
+      label: "KI-Auto-Match",
+      icon: Sparkles,
+      onClick: () => { setNewOpen(false); setLocation("/workflow?action=ai-match"); },
+    },
+    {
+      label: "Rechnung erstellen",
+      icon: Receipt,
+      onClick: () => { setNewOpen(false); setLocation("/rechnungen/neu"); },
+    },
+  ];
 
   return (
     <div
@@ -368,24 +224,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 overflow-y-auto px-3 py-2">
-          {SECTIONS.map((section, idx) => {
-            const visibleItems = section.items.filter(i => !i.adminOnly || user?.role === "admin");
-            if (visibleItems.length === 0) return null;
-            return (
-              <div key={idx}>
-                {section.group && <div className="sb-group">{section.group}</div>}
-                {visibleItems.map(renderNavItem)}
-              </div>
-            );
-          })}
+        {/* Nav: 5 Hauptbereiche */}
+        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
+          {NAV_ITEMS.map(renderNavItem)}
+
+          {user?.role === "admin" && (
+            <div className="pt-4">
+              <div className="sb-group">Admin</div>
+              {ADMIN_ITEMS.filter(i => !i.adminOnly || user?.role === "admin").map(renderNavItem)}
+              <Link href="/accounts">
+                <div className={cn("sb-item", location.startsWith("/accounts") && "sb-item--active")}>
+                  <FileText className="h-4 w-4 flex-shrink-0" />
+                  <span className="flex-1 truncate">Kontenplan</span>
+                </div>
+              </Link>
+            </div>
+          )}
         </nav>
 
         {/* Settings link */}
         <div className="px-3 pt-2" style={{ borderTop: "1px solid var(--hair)" }}>
           <Link href="/settings">
-            <div className={cn("sb-item", location.startsWith("/settings") && "sb-item--active")}>
+            <div className={cn("sb-item", (location.startsWith("/settings") || location.startsWith("/einstellungen")) && "sb-item--active")}>
               <Settings className="h-4 w-4 flex-shrink-0" />
               <span className="flex-1">Einstellungen</span>
             </div>
@@ -466,11 +326,48 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <div className="flex-1 min-w-0">
             <h1 className="text-[14px] font-semibold truncate" style={{ color: "var(--ink)" }}>
-              {findLabel(SECTIONS)}
+              {findLabel()}
             </h1>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* "+ Neu"-Dropdown */}
+            <div className="relative" ref={newDropdownRef}>
+              <button
+                onClick={() => setNewOpen(o => !o)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12.5px] font-medium"
+                style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)", boxShadow: "var(--shadow-1)" }}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Neu</span>
+                <ChevronDown className="h-3 w-3 opacity-70" />
+              </button>
+              {newOpen && (
+                <div
+                  className="absolute right-0 mt-1.5 w-56 rounded-md py-1 z-40"
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--hair)",
+                    boxShadow: "var(--shadow-2)",
+                  }}
+                >
+                  {newActions.map(a => (
+                    <button
+                      key={a.label}
+                      onClick={a.onClick}
+                      className="flex items-center gap-2.5 w-full px-3 py-2 text-[12.5px] text-left"
+                      style={{ color: "var(--ink)" }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                    >
+                      <a.icon className="h-3.5 w-3.5" style={{ color: "var(--ink-3)" }} />
+                      <span>{a.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <Select value={String(fiscalYear)} onValueChange={v => setFiscalYear(Number(v))}>
               <SelectTrigger className="w-24 h-7 text-xs">
                 <SelectValue />
@@ -488,7 +385,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </SelectContent>
             </Select>
             {totalInbox > 0 && (
-              <Link href="/inbox">
+              <Link href="/">
                 <div
                   className="relative cursor-pointer p-1.5 rounded-md"
                   style={{ color: "var(--ink-3)" }}

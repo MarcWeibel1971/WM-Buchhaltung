@@ -1,10 +1,10 @@
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  LayoutDashboard, FileText, BarChart3, LogOut,
+  LayoutDashboard, BarChart3, LogOut,
   Menu, X, Bell, Settings, CalendarCheck,
-  Brain, Receipt, Plus, ChevronDown, Upload, Building2,
-  Sparkles, Wallet,
+  Receipt, Plus, ChevronDown, Upload, Building2,
+  Sparkles, Wallet, ShieldCheck,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
@@ -74,8 +74,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { href: "/abschluss", icon: CalendarCheck, label: "Abschluss" },
   ];
 
+  // Admin-Bereich konsolidiert: ein einziger Eintrag /admin mit internen Tabs.
   const ADMIN_ITEMS: NavItem[] = [
-    { href: "/admin/global-rules", icon: Brain, label: "KI-Regeln", adminOnly: true },
+    { href: "/admin", icon: ShieldCheck, label: "Admin", adminOnly: true },
   ];
 
   const isItemActive = (item: NavItem): boolean => {
@@ -144,7 +145,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (location.startsWith("/abschluss") || location.startsWith("/vat") || location.startsWith("/year-end")) return "Abschluss";
     if (location.startsWith("/settings") || location.startsWith("/einstellungen")) return "Einstellungen";
     if (location.startsWith("/admin")) return "Admin";
-    if (location.startsWith("/accounts")) return "Kontenplan";
     return "KLAX";
   };
 
@@ -230,21 +230,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           {user?.role === "admin" && (
             <div className="pt-4">
-              <div className="sb-group">Admin</div>
+              <div className="sb-group">Verwaltung</div>
               {ADMIN_ITEMS.filter(i => !i.adminOnly || user?.role === "admin").map(renderNavItem)}
-              <Link href="/accounts">
-                <div className={cn("sb-item", location.startsWith("/accounts") && "sb-item--active")}>
-                  <FileText className="h-4 w-4 flex-shrink-0" />
-                  <span className="flex-1 truncate">Kontenplan</span>
-                </div>
-              </Link>
             </div>
           )}
         </nav>
 
-        {/* Settings link */}
+        {/* Einstellungen-Link (alle Rollen) */}
         <div className="px-3 pt-2" style={{ borderTop: "1px solid var(--hair)" }}>
-          <Link href="/settings">
+          <Link href="/einstellungen">
             <div className={cn("sb-item", (location.startsWith("/settings") || location.startsWith("/einstellungen")) && "sb-item--active")}>
               <Settings className="h-4 w-4 flex-shrink-0" />
               <span className="flex-1">Einstellungen</span>

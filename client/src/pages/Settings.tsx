@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,33 +44,42 @@ import ServicesTab from "./ServicesTab";
 import QrSettingsTab from "./QrSettingsTab";
 import PosSettingsTab from "./PosSettingsTab";
 import EbicsSettingsTab from "./EbicsSettingsTab";
+import GlobalRules from "./GlobalRules";
 
-// ─── Tab definitions ──────────────────────────────────────────────────────────
+// ─── Tab-Definitionen ────────────────────────────────────────────────────────
+// Jeder Tab hat einen scope:
+//   "personal" → /einstellungen (für alle Rollen)
+//   "admin"    → /admin (nur Admin-Rolle, organisationsweit)
 
 const TABS = [
-  { id: "company", label: "Unternehmen", icon: Building2 },
-  { id: "users", label: "Benutzer", icon: Users },
-  { id: "bank", label: "Bankkonten", icon: Landmark },
-  { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt },
-  { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree },
-  { id: "employees", label: "Mitarbeiter", icon: Users },
-  { id: "insurance", label: "Versicherungen", icon: Shield },
-  { id: "rules", label: "Buchungsregeln", icon: BookOpen },
-  { id: "opening", label: "Eröffnungssalden", icon: Scale },
-  { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
-  { id: "suppliers", label: "Lieferanten", icon: Truck },
-  { id: "customers", label: "Kunden", icon: UserCheck },
-  { id: "services", label: "Dienstleistungen", icon: ClipboardList },
-  { id: "templates", label: "Vorlagen", icon: FileStack },
-  { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
-  { id: "subscription", label: "Abonnement", icon: CreditCard },
-  { id: "avatar", label: "Avatar-Chatbot", icon: Bot },
-  { id: "qr", label: "QR-Rechnung", icon: QrCode },
-  { id: "pos", label: "POS / Kartenzahlung", icon: CreditCard },
-  { id: "ebics", label: "EBICS Banking", icon: Landmark },
+  // Persönlich / Workspace
+  { id: "company", label: "Unternehmen", icon: Building2, scope: "personal" },
+  { id: "bank", label: "Bankkonten", icon: Landmark, scope: "personal" },
+  { id: "employees", label: "Mitarbeiter", icon: Users, scope: "personal" },
+  { id: "insurance", label: "Versicherungen", icon: Shield, scope: "personal" },
+  { id: "services", label: "Dienstleistungen", icon: ClipboardList, scope: "personal" },
+  { id: "templates", label: "Vorlagen", icon: FileStack, scope: "personal" },
+  { id: "qr", label: "QR-Rechnung", icon: QrCode, scope: "personal" },
+  { id: "pos", label: "POS / Kartenzahlung", icon: CreditCard, scope: "personal" },
+  { id: "ebics", label: "EBICS Banking", icon: Landmark, scope: "personal" },
+  { id: "avatar", label: "Avatar-Chatbot", icon: Bot, scope: "personal" },
+
+  // Organisationsweit / Admin
+  { id: "users", label: "Benutzer & Rollen", icon: Users, scope: "admin" },
+  { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree, scope: "admin" },
+  { id: "rules", label: "Buchungsregeln", icon: BookOpen, scope: "admin" },
+  { id: "globalRules", label: "KI-Regeln", icon: Bot, scope: "admin" },
+  { id: "opening", label: "Eröffnungssalden", icon: Scale, scope: "admin" },
+  { id: "depreciation", label: "Abschreibungen", icon: TrendingDown, scope: "admin" },
+  { id: "suppliers", label: "Lieferanten", icon: Truck, scope: "admin" },
+  { id: "customers", label: "Kunden", icon: UserCheck, scope: "admin" },
+  { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt, scope: "admin" },
+  { id: "dsg", label: "Datenschutz & Audit", icon: ShieldCheck, scope: "admin" },
+  { id: "subscription", label: "Abonnement & Plan", icon: CreditCard, scope: "admin" },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
+export type SettingsScope = "personal" | "admin";
 
 // ─── Insurance type labels ────────────────────────────────────────────────────
 
@@ -91,32 +101,89 @@ const INSURANCE_COLORS: Record<string, string> = {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function Settings() {
-  // Support ?tab=subscription for Stripe redirect + /einstellungen/:tab path segments
-  const initialTab = (() => {
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
-    if (tab && TABS.some(t => t.id === tab)) return tab as TabId;
-    // Support /einstellungen/bankkonten → tab "bank"
-    const pathSegment = window.location.pathname.split("/").pop();
-    const pathTabMap: Record<string, TabId> = {
-      bankkonten: "bank",
-      kontenplan: "chartOfAccounts",
-      mitarbeiter: "employees",
-      versicherungen: "insurance",
-      buchungsregeln: "rules",
-      eroeffnungssalden: "opening",
-      abschreibungen: "depreciation",
-      lieferanten: "suppliers",
-      kunden: "customers",
-      vorlagen: "templates",
-      datenschutz: "dsg",
-      abonnement: "subscription",
-    };
-    if (pathSegment && pathTabMap[pathSegment]) return pathTabMap[pathSegment];
-    return "company" as TabId;
-  })();
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+// Slug-Mapping: erlaubt sprechende URL-Slugs zusätzlich zu den internen Tab-IDs.
+const SLUG_TO_TAB: Record<string, TabId> = {
+  unternehmen: "company",
+  profil: "company",
+  bankkonten: "bank",
+  bank: "bank",
+  mitarbeiter: "employees",
+  versicherungen: "insurance",
+  dienstleistungen: "services",
+  vorlagen: "templates",
+  qr: "qr",
+  pos: "pos",
+  ebics: "ebics",
+  avatar: "avatar",
+
+  benutzer: "users",
+  rollen: "users",
+  kontenplan: "chartOfAccounts",
+  buchungsregeln: "rules",
+  "ki-regeln": "globalRules",
+  "global-rules": "globalRules",
+  eroeffnungssalden: "opening",
+  abschreibungen: "depreciation",
+  lieferanten: "suppliers",
+  kunden: "customers",
+  "import-automatisierung": "importAutomation",
+  datenschutz: "dsg",
+  audit: "dsg",
+  abonnement: "subscription",
+  plan: "subscription",
+};
+
+function readTabFromUrl(scope: SettingsScope): TabId {
+  const params = new URLSearchParams(window.location.search);
+  const tabParam = params.get("tab");
+  if (tabParam) {
+    const direct = TABS.find(t => t.id === tabParam && t.scope === scope);
+    if (direct) return direct.id as TabId;
+    const mapped = SLUG_TO_TAB[tabParam];
+    if (mapped && TABS.some(t => t.id === mapped && t.scope === scope)) return mapped;
+  }
+  const pathSegment = window.location.pathname.split("/").pop();
+  if (pathSegment) {
+    const mapped = SLUG_TO_TAB[pathSegment];
+    if (mapped && TABS.some(t => t.id === mapped && t.scope === scope)) return mapped;
+  }
+  // Fallback: erster Tab des Scopes
+  const first = TABS.find(t => t.scope === scope);
+  return (first?.id ?? "company") as TabId;
+}
+
+interface SettingsContainerProps {
+  scope?: SettingsScope;
+  basePath?: string;
+}
+
+/**
+ * Generischer Container für Einstellungen (persönlich) und Admin (organisationsweit).
+ * Beide nutzen die gleiche Tab-Mechanik mit URL-State über ?tab=...
+ */
+export default function Settings({ scope = "personal", basePath = "/einstellungen" }: SettingsContainerProps) {
+  const [, setLocation] = useLocation();
+  const [activeTab, setActiveTab] = useState<TabId>(() => readTabFromUrl(scope));
+
+  // URL synchronisieren, wenn Tab gewechselt wird
+  const switchTab = (id: TabId) => {
+    setActiveTab(id);
+    setLocation(`${basePath}?tab=${id}`, { replace: false } as any);
+  };
+
+  // Bei direktem URL-Wechsel (z.B. via Redirect) Tab synchronisieren
+  useEffect(() => {
+    const onPop = () => setActiveTab(readTabFromUrl(scope));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [scope]);
+
+  const visibleTabs = TABS.filter(t => t.scope === scope);
+  const headline = scope === "admin" ? "Admin" : "Einstellungen";
+  const subline = scope === "admin"
+    ? "Organisationsweite Verwaltung"
+    : "Persönliche & Workspace-Einstellungen";
+
   return (
     <div className="flex h-full" style={{ background: "var(--paper)" }}>
       {/* Sub-Navigation (KLAX) */}
@@ -124,14 +191,17 @@ export default function Settings() {
         className="w-56 p-3 flex flex-col gap-0.5 shrink-0"
         style={{ borderRight: "1px solid var(--hair)", background: "var(--paper)" }}
       >
-        <h2 className="sb-group" style={{ paddingTop: 4 }}>Einstellungen</h2>
-        {TABS.map(tab => {
+        <div style={{ paddingTop: 4, paddingBottom: 8 }}>
+          <h2 className="sb-group" style={{ marginBottom: 2 }}>{headline}</h2>
+          <div className="text-[10.5px]" style={{ color: "var(--ink-4)" }}>{subline}</div>
+        </div>
+        {visibleTabs.map(tab => {
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => switchTab(tab.id as TabId)}
               className={`sb-item ${active ? "sb-item--active" : ""}`}
               style={{ width: "100%", textAlign: "left" }}
             >
@@ -150,6 +220,7 @@ export default function Settings() {
         {activeTab === "employees" && <EmployeesTab />}
         {activeTab === "insurance" && <InsuranceTab />}
         {activeTab === "rules" && <BookingRulesTab />}
+        {activeTab === "globalRules" && <GlobalRules />}
         {activeTab === "opening" && <OpeningBalancesTab />}
         {activeTab === "depreciation" && <DepreciationTab />}
         {activeTab === "suppliers" && <SuppliersTab />}
@@ -233,7 +304,7 @@ function CompanyLogoUpload({ logoUrl, onUploaded }: { logoUrl: string | null; on
 
 // ─── Company Tab ──────────────────────────────────────────────────────────────────
 
-function CompanyTab() {
+export function CompanyTab() {
   const { data, isLoading, refetch } = trpc.settings.getCompanySettings.useQuery();
   const upsert = trpc.settings.upsertCompanySettings.useMutation({
     onSuccess: () => { toast.success("Unternehmensdaten wurden aktualisiert."); refetch(); },
@@ -475,7 +546,7 @@ function CompanyTab() {
 
 // ─── Bank Tab ─────────────────────────────────────────────────────────────────
 
-function BankTab() {
+export function BankTab() {
   const utils = trpc.useUtils();
   const { data: bankAccounts, isLoading, refetch } = trpc.settings.getBankAccounts.useQuery();
   const updateMut = trpc.settings.updateBankAccount.useMutation({
@@ -650,7 +721,7 @@ function BankTab() {
 
 // ─── Employees Tab ────────────────────────────────────────────────────────────
 
-function EmployeesTab() {
+export function EmployeesTab() {
   const { data: emps, isLoading, refetch } = trpc.settings.getEmployees.useQuery();
   const { data: allAccounts } = trpc.accounts.list.useQuery();
   // Only salary-relevant accounts (4xxx Personalaufwand, 2xxx Verbindlichkeiten)
@@ -882,7 +953,7 @@ function EmployeesTab() {
 
 // ─── Insurance Tab ────────────────────────────────────────────────────────────
 
-function InsuranceTab() {
+export function InsuranceTab() {
   const { data: settings, isLoading, refetch } = trpc.settings.getInsuranceSettings.useQuery();
   const upsert = trpc.settings.upsertInsuranceSetting.useMutation({
     onSuccess: () => { toast.success("Gespeichert"); refetch(); setDialogOpen(false); },
@@ -1124,7 +1195,7 @@ function InsuranceTab() {
 
 // ─── Booking Rules Tab ────────────────────────────────────────────────────────
 
-function BookingRulesTab() {
+export function BookingRulesTab() {
   const { data: rules, isLoading, refetch } = trpc.settings.getBookingRules.useQuery();
   const toggle = trpc.settings.toggleBookingRule.useMutation({
     onSuccess: () => refetch(),
@@ -1315,7 +1386,7 @@ function SortableOBRow({ row, value, onChange }: {
   );
 }
 
-function OpeningBalancesTab() {
+export function OpeningBalancesTab() {
   const { fiscalYear } = useFiscalYear();
   const [editYear, setEditYear] = useState(fiscalYear);
   const [localBalances, setLocalBalances] = useState<Record<number, string>>({});
@@ -1864,7 +1935,7 @@ const METHOD_LABELS: Record<string, string> = {
   degressive: "Degressiv",
 };
 
-function DepreciationTab() {
+export function DepreciationTab() {
   const { data: settings, isLoading, refetch } = trpc.yearEnd.listDepreciationSettings.useQuery();
   const { data: allAccounts } = trpc.accounts.list.useQuery();
   const createMut = trpc.yearEnd.createDepreciationSetting.useMutation({
@@ -2260,7 +2331,7 @@ type UndoAction =
   | { type: "deleteAccount"; accountData: { number: string; name: string; accountType: string; normalBalance: string; category?: string; subCategory?: string; isBankAccount?: boolean; isVatRelevant?: boolean; defaultVatRate?: string | null }; accountLabel: string }
   | { type: "createAccount"; id: number; accountLabel: string };
 
-function ChartOfAccountsTab() {
+export function ChartOfAccountsTab() {
   const { data: allAccounts, isLoading, refetch } = trpc.settings.getAllAccounts.useQuery();
   const utils = trpc.useUtils();
 
@@ -3349,7 +3420,7 @@ function SortableAccountList({ accounts, dragEnabled, onDragEnd, children }: {
 
 // ─── DSG (Datenschutz) Tab ───────────────────────────────────────────────────
 
-function DsgTab() {
+export function DsgTab() {
   const [activeSection, setActiveSection] = useReactState<"audit" | "export" | "privacy">("audit");
 
   return (
@@ -3737,7 +3808,7 @@ function PrivacySection() {
 
 // ─── Suppliers (Lieferanten) Tab ─────────────────────────────────────────────
 
-function SuppliersTab() {
+export function SuppliersTab() {
   const [search, setSearch] = useReactState("");
   const [showInactive, setShowInactive] = useReactState(false);
   const [showDialog, setShowDialog] = useReactState(false);
@@ -4184,7 +4255,7 @@ function SuppliersTab() {
 
 // ─── Customers (Kunden) Tab ──────────────────────────────────────────────────
 
-function CustomersTab() {
+export function CustomersTab() {
   const [search, setSearch] = useReactState("");
   const [showDialog, setShowDialog] = useReactState(false);
   const [editCustomer, setEditCustomer] = useReactState<any>(null);
@@ -4804,7 +4875,7 @@ function CustomersTab() {
 
 // ─── Templates (Vorlagen) Tab ────────────────────────────────────────────────
 
-function TemplatesTab() {
+export function TemplatesTab() {
   const [showUpload, setShowUpload] = useReactState(false);
   const [uploadName, setUploadName] = useReactState("");
   const [uploadType, setUploadType] = useReactState("invoice");
@@ -4987,7 +5058,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   none: { label: "Kein Abo", color: "bg-gray-100 text-gray-800" },
 };
 
-function SubscriptionTab() {
+export function SubscriptionTab() {
   const subQuery = trpc.stripe.getSubscription.useQuery();
   const createCheckout = trpc.stripe.createCheckout.useMutation();
   const createPortal = trpc.stripe.createPortal.useMutation();
@@ -5013,7 +5084,7 @@ function SubscriptionTab() {
   const handleManageSubscription = async () => {
     try {
       const { url } = await createPortal.mutateAsync({
-        returnUrl: `${window.location.origin}/settings?tab=subscription`,
+        returnUrl: `${window.location.origin}/admin?tab=subscription`,
       });
       if (url) window.location.href = url;
     } catch (err: any) {
@@ -5158,7 +5229,7 @@ function SubscriptionTab() {
 
 // ─── Avatar Settings Tab ──────────────────────────────────────────────────────
 
-function AvatarSettingsTab() {
+export function AvatarSettingsTab() {
   const { data: settings, isLoading } = trpc.avatarSettings.get.useQuery();
   const utils = trpc.useUtils();
   const saveMutation = trpc.avatarSettings.save.useMutation({
@@ -5294,7 +5365,7 @@ function AvatarSettingsTab() {
 
 // ─── Import Automation Tab ────────────────────────────────────────────────────
 
-function ImportAutomationTab() {
+export function ImportAutomationTab() {
   const { data: settings, isLoading } = trpc.importAutomation.get.useQuery();
   const utils = trpc.useUtils();
   const saveMutation = trpc.importAutomation.save.useMutation({

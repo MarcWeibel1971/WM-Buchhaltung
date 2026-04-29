@@ -76,6 +76,27 @@ const accountsRouter = router({
     .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
     .query(({ input, ctx }) => getAccountBalance(ctx.organizationId, input.accountId, input.fiscalYear)),
 
+  // Returns the total balance of all bank/cash accounts (1000-1099) for the dashboard
+  getBankBalance: orgProcedure
+    .input(z.object({ fiscalYear: z.number().optional() }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return { balance: 0, accounts: [] };
+      // Get all accounts in range 1000-1099 (Flüssige Mittel)
+      const bankAccs = await db.select().from(accounts)
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          sql`${accounts.number} >= '1000' AND ${accounts.number} <= '1099'`
+        ));
+      let totalBalance = 0;
+      const accountBalances: Array<{ id: number; number: string; name: string; balance: number }> = [];
+      for (const acc of bankAccs) {
+        const bal = await getAccountBalance(ctx.organizationId, acc.id, input.fiscalYear);
+        totalBalance += bal;
+        accountBalances.push({ id: acc.id, number: acc.number, name: acc.name, balance: bal });
+      }
+      return { balance: totalBalance, accounts: accountBalances };
+    }),
   getLedger: orgProcedure
     .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
     .query(async ({ input, ctx }) => {
@@ -1094,6 +1115,10 @@ Regeln:
 
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+      // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
+      if (tx.status === "matched" && tx.journalEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
+      }
 
       const amount = Math.abs(parseFloat(tx.amount as string));
       const year = new Date(tx.transactionDate as any).getFullYear();
@@ -1160,6 +1185,10 @@ Regeln:
 
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+      // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
+      if (tx.status === "matched" && tx.journalEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
+      }
 
       const year = new Date(tx.transactionDate as any).getFullYear();
 
@@ -4318,16 +4347,35 @@ Antworte NUR mit dem JSON-Objekt.`,
       // Verify document exists
       const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      // ── Duplikat-Schutz: Bereits verbuchtes Dokument ──
+      if (doc.journalEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Dieser Beleg wurde bereits verbucht (Journal-Eintrag #${doc.journalEntryId}). Doppelbuchung verhindert.` });
+      }
       
       const year = new Date(input.bookingDate).getFullYear();
+      // ── Vorsteuer-Automatik: Konto 1170 bei Eingangsrechnungen mit MWST ──
+      // Nettobetrag = Totalbetrag - MWST-Betrag
+      const totalAmount = parseFloat(input.amount);
+      const vatAmt = input.vatAmount ? parseFloat(input.vatAmount) : 0;
+      const netAmount = vatAmt > 0 ? (totalAmount - vatAmt).toFixed(2) : input.amount;
       const lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string; vatAmount?: string; vatRate?: string }> = [
-        { accountId: input.debitAccountId, side: "debit", amount: input.amount },
+        { accountId: input.debitAccountId, side: "debit", amount: netAmount },
         { accountId: input.creditAccountId, side: "credit", amount: input.amount },
       ];
       // Add VAT info to the expense line if provided
       if (input.vatAmount && input.vatRate) {
         lines[0].vatAmount = input.vatAmount;
         lines[0].vatRate = input.vatRate;
+        // Automatische Vorsteuer-Buchung auf Konto 1170
+        const vorsteuerAccount = await getAccountByNumber(ctx.organizationId, "1170");
+        if (vorsteuerAccount) {
+          lines.push({
+            accountId: vorsteuerAccount.id,
+            side: "debit",
+            amount: vatAmt.toFixed(2),
+            vatRate: input.vatRate,
+          });
+        }
       }
       
       const entryId = await createJournalEntry({

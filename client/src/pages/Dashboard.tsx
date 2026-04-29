@@ -29,6 +29,7 @@ export default function Dashboard() {
   const { data: allDocs } = trpc.documents.list.useQuery({ fiscalYear: year });
   const { data: company } = trpc.settings.getCompanySettings.useQuery();
   const { data: monthlyData } = trpc.reports.monthlyAggregates.useQuery({ months: 6 });
+  const { data: bankBalanceData } = trpc.accounts.getBankBalance.useQuery({ fiscalYear: year });
 
   const totalRevenue = useMemo(() =>
     incomeStatement?.revenues?.reduce((s, r) => s + r.balance, 0) ?? 0,
@@ -304,7 +305,7 @@ export default function Dashboard() {
         </div>
         <div className="klax-card p-5">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
-            <KpiStat label="Liquidität" value={formatCHF(profit)} tone={profit >= 0 ? "pos" : "neg"} />
+            <KpiStat label="Bankbestand" value={formatCHF(bankBalanceData?.balance ?? 0)} tone={(bankBalanceData?.balance ?? 0) >= 0 ? "pos" : "neg"} />
             <KpiStat label="Ertrag YTD" value={formatCHF(totalRevenue)} tone="pos" />
             <KpiStat label="Aufwand YTD" value={formatCHF(totalExpenses)} tone="neg" />
           </div>

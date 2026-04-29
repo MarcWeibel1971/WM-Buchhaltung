@@ -1376,3 +1376,24 @@
 - [ ] EBICS-Auftragstypen: C53 (CAMT.053 Kontoauszug), C54 (CAMT.054 Buchungsdetails)
 - [ ] Automatischer CAMT-Abruf via EBICS (täglich/stündlich Scheduler)
 - [ ] EBICS-Transaktionen automatisch in Banktransaktionen importieren
+
+## Session 2026-04-29: Analysebericht-Punkte umgesetzt
+
+- [x] GitHub-Push: Nemotron-Änderungen auf GitHub gepusht (38631fd → 4810b85)
+- [x] Duplikat-Schutz: approveTransaction, approveCollectiveTransaction, bookDirect prüfen ob bereits verbucht (CONFLICT-Error)
+- [x] QR-Referenz-Extraktion: bereits implementiert (qrReference + referenceNumber im JSON-Schema)
+- [x] Dashboard-KPI: "Liquidität" (= Jahresergebnis) durch echten "Bankbestand" (Konto 1000-1099) ersetzt
+- [x] Bankbestand-Prozedur: accounts.getBankBalance in routers.ts hinzugefügt (summiert Konten 1000-1099)
+- [x] Konto 1170 (Vorsteuer) angelegt (ID: 300001)
+- [x] Vorsteuer-Automatik in bookDirect: bei vatAmount > 0 wird automatisch Konto 1170 Debit gebucht
+
+
+## Session 2026-04-29: Analysebericht-Punkte umgesetzt
+
+- [x] GitHub-Push: Nemotron-Änderungen auf GitHub gepusht (38631fd → 4810b85)
+- [x] Duplikat-Schutz: approveTransaction, approveCollectiveTransaction, bookDirect prüfen ob bereits verbucht (CONFLICT-Error)
+- [x] QR-Referenz-Extraktion: bereits implementiert (qrReference + referenceNumber im JSON-Schema)
+- [x] Dashboard-KPI: Liquiditaet (= Jahresergebnis) durch echten Bankbestand (Konto 1000-1099) ersetzt
+- [x] Bankbestand-Prozedur: accounts.getBankBalance in routers.ts hinzugefuegt (summiert Konten 1000-1099)
+- [x] Konto 1170 (Vorsteuer) angelegt (ID: 300001)
+- [x] Vorsteuer-Automatik in bookDirect: bei vatAmount > 0 wird automatisch Konto 1170 Debit gebucht

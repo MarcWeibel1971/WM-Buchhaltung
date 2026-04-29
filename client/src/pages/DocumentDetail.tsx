@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useRoute, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -166,6 +166,31 @@ export default function DocumentDetail() {
       refetch();
     },
     onError: (err: any) => toast.error("Verknüpfung fehlgeschlagen: " + err.message),
+  });
+
+  // KK-Sammelbuchung: Nemotron-Toggle (Standard: Nemotron)
+  const [useNemotron, setUseNemotron] = React.useState(true);
+
+  // Nemotron-Bildanalyse Mutation
+  const parsePdfWithNemotronMutation = trpc.creditCard.parsePdfWithNemotron.useMutation({
+    onSuccess: (result) => {
+      if (!result.items?.length) { toast.error("Keine Positionen erkannt (Nemotron)"); return; }
+      const mapped = result.items.map((item: any) => {
+        let debitAccountId = "";
+        if (item.suggestedAccount) {
+          const m = item.suggestedAccount.match(/^(\d{4})/);
+          if (m) {
+            const found = accountsQuery.data?.find((a: any) => a.number === m[1]);
+            if (found) debitAccountId = String(found.id);
+          }
+        }
+        return { date: item.date, description: item.description, amount: item.amount, debitAccountId, confidence: item.confidence, matchSource: item.matchSource, matchRulePattern: item.matchRulePattern };
+      });
+      setKkItems(mapped);
+      setKkParsed(true);
+      toast.success(`${mapped.length} Positionen mit Nemotron erkannt (${result.pagesProcessed} Seiten analysiert)`);
+    },
+    onError: (e) => toast.error("Nemotron-Analyse fehlgeschlagen: " + e.message),
   });
 
   // KK-Sammelbuchung: parsePdf
@@ -1167,20 +1192,48 @@ export default function DocumentDetail() {
                     Die KI analysiert alle Einzelpositionen und schlägt Aufwandskonten vor. Sie können die Konten vor dem Verbuchen anpassen (Buchung 2).
                   </p>
 
-                  {/* Parse-Button */}
+                  {/* Parse-Button mit Nemotron-Toggle */}
                   {!kkParsed && (
-                    <Button
-                      size="sm"
-                      className="gap-1.5 bg-purple-600 hover:bg-purple-700 text-white"
-                      disabled={parsePdfMutation.isPending || !doc.s3Url}
-                      onClick={() => parsePdfMutation.mutate({ documentUrl: doc.s3Url })}
-                    >
-                      {parsePdfMutation.isPending ? (
-                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Positionen werden analysiert...</>
-                      ) : (
-                        <><Sparkles className="w-3.5 h-3.5" /> Positionen mit KI analysieren</>
-                      )}
-                    </Button>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setUseNemotron(!useNemotron)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                            useNemotron ? 'bg-purple-600' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                            useNemotron ? 'translate-x-4.5' : 'translate-x-0.5'
+                          }`} />
+                        </button>
+                        <span className="text-xs text-purple-700 font-medium">
+                          {useNemotron ? '🧠 Nemotron (Bildanalyse, empfohlen)' : '📄 Standard-KI (Text-Extraktion)'}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        className={`gap-1.5 text-white ${
+                          useNemotron
+                            ? 'bg-purple-700 hover:bg-purple-800'
+                            : 'bg-purple-600 hover:bg-purple-700'
+                        }`}
+                        disabled={(useNemotron ? parsePdfWithNemotronMutation.isPending : parsePdfMutation.isPending) || !doc.s3Url}
+                        onClick={() => {
+                          if (useNemotron) {
+                            parsePdfWithNemotronMutation.mutate({ documentUrl: doc.s3Url });
+                          } else {
+                            parsePdfMutation.mutate({ documentUrl: doc.s3Url });
+                          }
+                        }}
+                      >
+                        {(useNemotron ? parsePdfWithNemotronMutation.isPending : parsePdfMutation.isPending) ? (
+                          <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {useNemotron ? 'Nemotron analysiert Bilder...' : 'Positionen werden analysiert...'}</>
+                        ) : (
+                          <><Sparkles className="w-3.5 h-3.5" /> {useNemotron ? 'Mit Nemotron analysieren' : 'Positionen mit KI analysieren'}</>
+                        )}
+                      </Button>
+                    </div>
                   )}
 
                   {/* Positions table */}

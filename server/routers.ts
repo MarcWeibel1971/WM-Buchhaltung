@@ -5,6 +5,8 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, orgProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
+import { invokeNemotron } from "./nemotron";
+import { pdfUrlToImages } from "./pdfToImages";
 import { transcribeAudio } from "./_core/voiceTranscription";
 import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
@@ -2103,6 +2105,131 @@ Antwort NUR als JSON-Array, keine Erklärung:
           };
         }));
         return { items: enrichedItems };
+      } catch {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
+      }
+    }),
+
+  // Nemotron-basiertes PDF-Parsing mit Bildverständnis
+  parsePdfWithNemotron: orgProcedure
+    .input(z.object({ documentUrl: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+      // Kontext laden
+      const allRules = await getAllBookingRules(ctx.organizationId);
+      const allAccts = await getAllAccounts(ctx.organizationId);
+      const [orgRow] = await (await getDb())!.select({ name: companySettings.companyName })
+        .from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
+      const companyName = orgRow?.name ?? "Ihre Firma";
+
+      const acctMap: Record<number, { number: string; name: string }> = {};
+      allAccts.forEach(a => { acctMap[a.id] = { number: a.number, name: a.name }; });
+
+      const rulesContext = allRules
+        .filter(r => r.debitAccountId)
+        .map(r => {
+          const acct = acctMap[r.debitAccountId!];
+          return acct ? `${r.counterpartyPattern} → ${acct.number} ${acct.name}` : null;
+        })
+        .filter(Boolean)
+        .join("\n");
+
+      const accountList = allAccts
+        .filter(a => a.number.startsWith("4") || a.number.startsWith("1"))
+        .map(a => `${a.number} ${a.name}`)
+        .join("\n");
+
+      // PDF in Bilder konvertieren (max. 3 Seiten für Kreditkartenabrechnungen)
+      let images: Array<{ base64: string; pageNumber: number }> = [];
+      try {
+        images = await pdfUrlToImages(input.documentUrl, 3);
+      } catch (err) {
+        console.error("PDF-zu-Bild-Konvertierung fehlgeschlagen:", err);
+        // Fallback auf Text-only Parsing
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF konnte nicht verarbeitet werden" });
+      }
+
+      if (images.length === 0) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Keine Seiten im PDF gefunden" });
+      }
+
+      // Nemotron-Prompt mit Bildern
+      const systemPrompt = `Du bist Buchhalter für ${companyName} in der Schweiz (SKR04 Kontenplan).
+Analysiere diese Kreditkartenabrechnung VISUELL und extrahiere ALLE Einzelpositionen.
+WICHTIG:
+- Erkenne Tabellen, Logos, Stempel und handschriftliche Notizen
+- Extrahiere ALLE Transaktionen, überspringe keine
+- Beträge in CHF (Absolutwert, ohne Minus)
+- Ignoriere: Saldo Vormonat, Zahlung, Neuer Saldo, Total
+- QR-Referenz: 27-stellige Zahl falls vorhanden
+- Vorsteuer-Konto 1170 bei Eingangsrechnungen mit MWST
+GELERNTE KONTENZUORDNUNGEN (höchste Priorität):
+${rulesContext || "(keine gelernten Regeln)"}
+KONTENPLAN:
+${accountList}
+Antworte NUR als JSON-Array:
+[{"date":"YYYY-MM-DD","description":"Vendor","amount":"123.45","suggestedAccount":"4xxx Kontoname","qrReference":"","vatRate":0}]`;
+
+      // Alle Seiten als Bilder an Nemotron senden
+      const imageContents = images.map(img => ({
+        type: "image_url" as const,
+        image_url: {
+          url: `data:image/png;base64,${img.base64}`,
+          detail: "high" as const,
+        },
+      }));
+
+      const result = await invokeNemotron({
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              ...imageContents,
+              { type: "text", text: "Extrahiere alle Transaktionen aus dieser Kreditkartenabrechnung als JSON-Array." },
+            ],
+          },
+        ],
+        maxTokens: 4096,
+        temperature: 0.05,
+      });
+
+      // JSON extrahieren
+      let jsonStr = result.content;
+      const jsonMatch = jsonStr.match(/\[\s*\{[\s\S]*\}\s*\]/);
+      if (!jsonMatch) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Nemotron konnte keine Positionen extrahieren. Antwort: ${jsonStr.slice(0, 200)}` });
+      }
+
+      try {
+        const rawItems = JSON.parse(jsonMatch[0]);
+        const enrichedItems = await Promise.all(rawItems.map(async (i: any) => {
+          const description = i.description ?? "";
+          const matchedRule = await findMatchingRule(ctx.organizationId, description);
+          let confidence = 75;
+          let matchSource = "nemotron";
+          let matchRulePattern: string | null = null;
+          if (matchedRule) {
+            confidence = 95;
+            matchSource = "rule";
+            matchRulePattern = matchedRule.counterpartyPattern;
+          }
+          return {
+            date: i.date ?? "",
+            description,
+            amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
+            suggestedAccount: i.suggestedAccount ?? "",
+            qrReference: i.qrReference ?? "",
+            vatRate: i.vatRate ?? 0,
+            confidence,
+            matchSource,
+            matchRulePattern,
+          };
+        }));
+        return { items: enrichedItems, pagesProcessed: images.length };
       } catch {
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
       }
@@ -4270,11 +4397,99 @@ Antworte NUR mit dem JSON-Objekt.`,
           } catch { /* S3 delete failed, continue */ }
         }
       }
-      await db.delete(docs).where(inArrayOp(docs.id, input.ids));
+       await db.delete(docs).where(inArrayOp(docs.id, input.ids));
       return { deleted: rows.length };
     }),
-});
 
+  // Nemotron: Kamerafoto direkt analysieren (kein separates OCR)
+  analyzeImageWithNemotron: orgProcedure
+    .input(z.object({
+      imageUrl: z.string(), // S3-URL des hochgeladenen Fotos
+      documentId: z.number().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!process.env.OPENROUTER_API_KEY) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nemotron nicht konfiguriert" });
+      }
+      const allAccts = await getAllAccounts(ctx.organizationId);
+      const accountList = allAccts
+        .filter(a => a.number.startsWith("4") || a.number.startsWith("2") || a.number.startsWith("1"))
+        .slice(0, 50)
+        .map(a => `${a.number} ${a.name}`)
+        .join("\n");
+
+      const result = await invokeNemotron({
+        messages: [
+          {
+            role: "system",
+            content: `Du bist ein Schweizer Buchhalter. Analysiere dieses Belegfoto und extrahiere die Buchhaltungsdaten.
+KONTENPLAN (SKR04):
+${accountList}
+Antworte NUR als JSON-Objekt:
+{"documentType":"invoice_in|receipt|other","counterparty":"Firmenname","documentDate":"YYYY-MM-DD","totalAmount":123.45,"vatRate":8.1,"vatAmount":9.50,"currency":"CHF","invoiceNumber":"RE-2026-001","qrReference":"","suggestedDebitAccount":"4xxx Kontoname","suggestedCreditAccount":"2000 Kreditoren","confidence":85,"description":"Kurzbeschreibung"}`,
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url" as const,
+                image_url: { url: input.imageUrl, detail: "high" as const },
+              },
+              { type: "text", text: "Analysiere diesen Beleg und extrahiere alle Buchhaltungsdaten." },
+            ],
+          },
+        ],
+        maxTokens: 1024,
+        temperature: 0.05,
+      });
+
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Nemotron konnte keine Daten extrahieren" });
+      }
+      const extracted = JSON.parse(jsonMatch[0]);
+
+      // Optionally update document metadata in DB
+      if (input.documentId) {
+        const db = await getDb();
+        if (db) {
+          const meta = {
+            documentType: extracted.documentType,
+            counterparty: extracted.counterparty,
+            documentDate: extracted.documentDate,
+            totalAmount: extracted.totalAmount,
+            vatRate: extracted.vatRate,
+            vatAmount: extracted.vatAmount,
+            currency: extracted.currency || "CHF",
+            invoiceNumber: extracted.invoiceNumber,
+            qrReference: extracted.qrReference,
+            suggestedAccount: extracted.suggestedDebitAccount,
+            description: extracted.description,
+          };
+          await db.update(documents)
+            .set({ aiMetadata: JSON.stringify(meta), documentType: extracted.documentType || "other" })
+            .where(and(eq(documents.id, input.documentId), eq(documents.organizationId, ctx.organizationId)));
+        }
+      }
+
+      return {
+        documentType: extracted.documentType,
+        counterparty: extracted.counterparty,
+        documentDate: extracted.documentDate,
+        totalAmount: extracted.totalAmount,
+        vatRate: extracted.vatRate,
+        vatAmount: extracted.vatAmount,
+        currency: extracted.currency || "CHF",
+        invoiceNumber: extracted.invoiceNumber,
+        qrReference: extracted.qrReference,
+        suggestedDebitAccount: extracted.suggestedDebitAccount,
+        suggestedCreditAccount: extracted.suggestedCreditAccount,
+        confidence: extracted.confidence ?? 80,
+        description: extracted.description,
+        reasoning: result.reasoning,
+      };
+    }),
+});
 // ─── Avatar Chat Router ─────────────────────────────────────────────────────
 const avatarChatRouter = router({
   chat: orgProcedure
@@ -4381,9 +4596,30 @@ ${contextText}`;
         { role: 'user' as const, content: input.message },
       ];
 
-      const llmResponse = await invokeLLM({ messages });
-       const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
-      const reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
+      // Nemotron mit Reasoning verwenden falls OPENROUTER_API_KEY vorhanden
+      let reply: string;
+      let reasoning: string | undefined;
+      if (process.env.OPENROUTER_API_KEY) {
+        try {
+          const nemotronResult = await invokeNemotron({
+            messages,
+            maxTokens: 512,
+            temperature: 0.2,
+            enableReasoning: true,
+          });
+          reply = nemotronResult.content || 'Entschuldigung, ich konnte keine Antwort generieren.';
+          reasoning = nemotronResult.reasoning;
+        } catch (e) {
+          console.error('Nemotron Chat Fehler, Fallback auf LLM:', e);
+          const llmResponse = await invokeLLM({ messages });
+          const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
+          reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
+        }
+      } else {
+        const llmResponse = await invokeLLM({ messages });
+        const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
+        reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
+      }
       // TTS via ElevenLabs (optional) – return as base64 data URL to avoid CORS issues
       let audioUrl: string | undefined;
       const elevenLabsKey = process.env.ELEVENLABS_API_KEY;

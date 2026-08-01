@@ -209,3 +209,42 @@ describe("Manual Document Matching", () => {
     expect(autoMatch.matchScore).toBeLessThan(100);
   });
 });
+
+describe("calculateMatchScore – Härtung (Phase 1)", () => {
+  const docBase = { totalAmount: 350.0, counterparty: undefined, documentDate: "2026-03-01" };
+  const txnBase = { amount: "-350.00", counterparty: null, transactionDate: "2026-03-02", counterpartyIban: null, reference: null };
+
+  it("Betrag allein reicht für Auto-Match nie (requireIdentity)", () => {
+    const score = calculateMatchScore({ ...docBase }, { ...txnBase }, { requireIdentity: true });
+    expect(score).toBeLessThanOrEqual(39);
+  });
+
+  it("Betrag allein bleibt für die Score-Anzeige hoch (ohne requireIdentity)", () => {
+    const score = calculateMatchScore({ ...docBase }, { ...txnBase });
+    expect(score).toBeGreaterThanOrEqual(50);
+  });
+
+  it("Kreditoren-Beleg (invoice_in) matcht keine Zahlungseingänge", () => {
+    const score = calculateMatchScore(
+      { ...docBase, documentType: "invoice_in" },
+      { ...txnBase, amount: "350.00" }
+    );
+    expect(score).toBe(0);
+  });
+
+  it("Ausgangsrechnung (invoice_out) matcht keine Ausgaben", () => {
+    const score = calculateMatchScore(
+      { ...docBase, documentType: "invoice_out" },
+      { ...txnBase, amount: "-350.00" }
+    );
+    expect(score).toBe(0);
+  });
+
+  it("Ausgangsrechnung (invoice_out) matcht Zahlungseingang in korrekter Richtung", () => {
+    const score = calculateMatchScore(
+      { ...docBase, documentType: "invoice_out", counterparty: "Kunde AG" },
+      { ...txnBase, amount: "350.00", counterparty: "Kunde AG" }
+    );
+    expect(score).toBeGreaterThan(50);
+  });
+});

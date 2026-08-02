@@ -25,6 +25,7 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
+  Bell, Wallet,
   CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Bolt, QrCode,
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -73,6 +74,8 @@ const TABS = [
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown, scope: "admin" },
   { id: "suppliers", label: "Lieferanten", icon: Truck, scope: "admin" },
   { id: "customers", label: "Kunden", icon: UserCheck, scope: "admin" },
+  { id: "reminders", label: "Mahnwesen", icon: Bell, scope: "admin" },
+  { id: "accountMappings", label: "Standard-Konten", icon: Wallet, scope: "admin" },
   { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt, scope: "admin" },
   { id: "dsg", label: "Datenschutz & Audit", icon: ShieldCheck, scope: "admin" },
   { id: "subscription", label: "Abonnement & Plan", icon: CreditCard, scope: "admin" },
@@ -226,6 +229,8 @@ export default function Settings({ scope = "personal", basePath = "/einstellunge
         {activeTab === "suppliers" && <SuppliersTab />}
         {activeTab === "customers" && <CustomersTab />}
         {activeTab === "templates" && <TemplatesTab />}
+        {activeTab === "reminders" && <RemindersTab />}
+        {activeTab === "accountMappings" && <AccountMappingsTab />}
         {activeTab === "dsg" && <DsgTab />}
         {activeTab === "subscription" && <SubscriptionTab />}
         {activeTab === "avatar" && <AvatarSettingsTab />}
@@ -5024,6 +5029,325 @@ export function TemplatesTab() {
   );
 }
 
+// ─── Reminders / Mahn-Policy Tab (Phase 3b) ────────────────────────────────
+
+function RemindersTab() {
+  const utils = trpc.useUtils();
+  const policyQuery = trpc.reminders.getPolicy.useQuery();
+
+  const [form, setForm] = useState({
+    level1Days: 15, level1Fee: 0,  level1Grace: 10,
+    level2Days: 30, level2Fee: 20, level2Grace: 10,
+    level3Days: 60, level3Fee: 40, level3Grace: 7,
+  });
+
+  useEffect(() => {
+    if (!policyQuery.data) return;
+    const p = policyQuery.data;
+    setForm({
+      level1Days: p.level1.minDaysOverdue, level1Fee: p.level1.feeAmount, level1Grace: p.level1.gracePeriodDays,
+      level2Days: p.level2.minDaysOverdue, level2Fee: p.level2.feeAmount, level2Grace: p.level2.gracePeriodDays,
+      level3Days: p.level3.minDaysOverdue, level3Fee: p.level3.feeAmount, level3Grace: p.level3.gracePeriodDays,
+    });
+  }, [policyQuery.data]);
+
+  const updateMut = trpc.reminders.updatePolicy.useMutation({
+    onSuccess: () => {
+      toast.success("Mahn-Policy gespeichert");
+      utils.reminders.getPolicy.invalidate();
+      utils.reminders.openPositions.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const isAscending = form.level1Days <= form.level2Days && form.level2Days <= form.level3Days;
+
+  const handleSave = () => {
+    if (!isAscending) {
+      toast.error("Schwellwerte müssen aufsteigend sein: Stufe 1 ≤ Stufe 2 ≤ Stufe 3");
+      return;
+    }
+    updateMut.mutate(form);
+  };
+
+  if (policyQuery.isLoading) {
+    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Lade Policy…</div>;
+  }
+
+  const LEVELS: Array<{ key: 1 | 2 | 3; title: string; subtitle: string }> = [
+    { key: 1, title: "Zahlungserinnerung", subtitle: "Freundlicher Hinweis, in der Regel ohne Gebühr." },
+    { key: 2, title: "1. Mahnung", subtitle: "Erste formelle Mahnung mit Gebühr." },
+    { key: 3, title: "2. Mahnung", subtitle: "Letzte Mahnung – häufig mit höherer Gebühr und kurzer Nachfrist." },
+  ];
+
+  const setField = (key: keyof typeof form, value: number) =>
+    setForm(f => ({ ...f, [key]: Number.isFinite(value) ? value : 0 }));
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div>
+        <h1 className="text-2xl font-bold">Mahnwesen</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Schwellwerte und Gebühren für das 3-stufige Mahnwesen. Die Einstellungen gelten für alle
+          Rechnungen dieser Organisation. Bestehende Mahnungen bleiben unverändert.
+        </p>
+      </div>
+
+      {!isAscending && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            Die Schwellwerte müssen aufsteigend sein: <strong>Stufe 1 ≤ Stufe 2 ≤ Stufe 3</strong>.
+          </div>
+        </div>
+      )}
+
+      {LEVELS.map(lvl => {
+        const daysKey  = `level${lvl.key}Days`  as const;
+        const feeKey   = `level${lvl.key}Fee`   as const;
+        const graceKey = `level${lvl.key}Grace` as const;
+        return (
+          <Card key={lvl.key}>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Badge variant="outline">Stufe {lvl.key}</Badge>
+                {lvl.title}
+              </CardTitle>
+              <CardDescription>{lvl.subtitle}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor={daysKey}>Ab Tagen überfällig</Label>
+                  <Input
+                    id={daysKey}
+                    type="number"
+                    min={0}
+                    max={365}
+                    value={form[daysKey]}
+                    onChange={e => setField(daysKey, parseInt(e.target.value, 10))}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Anzahl Tage nach Fälligkeit, ab der diese Stufe ausgelöst werden darf.
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor={feeKey}>Mahngebühr (CHF)</Label>
+                  <Input
+                    id={feeKey}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={form[feeKey]}
+                    onChange={e => setField(feeKey, parseFloat(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Wird zur Gesamtforderung addiert (Stufe 1 meist 0).
+                  </p>
+                </div>
+                <div>
+                  <Label htmlFor={graceKey}>Nachfrist (Tage)</Label>
+                  <Input
+                    id={graceKey}
+                    type="number"
+                    min={0}
+                    max={90}
+                    value={form[graceKey]}
+                    onChange={e => setField(graceKey, parseInt(e.target.value, 10))}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Neue Zahlungsfrist ab Mahndatum.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      <div className="flex justify-end gap-2">
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (!policyQuery.data) return;
+            const p = policyQuery.data;
+            setForm({
+              level1Days: p.level1.minDaysOverdue, level1Fee: p.level1.feeAmount, level1Grace: p.level1.gracePeriodDays,
+              level2Days: p.level2.minDaysOverdue, level2Fee: p.level2.feeAmount, level2Grace: p.level2.gracePeriodDays,
+              level3Days: p.level3.minDaysOverdue, level3Fee: p.level3.feeAmount, level3Grace: p.level3.gracePeriodDays,
+            });
+          }}
+          disabled={updateMut.isPending}
+        >
+          Zurücksetzen
+        </Button>
+        <Button onClick={handleSave} disabled={updateMut.isPending || !isAscending}>
+          {updateMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          Speichern
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Account Mappings Tab (Phase 3c) ────────────────────────────────────────
+// Konfiguration der organisationsweiten Standard-Konten für Lohn- und
+// Kreditkarten-Buchungen. Ersetzt die bisherigen Hardcodes (1032/1082/4000).
+
+function AccountMappingsTab() {
+  const utils = trpc.useUtils();
+  const orgQuery = trpc.organizations.getCurrent.useQuery();
+  const accountsQuery = trpc.accounts.list.useQuery();
+
+  const [form, setForm] = useState<{
+    defaultBankAccountId: number | null;
+    creditCardClearingAccountId: number | null;
+    defaultSalaryExpenseAccountId: number | null;
+  }>({
+    defaultBankAccountId: null,
+    creditCardClearingAccountId: null,
+    defaultSalaryExpenseAccountId: null,
+  });
+
+  useEffect(() => {
+    if (!orgQuery.data) return;
+    const o = orgQuery.data as any;
+    setForm({
+      defaultBankAccountId: o.defaultBankAccountId ?? null,
+      creditCardClearingAccountId: o.creditCardClearingAccountId ?? null,
+      defaultSalaryExpenseAccountId: o.defaultSalaryExpenseAccountId ?? null,
+    });
+  }, [orgQuery.data]);
+
+  const updateMut = trpc.organizations.update.useMutation({
+    onSuccess: () => {
+      toast.success("Konto-Mapping gespeichert");
+      utils.organizations.getCurrent.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  if (orgQuery.isLoading || accountsQuery.isLoading) {
+    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Lade…</div>;
+  }
+
+  const accounts = accountsQuery.data ?? [];
+  const bankAccounts = accounts.filter((a: any) => a.isBankAccount || String(a.number).startsWith("10"));
+  const assetAccounts = accounts.filter((a: any) => a.accountType === "asset");
+  const expenseAccounts = accounts.filter((a: any) => a.accountType === "expense");
+
+  const SelectAcc = ({
+    value, onChange, options, placeholder,
+  }: {
+    value: number | null;
+    onChange: (v: number | null) => void;
+    options: Array<{ id: number; number: string; name: string }>;
+    placeholder: string;
+  }) => (
+    <Select
+      value={value == null ? "__none__" : String(value)}
+      onValueChange={(v) => onChange(v === "__none__" ? null : parseInt(v, 10))}
+    >
+      <SelectTrigger>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">— (Fallback verwenden)</SelectItem>
+        {options.map(a => (
+          <SelectItem key={a.id} value={String(a.id)}>
+            {a.number} – {a.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  const handleSave = () => {
+    updateMut.mutate({
+      defaultBankAccountId: form.defaultBankAccountId,
+      creditCardClearingAccountId: form.creditCardClearingAccountId,
+      defaultSalaryExpenseAccountId: form.defaultSalaryExpenseAccountId,
+    });
+  };
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <div>
+        <h1 className="text-2xl font-bold">Standard-Konten</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Organisationsweite Standardzuordnungen für Lohn- und Kreditkarten-Buchungen.
+          Wenn kein Konto zugewiesen ist, versucht die App auf die historischen
+          Kontonummern (1032 / 1082 / 4000) zurückzugreifen.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Standard-Bankkonto</CardTitle>
+          <CardDescription>
+            Wird als Zahlkonto für Lohn und als Gegenkonto bei
+            Kreditkarten-Belastungen verwendet (vormals hardcodiert 1032 LUKB).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SelectAcc
+            value={form.defaultBankAccountId}
+            onChange={(v) => setForm(f => ({ ...f, defaultBankAccountId: v }))}
+            options={bankAccounts.length > 0 ? bankAccounts : assetAccounts}
+            placeholder="Bitte Bankkonto wählen"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Kreditkarten-Durchlaufkonto</CardTitle>
+          <CardDescription>
+            Sammelkonto für Kreditkarten-Abrechnungen. Wird zwischen Monats-
+            Sammelbelastung und den einzelnen Aufwandspositionen verwendet
+            (vormals hardcodiert 1082 VISA Durchlauf).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SelectAcc
+            value={form.creditCardClearingAccountId}
+            onChange={(v) => setForm(f => ({ ...f, creditCardClearingAccountId: v }))}
+            options={assetAccounts}
+            placeholder="Bitte Durchlaufkonto wählen"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Standard-Lohnkonto (Brutto)</CardTitle>
+          <CardDescription>
+            Default-Aufwandskonto für Bruttolohn, wenn der Mitarbeiter kein
+            eigenes Gross-Lohnkonto hinterlegt hat (vormals hardcodiert 4000).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SelectAcc
+            value={form.defaultSalaryExpenseAccountId}
+            onChange={(v) => setForm(f => ({ ...f, defaultSalaryExpenseAccountId: v }))}
+            options={expenseAccounts}
+            placeholder="Bitte Aufwandskonto wählen"
+          />
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => orgQuery.refetch()} disabled={updateMut.isPending}>
+          Zurücksetzen
+        </Button>
+        <Button onClick={handleSave} disabled={updateMut.isPending}>
+          {updateMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          Speichern
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 // ─── Subscription Tab ─────────────────────────────────────────────────────────
 

@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Link } from "wouter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
 import { Button } from "@/components/ui/button";
@@ -1176,7 +1177,7 @@ export default function BankImport() {
             const collectiveBalanced = collectiveDiff < 0.005;
             // Find the bank account for this transaction
             const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
-            const bankAccountLabel = txBankAccount ? `${txBankAccount.account?.number ?? ''} ${txBankAccount.account?.name ?? txBankAccount.bankAccount.name}`.trim() : "Bankkonto";
+            const bankAccountLabel = txBankAccount ? `${txBankAccount.account?.number ?? "?"} ${txBankAccount.account?.name ?? txBankAccount.bankAccount.name}` : "Bankkonto";
             const bankAccountId = txBankAccount?.account?.id ?? txBankAccount?.bankAccount.accountId;
 
             const handleCollectiveApprove = () => {

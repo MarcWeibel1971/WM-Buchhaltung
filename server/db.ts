@@ -462,9 +462,10 @@ export async function getBankAccounts(orgId: number) {
     account: accounts,
   }).from(bankAccounts)
     .leftJoin(accounts, eq(bankAccounts.accountId, accounts.id))
-    .where(
+    .where(and(
       eq(bankAccounts.organizationId, orgId),
-    );
+      eq(bankAccounts.isActive, true),
+    ));
 }
 
 export async function getPendingBankTransactions(orgId: number, bankAccountId?: number) {

@@ -1,20 +1,22 @@
 /**
- * Reminders / Mahnwesen Router (Phase 2e, Commit C)
+ * Reminders / Mahnwesen Router (Phase 2e + Phase 3b)
  *
  * 3-stufiges Mahnwesen über invoice_reminders:
- *   Level 1: Zahlungserinnerung (ab 15 Tage überfällig, keine Gebühr)
- *   Level 2: 1. Mahnung         (ab 30 Tage überfällig, CHF 20)
- *   Level 3: 2. Mahnung          (ab 60 Tage überfällig, CHF 40)
+ *   Level 1: Zahlungserinnerung (Default ab 15 Tage überfällig, keine Gebühr)
+ *   Level 2: 1. Mahnung          (Default ab 30 Tage überfällig, CHF 20)
+ *   Level 3: 2. Mahnung          (Default ab 60 Tage überfällig, CHF 40)
  *
- * Die Policy-Werte (Schwellwerte + Gebühren) sind hier als Konstante
- * hinterlegt und können später pro Organisation konfigurierbar gemacht
- * werden (→ reminderPolicy-Tabelle in einem Folge-Commit).
+ * Phase 3b: Die Policy (Schwellwerte, Gebühren, Nachfrist) ist pro Organisation
+ * konfigurierbar und wird aus `organizations.reminderLevel{1,2,3}{Days,Fee,Grace}`
+ * geladen. Als Fallback-Default dient `REMINDER_POLICY` weiter (wenn eine Org-Row
+ * nicht geladen werden kann, z.B. in Tests).
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { orgProcedure, router } from "./_core/trpc";
 import {
   invoices, invoiceReminders, customers, companySettings, documents,
+  organizations, userOrganizations,
 } from "../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
@@ -182,20 +184,62 @@ async function renderReminderPdf(params: {
   return pdfPromise;
 }
 
-// ─── Mahn-Policy (Default) ────────────────────────────────────────────────
+// ─── Mahn-Policy (Default-Fallback) ────────────────────────────────────────
+/**
+ * Fallback-Defaults, falls noch keine Organisation geladen wurde.
+ * Die tatsächlich wirksame Policy kommt seit Phase 3b aus der Datenbank
+ * (Tabelle `organizations`, Felder `reminderLevelNDays/Fee/Grace`).
+ */
 export const REMINDER_POLICY = {
   level1: { minDaysOverdue: 15, feeAmount: 0,  gracePeriodDays: 10, label: "Zahlungserinnerung" },
   level2: { minDaysOverdue: 30, feeAmount: 20, gracePeriodDays: 10, label: "1. Mahnung" },
   level3: { minDaysOverdue: 60, feeAmount: 40, gracePeriodDays: 7,  label: "2. Mahnung" },
 } as const;
 
+const LEVEL_LABELS: Record<1 | 2 | 3, string> = {
+  1: "Zahlungserinnerung",
+  2: "1. Mahnung",
+  3: "2. Mahnung",
+};
+
 type Level = 1 | 2 | 3;
 
-function policyFor(level: Level) {
+export type ReminderPolicy = {
+  level1: { minDaysOverdue: number; feeAmount: number; gracePeriodDays: number; label: string };
+  level2: { minDaysOverdue: number; feeAmount: number; gracePeriodDays: number; label: string };
+  level3: { minDaysOverdue: number; feeAmount: number; gracePeriodDays: number; label: string };
+};
+
+/**
+ * Lädt die Mahn-Policy der Organisation aus der DB. Fällt auf die Defaults
+ * aus `REMINDER_POLICY` zurück, wenn die Org-Row nicht gefunden wird.
+ */
+async function loadPolicy(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, organizationId: number): Promise<ReminderPolicy> {
+  const [org] = await db.select({
+    l1d: organizations.reminderLevel1Days,
+    l1f: organizations.reminderLevel1Fee,
+    l1g: organizations.reminderLevel1Grace,
+    l2d: organizations.reminderLevel2Days,
+    l2f: organizations.reminderLevel2Fee,
+    l2g: organizations.reminderLevel2Grace,
+    l3d: organizations.reminderLevel3Days,
+    l3f: organizations.reminderLevel3Fee,
+    l3g: organizations.reminderLevel3Grace,
+  }).from(organizations).where(eq(organizations.id, organizationId)).limit(1);
+  if (!org) return REMINDER_POLICY as unknown as ReminderPolicy;
+  const toNum = (v: unknown) => typeof v === "string" ? parseFloat(v) : (v as number);
+  return {
+    level1: { minDaysOverdue: org.l1d, feeAmount: toNum(org.l1f), gracePeriodDays: org.l1g, label: LEVEL_LABELS[1] },
+    level2: { minDaysOverdue: org.l2d, feeAmount: toNum(org.l2f), gracePeriodDays: org.l2g, label: LEVEL_LABELS[2] },
+    level3: { minDaysOverdue: org.l3d, feeAmount: toNum(org.l3f), gracePeriodDays: org.l3g, label: LEVEL_LABELS[3] },
+  };
+}
+
+function policyLevel(policy: ReminderPolicy, level: Level) {
   switch (level) {
-    case 1: return REMINDER_POLICY.level1;
-    case 2: return REMINDER_POLICY.level2;
-    case 3: return REMINDER_POLICY.level3;
+    case 1: return policy.level1;
+    case 2: return policy.level2;
+    case 3: return policy.level3;
   }
 }
 
@@ -218,11 +262,11 @@ function daysBetween(from: string, to: string): number {
  * Berücksichtigt bereits gesandte Reminder: der nächste Level ist mindestens
  * um 1 höher als der zuletzt gesandte.
  */
-function suggestLevel(daysOverdue: number, maxExistingLevel: number): Level | null {
+function suggestLevel(policy: ReminderPolicy, daysOverdue: number, maxExistingLevel: number): Level | null {
   let suggested: Level | null = null;
-  if (daysOverdue >= REMINDER_POLICY.level3.minDaysOverdue) suggested = 3;
-  else if (daysOverdue >= REMINDER_POLICY.level2.minDaysOverdue) suggested = 2;
-  else if (daysOverdue >= REMINDER_POLICY.level1.minDaysOverdue) suggested = 1;
+  if (daysOverdue >= policy.level3.minDaysOverdue) suggested = 3;
+  else if (daysOverdue >= policy.level2.minDaysOverdue) suggested = 2;
+  else if (daysOverdue >= policy.level1.minDaysOverdue) suggested = 1;
   if (suggested == null) return null;
   // Nur empfehlen, was noch nicht gesandt wurde.
   if (maxExistingLevel >= suggested) {
@@ -232,14 +276,88 @@ function suggestLevel(daysOverdue: number, maxExistingLevel: number): Level | nu
   return suggested;
 }
 
+/** Prüft, ob der aktuelle User owner/admin der aktiven Org ist. */
+async function requireOwnerOrAdmin(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  userId: number,
+  organizationId: number,
+): Promise<void> {
+  const [mem] = await db.select({ role: userOrganizations.role }).from(userOrganizations)
+    .where(and(
+      eq(userOrganizations.userId, userId),
+      eq(userOrganizations.organizationId, organizationId),
+    ))
+    .limit(1);
+  if (!mem || (mem.role !== "owner" && mem.role !== "admin")) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Nur Owner/Admin darf die Mahn-Policy ändern." });
+  }
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const remindersRouter = router({
   /**
-   * Liefert die Default-Policy für das Frontend (Einstellungs-Anzeige und
-   * Vorschau der Schwellwerte).
+   * Liefert die aktive Mahn-Policy der Organisation (aus DB, mit Fallback
+   * auf die eingebauten Defaults). Das Frontend nutzt das u.a. um
+   * Schwellwerte/Gebühren im OP-Listen-Dialog vorzuschlagen.
    */
-  getPolicy: orgProcedure.query(() => REMINDER_POLICY),
+  getPolicy: orgProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+    return loadPolicy(db, ctx.organizationId);
+  }),
+
+  /**
+   * Aktualisiert die Mahn-Policy der Organisation. Nur Owner/Admin.
+   * Alle Felder optional – nur gesetzte werden übernommen.
+   */
+  updatePolicy: orgProcedure
+    .input(z.object({
+      level1Days:  z.number().int().min(0).max(365).optional(),
+      level1Fee:   z.number().min(0).max(10000).optional(),
+      level1Grace: z.number().int().min(0).max(90).optional(),
+      level2Days:  z.number().int().min(0).max(365).optional(),
+      level2Fee:   z.number().min(0).max(10000).optional(),
+      level2Grace: z.number().int().min(0).max(90).optional(),
+      level3Days:  z.number().int().min(0).max(365).optional(),
+      level3Fee:   z.number().min(0).max(10000).optional(),
+      level3Grace: z.number().int().min(0).max(90).optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await requireOwnerOrAdmin(db, ctx.user.id, ctx.organizationId);
+
+      const update: Record<string, unknown> = {};
+      if (input.level1Days  !== undefined) update.reminderLevel1Days  = input.level1Days;
+      if (input.level1Fee   !== undefined) update.reminderLevel1Fee   = input.level1Fee.toFixed(2);
+      if (input.level1Grace !== undefined) update.reminderLevel1Grace = input.level1Grace;
+      if (input.level2Days  !== undefined) update.reminderLevel2Days  = input.level2Days;
+      if (input.level2Fee   !== undefined) update.reminderLevel2Fee   = input.level2Fee.toFixed(2);
+      if (input.level2Grace !== undefined) update.reminderLevel2Grace = input.level2Grace;
+      if (input.level3Days  !== undefined) update.reminderLevel3Days  = input.level3Days;
+      if (input.level3Fee   !== undefined) update.reminderLevel3Fee   = input.level3Fee.toFixed(2);
+      if (input.level3Grace !== undefined) update.reminderLevel3Grace = input.level3Grace;
+
+      // Plausibilität: Schwellwerte müssen aufsteigend sein (gemerged mit DB).
+      const current = await loadPolicy(db, ctx.organizationId);
+      const eff = {
+        l1d: (update.reminderLevel1Days as number | undefined) ?? current.level1.minDaysOverdue,
+        l2d: (update.reminderLevel2Days as number | undefined) ?? current.level2.minDaysOverdue,
+        l3d: (update.reminderLevel3Days as number | undefined) ?? current.level3.minDaysOverdue,
+      };
+      if (!(eff.l1d <= eff.l2d && eff.l2d <= eff.l3d)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Die Schwellwerte müssen aufsteigend sein: Stufe 1 ≤ Stufe 2 ≤ Stufe 3.",
+        });
+      }
+
+      if (Object.keys(update).length > 0) {
+        await db.update(organizations).set(update).where(eq(organizations.id, ctx.organizationId));
+      }
+      return loadPolicy(db, ctx.organizationId);
+    }),
 
   /**
    * Offene Posten (OP-Liste): alle sent/partially_paid-Rechnungen mit
@@ -276,6 +394,8 @@ export const remindersRouter = router({
 
       if (rows.length === 0) return [];
 
+      const policy = await loadPolicy(db, ctx.organizationId);
+
       // Reminders pro Invoice nachladen
       const invoiceIds = rows.map(r => r.invoice.id);
       const reminders = await db.select().from(invoiceReminders)
@@ -300,7 +420,7 @@ export const remindersRouter = router({
 
         const myReminders = byInvoice.get(inv.id) ?? [];
         const maxLevel = myReminders.reduce((m, r) => Math.max(m, r.level), 0);
-        const suggested = isOverdue ? suggestLevel(daysOverdue, maxLevel) : null;
+        const suggested = isOverdue ? suggestLevel(policy, daysOverdue, maxLevel) : null;
 
         return {
           id: inv.id,
@@ -325,7 +445,7 @@ export const remindersRouter = router({
               sentAt: m.sentAt, feeAmount: parseFloat(m.feeAmount as string),
             })),
           suggestedLevel: suggested,
-          suggestedFee: suggested ? policyFor(suggested).feeAmount : 0,
+          suggestedFee: suggested ? policyLevel(policy, suggested).feeAmount : 0,
         };
       });
     }),
@@ -410,11 +530,12 @@ export const remindersRouter = router({
         });
       }
 
-      const policy = policyFor(input.level as Level);
+      const orgPolicy = await loadPolicy(db, ctx.organizationId);
+      const levelPolicy = policyLevel(orgPolicy, input.level as Level);
       const reminderDate = input.reminderDate ?? today();
-      const grace = input.gracePeriodDays ?? policy.gracePeriodDays;
+      const grace = input.gracePeriodDays ?? levelPolicy.gracePeriodDays;
       const newDueDate = addDaysISO(reminderDate, grace);
-      const feeAmount = input.feeAmount ?? policy.feeAmount;
+      const feeAmount = input.feeAmount ?? levelPolicy.feeAmount;
 
       const [result] = await db.insert(invoiceReminders).values({
         organizationId: ctx.organizationId,
@@ -435,7 +556,7 @@ export const remindersRouter = router({
         reminderDate,
         newDueDate,
         feeAmount,
-        label: policy.label,
+        label: levelPolicy.label,
       };
     }),
 

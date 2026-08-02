@@ -10,7 +10,7 @@ import {
   companySettings,
   fiscalYears,
 } from "../drizzle/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 
 /**
  * Helper: turns a company name into a URL-friendly slug.
@@ -291,6 +291,11 @@ export const organizationsRouter = router({
       phone: z.string().max(30).optional(),
       email: z.string().max(200).optional(),
       website: z.string().max(200).optional(),
+      // Phase 3c: Konto-Mappings (Bank, Kreditkarten-Durchlauf, Brutto-Lohn).
+      // Null explizit erlaubt, um die Zuordnung wieder zu entfernen.
+      defaultBankAccountId: z.number().int().positive().nullable().optional(),
+      creditCardClearingAccountId: z.number().int().positive().nullable().optional(),
+      defaultSalaryExpenseAccountId: z.number().int().positive().nullable().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
@@ -305,6 +310,26 @@ export const organizationsRouter = router({
         .limit(1);
       if (!mem || (mem.role !== "owner" && mem.role !== "admin")) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Nur Owner/Admin kann die Organisation bearbeiten." });
+      }
+
+      // Sicherheits-Check: referenzierte Konten müssen zur aktiven Org gehören.
+      const accountIds = [
+        input.defaultBankAccountId,
+        input.creditCardClearingAccountId,
+        input.defaultSalaryExpenseAccountId,
+      ].filter((id): id is number => typeof id === "number");
+      if (accountIds.length > 0) {
+        const found = await db.select({ id: accounts.id }).from(accounts)
+          .where(and(
+            eq(accounts.organizationId, ctx.organizationId),
+            inArray(accounts.id, accountIds),
+          ));
+        if (found.length !== accountIds.length) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Mindestens ein zugewiesenes Konto gehört nicht zu dieser Organisation.",
+          });
+        }
       }
 
       const updateData: Record<string, unknown> = {};

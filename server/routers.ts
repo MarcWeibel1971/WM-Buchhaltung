@@ -7,6 +7,12 @@ import { publicProcedure, protectedProcedure, orgProcedure, router } from "./_co
 import { invokeLLM } from "./_core/llm";
 import { invokeNemotron } from "./nemotron";
 import { pdfUrlToImages } from "./pdfToImages";
+import {
+  extractInvoiceFields,
+  extractBankStatement,
+  detectDocumentStructure,
+  enhanceExtractionWithLocateAnything,
+} from "./locateAnything";
 import { transcribeAudio } from "./_core/voiceTranscription";
 import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
@@ -4538,6 +4544,74 @@ Antworte NUR als JSON-Objekt:
       };
     }),
 });
+
+// ─── NVIDIA LocateAnything-3B Vision Endpoints ───────────────────────────────
+const locateAnythingRouter = router({
+  /**
+   * Analysiert ein Belegfoto mit LocateAnything-3B.
+   * Gibt Bounding Boxes für alle erkannten Felder zurück.
+   * Ergänzt die Nemotron-Pipeline bei niedriger Konfidenz.
+   */
+  analyzeInvoice: orgProcedure
+    .input(z.object({
+      imageUrl: z.string().optional(),
+      imageBase64: z.string().optional(),
+      mimeType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      if (!input.imageBase64 && !input.imageUrl) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "imageUrl oder imageBase64 erforderlich" });
+      }
+      const result = await extractInvoiceFields(
+        input.imageBase64 ?? "",
+        input.mimeType ?? "image/png"
+      );
+      return result;
+    }),
+
+  /**
+   * Analysiert einen Kontoauszug oder eine Kreditkartenabrechnung.
+   */
+  analyzeBankStatement: orgProcedure
+    .input(z.object({
+      imageBase64: z.string(),
+      mimeType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return extractBankStatement(input.imageBase64, input.mimeType ?? "image/png");
+    }),
+
+  /**
+   * Erkennt die Dokumentstruktur (Tabellen, Felder, QR-Codes, Stempel).
+   */
+  detectStructure: orgProcedure
+    .input(z.object({
+      imageBase64: z.string(),
+      mimeType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return detectDocumentStructure(input.imageBase64, input.mimeType ?? "image/png");
+    }),
+
+  /**
+   * Kombinierter Enhancer: Reichert ein Nemotron-Ergebnis mit LocateAnything-Boxes an.
+   * Wird automatisch aufgerufen wenn Nemotron-Konfidenz < 85%.
+   */
+  enhanceExtraction: orgProcedure
+    .input(z.object({
+      nemotronResult: z.record(z.unknown()).nullable(),
+      imageBase64: z.string(),
+      documentType: z.enum(["invoice", "lohnausweis", "bank_statement", "generic"]).optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return enhanceExtractionWithLocateAnything(
+        input.nemotronResult,
+        input.imageBase64,
+        input.documentType ?? "generic"
+      );
+    }),
+});
+
 // ─── Avatar Chat Router ─────────────────────────────────────────────────────
 const avatarChatRouter = router({
   chat: orgProcedure
@@ -4875,6 +4949,7 @@ export const appRouter = router({
   reminders: remindersRouter,
   stripe: stripeRouter,
   avatarChat: avatarChatRouter,
+  locateAnything: locateAnythingRouter,
   avatarSettings: avatarSettingsRouter,
   importAutomation: importAutomationRouter,
   invitations: invitationsRouter,

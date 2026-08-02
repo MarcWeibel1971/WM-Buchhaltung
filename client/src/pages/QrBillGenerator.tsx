@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useCallback } from "react";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,7 +8,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText, Users } from "lucide-react";
+import { QrCode, Download, Loader2, AlertTriangle, Plus, Trash2, FileText, Users, ListChecks, Save } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
@@ -19,6 +21,8 @@ interface LineItem {
 }
 
 export default function QrBillGenerator() {
+  const [, navigate] = useLocation();
+  const [savedInvoiceId, setSavedInvoiceId] = useState<number | null>(null);
   const { data: qrSettings, isLoading: qrLoading } = trpc.qrBill.getQrSettings.useQuery();
   const { data: companySettings } = trpc.settings.getCompanySettings.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
@@ -78,7 +82,24 @@ export default function QrBillGenerator() {
   // Payment terms
   const [paymentDays, setPaymentDays] = useState("30");
 
-  // ─── Simple QR-Bill Form (existing) ────────────────────────────────────────
+  // ─── Simple QR-Bill Form ──────────────────────────────────────────────────
+  const [simpleCustomerPopoverOpen, setSimpleCustomerPopoverOpen] = useState(false);
+  const [simpleSelectedCustomerId, setSimpleSelectedCustomerId] = useState<number | null>(null);
+
+  const handleSelectSimpleCustomer = useCallback((customerId: number) => {
+    const c = (customersList ?? []).find((x: any) => x.id === customerId);
+    if (!c) return;
+    setSimpleSelectedCustomerId(customerId);
+    setSimpleCustomerPopoverOpen(false);
+    const displayName = c.lastName && c.firstName
+      ? `${c.firstName} ${c.lastName}`
+      : c.company || c.name;
+    setSimpleDebtorName(displayName);
+    setSimpleDebtorAddress(c.street || "");
+    setSimpleDebtorZip(c.zipCode || "");
+    setSimpleDebtorCity(c.city || "");
+  }, [customersList]);
+
   const [simpleDebtorName, setSimpleDebtorName] = useState("");
   const [simpleDebtorAddress, setSimpleDebtorAddress] = useState("");
   const [simpleDebtorZip, setSimpleDebtorZip] = useState("");
@@ -86,6 +107,13 @@ export default function QrBillGenerator() {
   const [simpleAmount, setSimpleAmount] = useState("");
   const [simpleCurrency, setSimpleCurrency] = useState<"CHF" | "EUR">("CHF");
   const [simpleAdditionalInfo, setSimpleAdditionalInfo] = useState("");
+
+  // ─── Leistungsdetails Toggle ───────────────────────────────────────────────
+  const [includeServiceDetails, setIncludeServiceDetails] = useState(false);
+  const { data: timeEntries } = trpc.timeTracking.listEntries.useQuery(
+    { customerId: selectedCustomerId ?? undefined },
+    { enabled: includeServiceDetails && selectedCustomerId !== null }
+  );
 
   // ─── Computed Values ───────────────────────────────────────────────────────
   const subtotal = useMemo(() => {
@@ -132,6 +160,19 @@ export default function QrBillGenerator() {
     },
     onError: (e: any) => toast.error(`Fehler: ${e.message}`),
   });
+  const saveDraftMut = trpc.invoices.saveFromQrGenerator.useMutation({
+    onSuccess: (result) => {
+      setSavedInvoiceId(result.id);
+      toast.success("Entwurf gespeichert", {
+        description: "Die Rechnung wurde in den Entw\u00fcrfen gespeichert.",
+        action: {
+          label: "Zu Entw\u00fcrfen",
+          onClick: () => navigate("/rechnungen"),
+        },
+      });
+    },
+    onError: (e: any) => toast.error(`Fehler beim Speichern: ${e.message}`),
+  });
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
   const addLineItem = () => {
@@ -147,6 +188,34 @@ export default function QrBillGenerator() {
     setLineItems(lineItems.map(item => item.id === id ? { ...item, [field]: value } : item));
   };
 
+  const buildSaveDraftInput = () => ({
+    invoiceId: savedInvoiceId ?? undefined,
+    customerId: selectedCustomerId ?? undefined,
+    recipientName: recipientName.trim(),
+    recipientStreet: recipientStreet.trim(),
+    recipientZip: recipientZip.trim(),
+    recipientCity: recipientCity.trim(),
+    invoiceDate,
+    paymentTermDays: parseInt(paymentDays) || 30,
+    subject: invoiceSubject || undefined,
+    introText: introText || undefined,
+    closingText: closingText || undefined,
+    greeting: greeting || undefined,
+    signatory: signerName || undefined,
+    signatoryTitle: signerTitle || undefined,
+    currency,
+    items: lineItems
+      .filter(i => i.description && parseFloat(i.amount) > 0)
+      .map(i => ({ description: i.description, amount: parseFloat(i.amount) })),
+    vatRate: parseFloat(vatRate),
+  });
+
+  const handleSaveDraft = () => {
+    if (!recipientName.trim()) { toast.error("Empfängername ist erforderlich"); return; }
+    if (total <= 0) { toast.error("Gesamtbetrag muss grösser als 0 sein"); return; }
+    saveDraftMut.mutate(buildSaveDraftInput());
+  };
+
   const handleGenerateInvoice = () => {
     if (!recipientName.trim()) { toast.error("Empfängername ist erforderlich"); return; }
     if (!recipientStreet.trim()) { toast.error("Strasse ist erforderlich"); return; }
@@ -154,6 +223,8 @@ export default function QrBillGenerator() {
     if (!recipientCity.trim()) { toast.error("Ort ist erforderlich"); return; }
     if (total <= 0) { toast.error("Gesamtbetrag muss grösser als 0 sein"); return; }
 
+    // Automatisch als Entwurf speichern beim PDF-Generieren
+    saveDraftMut.mutate(buildSaveDraftInput());
     generateInvoiceMut.mutate({
       recipientTitle: recipientTitle || undefined,
       recipientName: recipientName.trim(),
@@ -175,6 +246,8 @@ export default function QrBillGenerator() {
       signerName,
       signerTitle: signerTitle || undefined,
       paymentDays: parseInt(paymentDays) || 30,
+      includeServiceDetails,
+      customerId: selectedCustomerId ?? undefined,
     });
   };
 
@@ -229,14 +302,11 @@ export default function QrBillGenerator() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
+    <div className="px-6 lg:px-8 py-6 max-w-[1100px] mx-auto space-y-5">
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-3">
-          <QrCode className="h-7 w-7 text-primary" />
-          QR-Rechnung erstellen
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Erstellen Sie eine professionelle Rechnung mit QR-Zahlungsteil oder einen einfachen QR-Einzahlungsschein.
+        <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>QR-Rechnung erstellen</h1>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          Professionelle Rechnung mit Swiss QR-Zahlungsteil oder einfacher QR-Einzahlungsschein.
         </p>
       </div>
 
@@ -253,22 +323,20 @@ export default function QrBillGenerator() {
         </TabsList>
 
         {/* ─── Invoice Template Tab ─────────────────────────────────────────── */}
-        <TabsContent value="invoice" className="space-y-6 mt-6">
+        <TabsContent value="invoice" className="space-y-5 mt-6">
           {/* Creditor info (read-only from settings) */}
-          <Card className="bg-muted/30">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Absender (aus Firmeneinstellungen)</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm">
+          <div className="klax-card--soft p-4">
+            <div className="k-label mb-2">Absender (aus Firmeneinstellungen)</div>
+            <div className="text-[13px]" style={{ color: "var(--ink)" }}>
               <p className="font-semibold">{companySettings?.companyName}</p>
               {companySettings?.street && <p>{companySettings.street}</p>}
               <p>{companySettings?.zipCode} {companySettings?.city}</p>
               {companySettings?.phone && <p>Tel: {companySettings.phone}</p>}
               {companySettings?.email && <p>{companySettings.email}</p>}
-              {companySettings?.uid && <p className="text-xs mt-1">MWST-Nr. {companySettings.uid}</p>}
-              <p className="text-xs mt-1 font-mono">IBAN: {qrSettings.iban}</p>
-            </CardContent>
-          </Card>
+              {companySettings?.uid && <p className="text-[11px] mt-1" style={{ color: "var(--ink-3)" }}>MWST-Nr. {companySettings.uid}</p>}
+              <p className="text-[11px] mt-1 mono" style={{ color: "var(--ink-3)" }}>IBAN: {qrSettings.iban}</p>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Recipient */}
@@ -392,8 +460,35 @@ export default function QrBillGenerator() {
           {/* Line Items */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Leistungspositionen</CardTitle>
-              <CardDescription>Fügen Sie die einzelnen Positionen der Rechnung hinzu.</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Leistungspositionen</CardTitle>
+                  <CardDescription>Fügen Sie die einzelnen Positionen der Rechnung hinzu.</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ListChecks className="h-4 w-4 text-muted-foreground" />
+                  <Label htmlFor="include-service-details" className="text-sm cursor-pointer">
+                    Mit Leistungsdetails
+                  </Label>
+                  <Switch
+                    id="include-service-details"
+                    checked={includeServiceDetails}
+                    onCheckedChange={setIncludeServiceDetails}
+                    disabled={!selectedCustomerId}
+                  />
+                </div>
+              </div>
+              {includeServiceDetails && selectedCustomerId && (
+                <div className="mt-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+                  <span className="font-medium">{(timeEntries ?? []).length} Zeiteinträge</span> werden als Leistungsblatt nach dem QR-Einzahlungsschein angehängt.
+                  {!selectedCustomerId && " Bitte zuerst einen Kunden wählen."}
+                </div>
+              )}
+              {includeServiceDetails && !selectedCustomerId && (
+                <div className="mt-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                  Bitte zuerst einen Kunden wählen, um Leistungsdetails anzuhängen.
+                </div>
+              )}
             </CardHeader>
             <CardContent className="space-y-3">
               {lineItems.map((item, idx) => (
@@ -494,11 +589,21 @@ export default function QrBillGenerator() {
             </CardContent>
           </Card>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-3">
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={handleSaveDraft}
+              disabled={saveDraftMut.isPending || generateInvoiceMut.isPending}
+              className="gap-2"
+            >
+              {saveDraftMut.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}
+              {savedInvoiceId ? "Entwurf aktualisieren" : "Als Entwurf speichern"}
+            </Button>
             <Button
               size="lg"
               onClick={handleGenerateInvoice}
-              disabled={generateInvoiceMut.isPending}
+              disabled={generateInvoiceMut.isPending || saveDraftMut.isPending}
               className="gap-2"
             >
               {generateInvoiceMut.isPending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
@@ -525,8 +630,43 @@ export default function QrBillGenerator() {
             </Card>
 
             <Card>
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-base">Zahlungspflichtiger (Debtor)</CardTitle>
+                <Popover open={simpleCustomerPopoverOpen} onOpenChange={setSimpleCustomerPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-2">
+                      <Users className="h-3.5 w-3.5" />
+                      {simpleSelectedCustomerId ? "Kunde ändern" : "Kunde wählen"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[320px] p-0" align="end">
+                    <Command>
+                      <CommandInput placeholder="Kunde suchen..." />
+                      <CommandList>
+                        <CommandEmpty>Kein Kunde gefunden.</CommandEmpty>
+                        <CommandGroup>
+                          {(customersList ?? []).map((c: any) => (
+                            <CommandItem
+                              key={c.id}
+                              value={`${c.customerNumber || ""} ${c.name} ${c.company || ""} ${c.city || ""}`}
+                              onSelect={() => handleSelectSimpleCustomer(c.id)}
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-sm font-medium">
+                                  {c.customerNumber && <span className="font-mono text-muted-foreground mr-1">{c.customerNumber}</span>}
+                                  {c.lastName && c.firstName ? `${c.lastName} ${c.firstName}` : c.name}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {[c.company, c.city].filter(Boolean).join(" · ")}
+                                </span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>

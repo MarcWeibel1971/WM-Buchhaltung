@@ -993,7 +993,8 @@ export const invoices = mysqlTable(
     // NULL während Draft-Phase, wird bei `issue` vergeben.
     invoiceNumber: varchar("invoiceNumber", { length: 30 }),
     // Kunde (FK auf customers – nur eingeloggt innerhalb der Org)
-    customerId: int("customerId").notNull(),
+    // NULL erlaubt für Entwürfe aus QrBillGenerator ohne Kundenzuordnung
+    customerId: int("customerId"),
     // Rechnungsdatum (Ausstellungsdatum)
     invoiceDate: date("invoiceDate", { mode: "string" }).notNull(),
     // Fälligkeitsdatum – wird bei `issue` aus payment_terms_days berechnet,
@@ -1018,6 +1019,12 @@ export const invoices = mysqlTable(
     introText: text("introText"),
     // Fusszeile / Dankestext
     footerText: text("footerText"),
+    // Schlusstext (nach Positionsliste, vor Grussformel)
+    closingText: text("closingText"),
+    // Grussformel + Unterzeichner (für Briefformat)
+    greeting: varchar("greeting", { length: 100 }),
+    signatory: varchar("signatory", { length: 200 }),
+    signatoryTitle: varchar("signatoryTitle", { length: 200 }),
     // Beträge (werden aus invoice_items berechnet, aber gecacht für Filter)
     subtotal: decimal("subtotal", { precision: 15, scale: 2 }).default("0").notNull(),
     vatTotal: decimal("vatTotal", { precision: 15, scale: 2 }).default("0").notNull(),
@@ -1148,3 +1155,129 @@ export const invoiceReminders = mysqlTable(
 );
 export type InvoiceReminder = typeof invoiceReminders.$inferSelect;
 export type InsertInvoiceReminder = typeof invoiceReminders.$inferInsert;
+
+// ─── Avatar Chatbot Settings ──────────────────────────────────────────────────
+export const avatarSettings = mysqlTable("avatar_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull().unique(),
+  // Response language: de-CH, de-DE, en-US, fr-CH, it-CH
+  language: varchar("language", { length: 10 }).default("de-CH").notNull(),
+  // Response style: concise (1-2 Sätze), balanced (3-4 Sätze), detailed (ausführlich)
+  style: mysqlEnum("style", ["concise", "balanced", "detailed"]).default("concise").notNull(),
+  // Max sentences override (1-10)
+  maxSentences: int("maxSentences").default(2).notNull(),
+  // Custom system prompt addition (appended after base prompt)
+  customPrompt: text("customPrompt"),
+  // ElevenLabs voice ID override
+  voiceId: varchar("voiceId", { length: 100 }),
+  // Avatar name shown in widget
+  avatarName: varchar("avatarName", { length: 100 }).default("Berater").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AvatarSettings = typeof avatarSettings.$inferSelect;
+export type InsertAvatarSettings = typeof avatarSettings.$inferInsert;
+
+// ─── Import Automation Settings ───────────────────────────────────────────────
+// Konfiguriert, welche KI-Aktionen beim Bankimport automatisch ausgeführt werden.
+export const importAutomationSettings = mysqlTable("import_automation_settings", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull().unique(),
+  // KI-Kategorisierung: Soll/Haben-Konten automatisch vorschlagen
+  autoKiCategorize: boolean("autoKiCategorize").default(true).notNull(),
+  // Buchungstexte: Lesbare Buchungstexte automatisch generieren
+  autoGenerateBookingTexts: boolean("autoGenerateBookingTexts").default(true).notNull(),
+  // Refresh (gelernt): Gelernte Buchungsregeln auf neue Transaktionen anwenden
+  autoRefreshLearned: boolean("autoRefreshLearned").default(true).notNull(),
+  // Kontoüberträge erkennen: Interne Transfers zwischen eigenen Konten erkennen
+  autoDetectTransfers: boolean("autoDetectTransfers").default(true).notNull(),
+  // Dokument-Matching: Hochgeladene Belege automatisch mit Transaktionen matchen
+  autoMatchDocuments: boolean("autoMatchDocuments").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type ImportAutomationSettings = typeof importAutomationSettings.$inferSelect;
+export type InsertImportAutomationSettings = typeof importAutomationSettings.$inferInsert;
+
+// ─── Invitations (Treuhänder-Einladungen) ─────────────────────────────────────
+// Zeitlich begrenzte Einladungen für externe Benutzer (z.B. Treuhänder).
+export const invitations = mysqlTable("invitations", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  invitedByUserId: int("invitedByUserId").notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  name: varchar("name", { length: 200 }),
+  role: mysqlEnum("role", ["admin", "bookkeeper", "viewer"]).default("viewer").notNull(),
+  token: varchar("token", { length: 128 }).notNull().unique(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  acceptedByUserId: int("acceptedByUserId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type Invitation = typeof invitations.$inferSelect;
+export type InsertInvitation = typeof invitations.$inferInsert;
+
+// ─── POS / EC-Karten Integration ─────────────────────────────────────────────
+export const posConfig = mysqlTable("pos_config", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  provider: mysqlEnum("provider", ["stripe_terminal", "sumup"]).notNull(),
+  apiKey: varchar("apiKey", { length: 500 }),
+  merchantCode: varchar("merchantCode", { length: 100 }),
+  webhookSecret: varchar("webhookSecret", { length: 500 }),
+  bankAccountId: int("bankAccountId"),
+  revenueAccountId: int("revenueAccountId"),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type PosConfig = typeof posConfig.$inferSelect;
+export type InsertPosConfig = typeof posConfig.$inferInsert;
+
+export const posTransactions = mysqlTable("pos_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  provider: mysqlEnum("provider", ["stripe_terminal", "sumup"]).notNull(),
+  externalId: varchar("externalId", { length: 200 }).notNull().unique(),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  currency: varchar("currency", { length: 3 }).default("CHF").notNull(),
+  paymentMethod: varchar("paymentMethod", { length: 50 }),
+  cardBrand: varchar("cardBrand", { length: 50 }),
+  cardLast4: varchar("cardLast4", { length: 4 }),
+  description: varchar("description", { length: 500 }),
+  status: mysqlEnum("status", ["pending", "completed", "refunded", "failed"]).default("completed").notNull(),
+  paidAt: timestamp("paidAt").notNull(),
+  invoiceId: int("invoiceId"),
+  journalEntryId: int("journalEntryId"),
+  bankTransactionId: int("bankTransactionId"),
+  rawPayload: json("rawPayload"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type PosTransaction = typeof posTransactions.$inferSelect;
+export type InsertPosTransaction = typeof posTransactions.$inferInsert;
+
+// ─── EBICS-Konfiguration ──────────────────────────────────────────────────────
+export const ebicsConfig = mysqlTable("ebics_config", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  bankName: varchar("bankName", { length: 100 }).notNull(),
+  hostId: varchar("hostId", { length: 50 }).notNull(),
+  bankUrl: varchar("bankUrl", { length: 500 }).notNull(),
+  partnerId: varchar("partnerId", { length: 50 }).notNull(),
+  userId: varchar("userId", { length: 50 }).notNull(),
+  version: mysqlEnum("version", ["2.5", "3.0"]).default("3.0").notNull(),
+  initStatus: mysqlEnum("initStatus", ["not_initialized", "ini_sent", "hia_sent", "active"]).default("not_initialized").notNull(),
+  signatureKeyPem: text("signatureKeyPem"),
+  authKeyPem: text("authKeyPem"),
+  encKeyPem: text("encKeyPem"),
+  bankSignatureKeyHash: varchar("bankSignatureKeyHash", { length: 128 }),
+  bankAuthKeyHash: varchar("bankAuthKeyHash", { length: 128 }),
+  bankEncKeyHash: varchar("bankEncKeyHash", { length: 128 }),
+  bankAccountId: int("bankAccountId"),
+  isActive: boolean("isActive").default(false).notNull(),
+  lastSyncAt: timestamp("lastSyncAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type EbicsConfig = typeof ebicsConfig.$inferSelect;
+export type InsertEbicsConfig = typeof ebicsConfig.$inferInsert;

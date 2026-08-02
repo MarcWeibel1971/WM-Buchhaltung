@@ -76,10 +76,10 @@ uploadRouter.post("/document", upload.single("file"), async (req, res) => {
   "counterpartyZipCode": "PLZ oder null",
   "counterpartyCity": "Ort oder null",
   "counterpartyCountry": "Land oder null (Standard: Schweiz)",
-  "counterpartyIban": "IBAN oder null",
-  "qrReference": "QR-Referenz (26-27 stellig numerisch) oder SCOR-Referenz (RF...) oder null",
+  "counterpartyIban": "IBAN des Empfängers/Zahlungsempfängers – WICHTIG: Bei QR-Rechnungen steht die IBAN im Zahlteil unter 'Konto / Zahlbar an' (z.B. CH36 0900 0000 4070 5388 7). Diese IBAN IMMER extrahieren! Niemals null wenn ein Zahlteil/Empfangsschein vorhanden ist.",
+  "qrReference": "QR-Referenz (26-27 stellig numerisch) oder SCOR-Referenz (RF...) oder null – aus dem QR-Einzahlungsschein/Zahlteil",
   "paymentMethod": "qr_bill, bank_transfer, cash, credit_card, direct_debit oder null",
-  "referenceNumber": "Referenznummer oder null",
+  "referenceNumber": "Referenznummer: IMMER die QR-Referenz oder SCOR-Referenz (RF...) aus dem Zahlteil/Empfangsschein übernehmen falls vorhanden, sonst Rechnungsreferenz oder null",
   "description": "Kurzbeschreibung des Belegs (max 100 Zeichen)",
   "documentType": Einer der folgenden Werte (WICHTIG – wähle den passendsten!):
     - "invoice_in" = Eingangsrechnung (Rechnung von einem Lieferanten AN uns, z.B. Hostpoint, Gewerbe-Treuhand, Mobility, AXA Versicherung, Velokurier etc.)
@@ -155,7 +155,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
     }
 
     // Determine document type: use explicit form value, or AI-detected type, or fallback to "other"
-    const VALID_DOC_TYPES = ["invoice_in", "invoice_out", "receipt", "bank_statement", "other"];
+    const VALID_DOC_TYPES = ["invoice_in", "invoice_out", "receipt", "bank_statement", "credit_card_statement", "other"];
     let detectedDocType = "other";
     if (documentType && VALID_DOC_TYPES.includes(documentType)) {
       detectedDocType = documentType;
@@ -505,5 +505,210 @@ Antworte NUR mit JSON: { "accounts": [...], "totalFound": number, "documentTitle
   } catch (err: any) {
     console.error("[PDF Chart Import] Error:", err);
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
+  }
+});
+
+// ─── POST /api/upload/opening-balance-pdf ──────────────────────────────────────
+// Accepts a PDF or image of an opening balance sheet, extracts account balances via LLM
+const openingBalancePdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Nur PDF- oder Bild-Dateien erlaubt"));
+  },
+});
+
+uploadRouter.post("/opening-balance-pdf", openingBalancePdfUpload.single("file"), async (req, res) => {
+  let user;
+  try {
+    user = await sdk.authenticateRequest(req as any);
+  } catch {
+    return res.status(401).json({ error: "Nicht authentifiziert" });
+  }
+
+  if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
+
+  try {
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "pdf";
+    const fileKey = `opening-balances/${user.id}-${nanoid()}.${ext}`;
+    const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
+
+    const isPdf = req.file.mimetype === "application/pdf";
+
+    const extractResp = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `Du bist ein Schweizer Buchhalter und extrahierst Eröffnungssalden aus einer Bilanz oder Eröffnungsbilanz.
+Extrahiere ALLE Konten mit ihren Salden.
+Jedes Konto hat:
+- number: Kontonummer als String (z.B. "1000", "2000")
+- name: Kontobezeichnung (z.B. "Kasse", "Bankguthaben")
+- balance: Saldo als Zahl (immer positiv, auch für Passivkonten)
+- accountType: Einer von: "asset" (Aktiven, 1000-1999), "liability" (Fremdkapital, 2000-2799), "equity" (Eigenkapital, 2800-2999 und 9000+)
+
+Regeln:
+- Nur Konten mit Kontonummer extrahieren (mindestens 3-stellig)
+- Konten mit Saldo 0 können weggelassen werden
+- Ignoriere Summenzeilen und Gruppenüberschriften
+- Beträge in CHF, ohne Tausendertrennzeichen
+
+Antworte NUR mit JSON: { "balances": [...], "totalAssets": number, "totalLiabilities": number, "fiscalYear": "YYYY oder null" }`,
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text" as const, text: "Extrahiere alle Eröffnungssalden aus dieser Bilanz:" },
+            isPdf
+              ? { type: "file_url" as const, file_url: { url: fileUrl, mime_type: "application/pdf" as const } }
+              : { type: "image_url" as const, image_url: { url: fileUrl, detail: "high" as const } },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "opening_balance_extraction",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              balances: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    number: { type: "string" },
+                    name: { type: "string" },
+                    balance: { type: "number" },
+                    accountType: { type: "string", enum: ["asset", "liability", "equity"] },
+                  },
+                  required: ["number", "name", "balance", "accountType"],
+                  additionalProperties: false,
+                },
+              },
+              totalAssets: { type: "number" },
+              totalLiabilities: { type: "number" },
+              fiscalYear: { type: ["string", "null"] },
+            },
+            required: ["balances", "totalAssets", "totalLiabilities", "fiscalYear"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const msgContent = extractResp.choices[0]?.message?.content;
+    if (!msgContent) return res.status(500).json({ error: "KI-Extraktion fehlgeschlagen" });
+
+    const parsed = typeof msgContent === "string" ? JSON.parse(msgContent) : msgContent;
+
+    const balances = (parsed.balances ?? [])
+      .filter((b: any) => b.number && b.name && typeof b.balance === "number" && b.balance !== 0)
+      .map((b: any) => ({
+        number: String(b.number).trim(),
+        name: String(b.name).trim(),
+        balance: Math.abs(b.balance),
+        accountType: b.accountType || "asset",
+      }));
+
+    return res.json({
+      success: true,
+      balances,
+      totalFound: balances.length,
+      totalAssets: parsed.totalAssets ?? 0,
+      totalLiabilities: parsed.totalLiabilities ?? 0,
+      fiscalYear: parsed.fiscalYear ?? null,
+    });
+  } catch (err: any) {
+    console.error("[PDF Opening Balance Import] Error:", err);
+    return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
+  }
+});
+
+// ─── POST /api/upload/voice ────────────────────────────────────────────────────
+// Accepts audio files for voice transcription (max 16MB)
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    // Accept any audio/* MIME type (including audio/webm;codecs=opus)
+    if (file.mimetype.startsWith("audio/")) cb(null, true);
+    else cb(new Error("Nur Audio-Dateien erlaubt"));
+  },
+});
+
+uploadRouter.post("/voice", audioUpload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Keine Audio-Datei hochgeladen" });
+    }
+    const ext = req.file.mimetype.includes("webm") ? "webm"
+      : req.file.mimetype.includes("wav") ? "wav"
+      : req.file.mimetype.includes("ogg") ? "ogg"
+      : req.file.mimetype.includes("mp4") || req.file.mimetype.includes("m4a") ? "m4a"
+      : "mp3";
+    const key = `voice-recordings/${nanoid()}.${ext}`;
+    const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
+    return res.json({ url, key });
+  } catch (err: any) {
+    console.error("[Voice Upload] Error:", err);
+    return res.status(500).json({ error: err.message ?? "Audio-Upload fehlgeschlagen" });
+  }
+});
+
+// ─── POST /api/upload/transcribe ──────────────────────────────────────────────
+// Accepts audio files and transcribes them DIRECTLY via Whisper API (no S3 roundtrip)
+uploadRouter.post("/transcribe", audioUpload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Keine Audio-Datei hochgeladen" });
+    }
+
+    const { ENV } = await import("./_core/env.js");
+
+    const ext = req.file.mimetype.includes("webm") ? "webm"
+      : req.file.mimetype.includes("wav") ? "wav"
+      : req.file.mimetype.includes("ogg") ? "ogg"
+      : req.file.mimetype.includes("mp4") || req.file.mimetype.includes("m4a") ? "m4a"
+      : "mp3";
+
+    // Build multipart form for Whisper API
+    const formData = new FormData();
+    const audioBlob = new Blob([new Uint8Array(req.file.buffer)], { type: req.file.mimetype });
+    formData.append("file", audioBlob, `audio.${ext}`);
+    formData.append("model", "whisper-1");
+    formData.append("response_format", "json");
+    formData.append("language", "de");
+    formData.append("prompt", "Buchhaltung Schweiz MWST Buchung Konto");
+
+    const baseUrl = ENV.forgeApiUrl.endsWith("/") ? ENV.forgeApiUrl : `${ENV.forgeApiUrl}/`;
+    const whisperUrl = new URL("v1/audio/transcriptions", baseUrl).toString();
+
+    console.log("[Transcribe] Sending audio to Whisper:", whisperUrl, "size:", req.file.size);
+
+    const response = await fetch(whisperUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${ENV.forgeApiKey}`,
+        "Accept-Encoding": "identity",
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      console.error("[Transcribe] Whisper error:", response.status, errorText);
+      return res.status(500).json({ error: `Transkription fehlgeschlagen: ${response.status} ${errorText}` });
+    }
+
+    const result = await response.json() as { text: string };
+    console.log("[Transcribe] Result:", result.text?.substring(0, 100));
+    return res.json({ text: result.text ?? "" });
+  } catch (err: any) {
+    console.error("[Transcribe] Error:", err);
+    return res.status(500).json({ error: err.message ?? "Transkription fehlgeschlagen" });
   }
 });

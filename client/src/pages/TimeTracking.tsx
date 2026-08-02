@@ -260,11 +260,11 @@ export default function TimeTracking() {
   }
 
   return (
-    <div className="p-4 lg:p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Zeiterfassung</h1>
-          <p className="text-muted-foreground text-sm mt-1">
+          <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Zeiterfassung</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
             Arbeitszeiten erfassen, Dienstleistungen verwalten und Rechnungen erstellen
           </p>
         </div>
@@ -272,58 +272,44 @@ export default function TimeTracking() {
           <Button variant="outline" size="sm" onClick={exportCSV}>
             <Download className="h-4 w-4 mr-2" /> Export
           </Button>
-          <Button onClick={() => { resetEntryForm(); setShowEntryDialog(true); }}>
+          <Button size="sm" onClick={() => { resetEntryForm(); setShowEntryDialog(true); }}>
             <Plus className="h-4 w-4 mr-2" /> Neuer Eintrag
           </Button>
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-50"><Clock className="h-4 w-4 text-blue-600" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Total Stunden</p>
-                <p className="text-lg font-bold">{fmt(totalHours)}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-green-50"><FileText className="h-4 w-4 text-green-600" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Total Betrag</p>
-                <p className="text-lg font-bold">CHF {fmt(totalAmount)}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-amber-50"><Users className="h-4 w-4 text-amber-600" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Offene Einträge</p>
-                <p className="text-lg font-bold">{openEntries.length}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4 pb-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-purple-50"><Briefcase className="h-4 w-4 text-purple-600" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Dienstleistungen</p>
-                <p className="text-lg font-bold">{servicesList?.length || 0}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* 4 KLAX KPI Tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="klax-card p-4">
+          <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>
+            <Clock className="h-3.5 w-3.5" /> Total Stunden
+          </div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{fmt(totalHours)}</div>
+          <div className="mt-1.5 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--hair)" }}>
+            <div style={{ width: `${Math.min(100, (totalHours / 168) * 100)}%`, height: "100%", background: "var(--klax-accent)" }} />
+          </div>
+        </div>
+        <div className="klax-card p-4">
+          <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>
+            <FileText className="h-3.5 w-3.5" /> Verrechenbar
+          </div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--pos)" }}>CHF {fmt(totalAmount)}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}>im aktuellen Filter</div>
+        </div>
+        <div className="klax-card p-4">
+          <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>
+            <Users className="h-3.5 w-3.5" /> Offene Einträge
+          </div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--warn)" }}>{openEntries.length}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}>noch nicht verrechnet</div>
+        </div>
+        <div className="klax-card p-4">
+          <div className="flex items-center gap-2 text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>
+            <Briefcase className="h-3.5 w-3.5" /> Dienstleistungen
+          </div>
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{servicesList?.length || 0}</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}>aktiv</div>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -336,8 +322,7 @@ export default function TimeTracking() {
         {/* ─── Zeiteinträge Tab ──────────────────────────────────────────── */}
         <TabsContent value="entries" className="space-y-4">
           {/* Filters */}
-          <Card>
-            <CardContent className="pt-4 pb-3">
+          <div className="klax-card p-4">
               <div className="flex flex-wrap gap-3 items-end">
                 <div className="w-40">
                   <Label className="text-xs">Kunde</Label>
@@ -391,12 +376,10 @@ export default function TimeTracking() {
                   </Button>
                 )}
               </div>
-            </CardContent>
-          </Card>
+          </div>
 
           {/* Entries Table */}
-          <Card>
-            <CardContent className="p-0">
+          <div className="klax-card overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -453,8 +436,7 @@ export default function TimeTracking() {
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
+          </div>
         </TabsContent>
 
         {/* ─── Zur Verrechnung Tab ───────────────────────────────────────── */}

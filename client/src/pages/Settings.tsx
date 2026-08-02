@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,8 +26,9 @@ import {
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
   Bell, Wallet,
-  CreditCard, ExternalLink, CheckCircle, Crown,
+  CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Bolt, QrCode,
 } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -36,30 +38,51 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { useMemo, useState as useReactState } from "react";
+import { useMemo, useState as useReactState, useCallback } from "react";
 import { toast } from "sonner";
+import UsersTab from "./UsersTab";
+import ServicesTab from "./ServicesTab";
+import QrSettingsTab from "./QrSettingsTab";
+import PosSettingsTab from "./PosSettingsTab";
+import EbicsSettingsTab from "./EbicsSettingsTab";
+import GlobalRules from "./GlobalRules";
 
-// ─── Tab definitions ──────────────────────────────────────────────────────────
+// ─── Tab-Definitionen ────────────────────────────────────────────────────────
+// Jeder Tab hat einen scope:
+//   "personal" → /einstellungen (für alle Rollen)
+//   "admin"    → /admin (nur Admin-Rolle, organisationsweit)
 
 const TABS = [
-  { id: "company", label: "Unternehmen", icon: Building2 },
-  { id: "bank", label: "Bankkonten", icon: Landmark },
-  { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree },
-  { id: "employees", label: "Mitarbeiter", icon: Users },
-  { id: "insurance", label: "Versicherungen", icon: Shield },
-  { id: "rules", label: "Buchungsregeln", icon: BookOpen },
-  { id: "opening", label: "Eröffnungssalden", icon: Scale },
-  { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
-  { id: "suppliers", label: "Lieferanten", icon: Truck },
-  { id: "customers", label: "Kunden", icon: UserCheck },
-  { id: "templates", label: "Vorlagen", icon: FileStack },
-  { id: "reminders", label: "Mahnwesen", icon: Bell },
-  { id: "accountMappings", label: "Standard-Konten", icon: Wallet },
-  { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
-  { id: "subscription", label: "Abonnement", icon: CreditCard },
+  // Persönlich / Workspace
+  { id: "company", label: "Unternehmen", icon: Building2, scope: "personal" },
+  { id: "bank", label: "Bankkonten", icon: Landmark, scope: "personal" },
+  { id: "employees", label: "Mitarbeiter", icon: Users, scope: "personal" },
+  { id: "insurance", label: "Versicherungen", icon: Shield, scope: "personal" },
+  { id: "services", label: "Dienstleistungen", icon: ClipboardList, scope: "personal" },
+  { id: "templates", label: "Vorlagen", icon: FileStack, scope: "personal" },
+  { id: "qr", label: "QR-Rechnung", icon: QrCode, scope: "personal" },
+  { id: "pos", label: "POS / Kartenzahlung", icon: CreditCard, scope: "personal" },
+  { id: "ebics", label: "EBICS Banking", icon: Landmark, scope: "personal" },
+  { id: "avatar", label: "Avatar-Chatbot", icon: Bot, scope: "personal" },
+
+  // Organisationsweit / Admin
+  { id: "users", label: "Benutzer & Rollen", icon: Users, scope: "admin" },
+  { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree, scope: "admin" },
+  { id: "rules", label: "Buchungsregeln", icon: BookOpen, scope: "admin" },
+  { id: "globalRules", label: "KI-Regeln", icon: Bot, scope: "admin" },
+  { id: "opening", label: "Eröffnungssalden", icon: Scale, scope: "admin" },
+  { id: "depreciation", label: "Abschreibungen", icon: TrendingDown, scope: "admin" },
+  { id: "suppliers", label: "Lieferanten", icon: Truck, scope: "admin" },
+  { id: "customers", label: "Kunden", icon: UserCheck, scope: "admin" },
+  { id: "reminders", label: "Mahnwesen", icon: Bell, scope: "admin" },
+  { id: "accountMappings", label: "Standard-Konten", icon: Wallet, scope: "admin" },
+  { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt, scope: "admin" },
+  { id: "dsg", label: "Datenschutz & Audit", icon: ShieldCheck, scope: "admin" },
+  { id: "subscription", label: "Abonnement & Plan", icon: CreditCard, scope: "admin" },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
+export type SettingsScope = "personal" | "admin";
 
 // ─── Insurance type labels ────────────────────────────────────────────────────
 
@@ -81,49 +104,126 @@ const INSURANCE_COLORS: Record<string, string> = {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function Settings() {
-  // Support ?tab=subscription for Stripe redirect
-  const initialTab = (() => {
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
-    if (tab && TABS.some(t => t.id === tab)) return tab as TabId;
-    return "company" as TabId;
-  })();
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+// Slug-Mapping: erlaubt sprechende URL-Slugs zusätzlich zu den internen Tab-IDs.
+const SLUG_TO_TAB: Record<string, TabId> = {
+  unternehmen: "company",
+  profil: "company",
+  bankkonten: "bank",
+  bank: "bank",
+  mitarbeiter: "employees",
+  versicherungen: "insurance",
+  dienstleistungen: "services",
+  vorlagen: "templates",
+  qr: "qr",
+  pos: "pos",
+  ebics: "ebics",
+  avatar: "avatar",
+
+  benutzer: "users",
+  rollen: "users",
+  kontenplan: "chartOfAccounts",
+  buchungsregeln: "rules",
+  "ki-regeln": "globalRules",
+  "global-rules": "globalRules",
+  eroeffnungssalden: "opening",
+  abschreibungen: "depreciation",
+  lieferanten: "suppliers",
+  kunden: "customers",
+  "import-automatisierung": "importAutomation",
+  datenschutz: "dsg",
+  audit: "dsg",
+  abonnement: "subscription",
+  plan: "subscription",
+};
+
+function readTabFromUrl(scope: SettingsScope): TabId {
+  const params = new URLSearchParams(window.location.search);
+  const tabParam = params.get("tab");
+  if (tabParam) {
+    const direct = TABS.find(t => t.id === tabParam && t.scope === scope);
+    if (direct) return direct.id as TabId;
+    const mapped = SLUG_TO_TAB[tabParam];
+    if (mapped && TABS.some(t => t.id === mapped && t.scope === scope)) return mapped;
+  }
+  const pathSegment = window.location.pathname.split("/").pop();
+  if (pathSegment) {
+    const mapped = SLUG_TO_TAB[pathSegment];
+    if (mapped && TABS.some(t => t.id === mapped && t.scope === scope)) return mapped;
+  }
+  // Fallback: erster Tab des Scopes
+  const first = TABS.find(t => t.scope === scope);
+  return (first?.id ?? "company") as TabId;
+}
+
+interface SettingsContainerProps {
+  scope?: SettingsScope;
+  basePath?: string;
+}
+
+/**
+ * Generischer Container für Einstellungen (persönlich) und Admin (organisationsweit).
+ * Beide nutzen die gleiche Tab-Mechanik mit URL-State über ?tab=...
+ */
+export default function Settings({ scope = "personal", basePath = "/einstellungen" }: SettingsContainerProps) {
+  const [, setLocation] = useLocation();
+  const [activeTab, setActiveTab] = useState<TabId>(() => readTabFromUrl(scope));
+
+  // URL synchronisieren, wenn Tab gewechselt wird
+  const switchTab = (id: TabId) => {
+    setActiveTab(id);
+    setLocation(`${basePath}?tab=${id}`, { replace: false } as any);
+  };
+
+  // Bei direktem URL-Wechsel (z.B. via Redirect) Tab synchronisieren
+  useEffect(() => {
+    const onPop = () => setActiveTab(readTabFromUrl(scope));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [scope]);
+
+  const visibleTabs = TABS.filter(t => t.scope === scope);
+  const headline = scope === "admin" ? "Admin" : "Einstellungen";
+  const subline = scope === "admin"
+    ? "Organisationsweite Verwaltung"
+    : "Persönliche & Workspace-Einstellungen";
+
   return (
-    <div className="flex h-full">
-      {/* Sidebar */}
-      <aside className="w-56 border-r bg-muted/30 p-4 flex flex-col gap-1 shrink-0">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-2">
-          Einstellungen
-        </h2>
-        {TABS.map(tab => {
+    <div className="flex h-full" style={{ background: "var(--paper)" }}>
+      {/* Sub-Navigation (KLAX) */}
+      <aside
+        className="w-56 p-3 flex flex-col gap-0.5 shrink-0"
+        style={{ borderRight: "1px solid var(--hair)", background: "var(--paper)" }}
+      >
+        <div style={{ paddingTop: 4, paddingBottom: 8 }}>
+          <h2 className="sb-group" style={{ marginBottom: 2 }}>{headline}</h2>
+          <div className="text-[10.5px]" style={{ color: "var(--ink-4)" }}>{subline}</div>
+        </div>
+        {visibleTabs.map(tab => {
           const Icon = tab.icon;
+          const active = activeTab === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors w-full text-left ${
-                activeTab === tab.id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              }`}
+              onClick={() => switchTab(tab.id as TabId)}
+              className={`sb-item ${active ? "sb-item--active" : ""}`}
+              style={{ width: "100%", textAlign: "left" }}
             >
               <Icon className="h-4 w-4 shrink-0" />
-              {tab.label}
+              <span className="flex-1 truncate">{tab.label}</span>
             </button>
           );
         })}
       </aside>
 
       {/* Content */}
-      <main className="flex-1 overflow-auto p-6">
+      <main className="flex-1 overflow-auto p-6 lg:p-8">
         {activeTab === "company" && <CompanyTab />}
         {activeTab === "bank" && <BankTab />}
         {activeTab === "chartOfAccounts" && <ChartOfAccountsTab />}
         {activeTab === "employees" && <EmployeesTab />}
         {activeTab === "insurance" && <InsuranceTab />}
         {activeTab === "rules" && <BookingRulesTab />}
+        {activeTab === "globalRules" && <GlobalRules />}
         {activeTab === "opening" && <OpeningBalancesTab />}
         {activeTab === "depreciation" && <DepreciationTab />}
         {activeTab === "suppliers" && <SuppliersTab />}
@@ -133,6 +233,13 @@ export default function Settings() {
         {activeTab === "accountMappings" && <AccountMappingsTab />}
         {activeTab === "dsg" && <DsgTab />}
         {activeTab === "subscription" && <SubscriptionTab />}
+        {activeTab === "avatar" && <AvatarSettingsTab />}
+        {activeTab === "importAutomation" && <ImportAutomationTab />}
+        {activeTab === "users" && <UsersTab />}
+        {activeTab === "services" && <ServicesTab />}
+        {activeTab === "qr" && <QrSettingsTab />}
+        {activeTab === "pos" && <PosSettingsTab />}
+        {activeTab === "ebics" && <EbicsSettingsTab />}
       </main>
     </div>
   );
@@ -202,7 +309,7 @@ function CompanyLogoUpload({ logoUrl, onUploaded }: { logoUrl: string | null; on
 
 // ─── Company Tab ──────────────────────────────────────────────────────────────────
 
-function CompanyTab() {
+export function CompanyTab() {
   const { data, isLoading, refetch } = trpc.settings.getCompanySettings.useQuery();
   const upsert = trpc.settings.upsertCompanySettings.useMutation({
     onSuccess: () => { toast.success("Unternehmensdaten wurden aktualisiert."); refetch(); },
@@ -265,11 +372,11 @@ function CompanyTab() {
   if (isLoading) return <div className="text-muted-foreground">Lädt...</div>;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-3xl space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Unternehmensdaten</h1>
-          <p className="text-muted-foreground text-sm mt-1">Firmenstammdaten, MWST und Geschäftsjahr</p>
+          <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Unternehmensdaten</h1>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>Firmenstammdaten, MWST und Geschäftsjahr</p>
         </div>
         {!editing ? (
           <Button onClick={startEdit} variant="outline" size="sm">
@@ -444,7 +551,7 @@ function CompanyTab() {
 
 // ─── Bank Tab ─────────────────────────────────────────────────────────────────
 
-function BankTab() {
+export function BankTab() {
   const utils = trpc.useUtils();
   const { data: bankAccounts, isLoading, refetch } = trpc.settings.getBankAccounts.useQuery();
   const updateMut = trpc.settings.updateBankAccount.useMutation({
@@ -619,7 +726,7 @@ function BankTab() {
 
 // ─── Employees Tab ────────────────────────────────────────────────────────────
 
-function EmployeesTab() {
+export function EmployeesTab() {
   const { data: emps, isLoading, refetch } = trpc.settings.getEmployees.useQuery();
   const { data: allAccounts } = trpc.accounts.list.useQuery();
   // Only salary-relevant accounts (4xxx Personalaufwand, 2xxx Verbindlichkeiten)
@@ -851,7 +958,7 @@ function EmployeesTab() {
 
 // ─── Insurance Tab ────────────────────────────────────────────────────────────
 
-function InsuranceTab() {
+export function InsuranceTab() {
   const { data: settings, isLoading, refetch } = trpc.settings.getInsuranceSettings.useQuery();
   const upsert = trpc.settings.upsertInsuranceSetting.useMutation({
     onSuccess: () => { toast.success("Gespeichert"); refetch(); setDialogOpen(false); },
@@ -1093,7 +1200,7 @@ function InsuranceTab() {
 
 // ─── Booking Rules Tab ────────────────────────────────────────────────────────
 
-function BookingRulesTab() {
+export function BookingRulesTab() {
   const { data: rules, isLoading, refetch } = trpc.settings.getBookingRules.useQuery();
   const toggle = trpc.settings.toggleBookingRule.useMutation({
     onSuccess: () => refetch(),
@@ -1284,17 +1391,107 @@ function SortableOBRow({ row, value, onChange }: {
   );
 }
 
-function OpeningBalancesTab() {
+export function OpeningBalancesTab() {
   const { fiscalYear } = useFiscalYear();
   const [editYear, setEditYear] = useState(fiscalYear);
   const [localBalances, setLocalBalances] = useState<Record<number, string>>({});
   const [isDirty, setIsDirty] = useState(false);
+  const [hideZeroBalance, setHideZeroBalance] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [addNumber, setAddNumber] = useState("");
   const [addName, setAddName] = useState("");
   const [addType, setAddType] = useState<"asset" | "liability" | "equity">("asset");
   const [addCategory, setAddCategory] = useState("");
   const [localOrder, setLocalOrder] = useState<{ assets: number[]; liabilities: number[] }>({ assets: [], liabilities: [] });
+
+  // Import state
+  const [showImport, setShowImport] = useState(false);
+  const [isImportParsing, setIsImportParsing] = useState(false);
+  const [importPreview, setImportPreview] = useState<Array<{ number: string; name: string; balance: number; accountType: string }>>([]);
+  const [selectedImportIds, setSelectedImportIds] = useState<Set<number>>(new Set());
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const importPdfFileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFile = async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (["pdf", "jpg", "jpeg", "png", "webp"].includes(ext)) {
+      // PDF/Image: use LLM extraction
+      setIsImportParsing(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const resp = await fetch("/api/upload/opening-balance-pdf", { method: "POST", body: formData, credentials: "include" });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error ?? "Upload fehlgeschlagen");
+        const preview = result.balances ?? [];
+        setImportPreview(preview);
+        setSelectedImportIds(new Set(preview.map((_: any, i: number) => i)));
+        if (preview.length === 0) toast.warning("Keine Salden gefunden");
+        else toast.success(`${preview.length} Konten extrahiert`);
+      } catch (e: any) {
+        toast.error(e.message);
+      } finally {
+        setIsImportParsing(false);
+      }
+    } else if (["csv", "xlsx", "xls"].includes(ext)) {
+      // Excel/CSV: parse client-side
+      setIsImportParsing(true);
+      try {
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        const sep = lines[0]?.includes(";") ? ";" : ",";
+        const headers = lines[0]?.split(sep).map(h => h.trim().toLowerCase().replace(/"/g, "")) ?? [];
+        const numIdx = headers.findIndex(h => ["nummer", "konto", "kontonummer", "number"].includes(h));
+        const nameIdx = headers.findIndex(h => ["bezeichnung", "name", "kontoname"].includes(h));
+        const balIdx = headers.findIndex(h => ["saldo", "betrag", "balance", "amount", "soll"].includes(h));
+        if (numIdx === -1 || balIdx === -1) {
+          toast.error("Spalten 'Nummer' und 'Saldo' nicht gefunden. Bitte Spaltenüberschriften prüfen.");
+          return;
+        }
+        const preview: Array<{ number: string; name: string; balance: number; accountType: string }> = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(sep).map(c => c.trim().replace(/"/g, ""));
+          const num = cols[numIdx]?.trim();
+          const bal = parseFloat(cols[balIdx]?.replace(/[^0-9.\-]/g, "") ?? "0");
+          if (!num || isNaN(bal) || bal === 0) continue;
+          const numInt = parseInt(num);
+          let accountType = "asset";
+          if (numInt >= 2000 && numInt <= 2799) accountType = "liability";
+          else if (numInt >= 2800) accountType = "equity";
+          preview.push({ number: num, name: nameIdx >= 0 ? cols[nameIdx] : num, balance: Math.abs(bal), accountType });
+        }
+        setImportPreview(preview);
+        setSelectedImportIds(new Set(preview.map((_, i) => i)));
+        if (preview.length === 0) toast.warning("Keine Salden gefunden");
+        else toast.success(`${preview.length} Konten gelesen`);
+      } catch (e: any) {
+        toast.error(e.message);
+      } finally {
+        setIsImportParsing(false);
+      }
+    } else {
+      toast.error("Bitte PDF, Bild oder CSV/Excel hochladen");
+    }
+  };
+
+  const applyImport = () => {
+    const selected = importPreview.filter((_, i) => selectedImportIds.has(i));
+    // Match by account number to existing accounts
+    const newBalances = { ...localBalances };
+    let matched = 0;
+    for (const item of selected) {
+      const acc = rows?.find(r => r.accountNumber === item.number);
+      if (acc) {
+        newBalances[acc.accountId] = String(item.balance);
+        matched++;
+      }
+    }
+    setLocalBalances(newBalances);
+    setIsDirty(true);
+    setShowImport(false);
+    toast.success(`${matched} von ${selected.length} Salden übernommen. Bitte speichern.`);
+    if (matched < selected.length) toast.warning(`${selected.length - matched} Konten nicht im Kontenplan gefunden (Nummer prüfen).`);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1410,10 +1607,17 @@ function OpeningBalancesTab() {
     groupRows: NonNullable<typeof rows>,
     total: number,
     group: "assets" | "liabilities"
-  ) => (
+  ) => {
+    const visibleRows = hideZeroBalance
+      ? groupRows.filter(r => (parseFloat(localBalances[r.accountId] || r.balance?.toString() || "0") || 0) !== 0)
+      : groupRows;
+    return (
     <div className="mb-6">
       <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2 px-1">
         {title}
+        {hideZeroBalance && visibleRows.length < groupRows.length && (
+          <span className="ml-2 text-xs font-normal text-muted-foreground/70">({groupRows.length - visibleRows.length} ausgeblendet)</span>
+        )}
       </h3>
       <div className="border border-border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
@@ -1426,9 +1630,9 @@ function OpeningBalancesTab() {
             </tr>
           </thead>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd(group)}>
-            <SortableContext items={groupRows.map(r => r.accountId)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={visibleRows.map(r => r.accountId)} strategy={verticalListSortingStrategy}>
               <tbody>
-                {groupRows.map(r => (
+                {visibleRows.map(r => (
                   <SortableOBRow
                     key={r.accountId}
                     row={r}
@@ -1448,6 +1652,7 @@ function OpeningBalancesTab() {
       </div>
     </div>
   );
+  };
 
   return (
     <div className="max-w-3xl">
@@ -1460,20 +1665,26 @@ function OpeningBalancesTab() {
             Aktiven müssen gleich Passiven sein.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <div className="flex items-center gap-2 border rounded-md px-3 py-1.5 bg-muted/50">
+            <span className="text-xs font-medium text-muted-foreground">Geschäftsjahr</span>
+            <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
+              <SelectTrigger className="w-20 h-7 text-sm border-0 bg-transparent p-0 shadow-none focus:ring-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[2026, 2025, 2024, 2023].map(y => (
+                  <SelectItem key={y} value={String(y)}>GJ {y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => { setImportPreview([]); setSelectedImportIds(new Set()); setShowImport(true); }}>
+            <Upload className="h-4 w-4 mr-1" /> Import
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAddAccount(true)}>
             <Plus className="h-4 w-4 mr-1" /> Neues Konto
           </Button>
-          <Select value={String(editYear)} onValueChange={v => { setEditYear(parseInt(v)); setIsDirty(false); }}>
-            <SelectTrigger className="w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {[2026, 2025, 2024, 2023].map(y => (
-                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 
@@ -1481,6 +1692,18 @@ function OpeningBalancesTab() {
       <div className="flex items-start gap-2 p-3 rounded-lg mb-4 text-xs bg-blue-50 border border-blue-200 text-blue-800">
         <GripVertical className="h-4 w-4 shrink-0 mt-0.5" />
         <span>Konten per Drag & Drop umsortieren. Neue Konten werden automatisch im Kontenplan erstellt. Inaktive Konten im Kontenplan werden hier ausgeblendet.</span>
+      </div>
+
+      {/* Filter: Konten ohne Betrag ausblenden */}
+      <div className="flex items-center gap-2 mb-4">
+        <Switch
+          id="hideZero"
+          checked={hideZeroBalance}
+          onCheckedChange={setHideZeroBalance}
+        />
+        <label htmlFor="hideZero" className="text-sm text-muted-foreground cursor-pointer select-none">
+          Konten ohne Betrag ausblenden
+        </label>
       </div>
 
       {/* Balance indicator */}
@@ -1573,6 +1796,138 @@ function OpeningBalancesTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Import Dialog */}
+      <Dialog open={showImport} onOpenChange={open => { setShowImport(open); if (!open) setImportPreview([]); }}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Eröffnungssalden importieren</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Laden Sie eine Bilanz als PDF/Bild (KI-Extraktion) oder als CSV/Excel-Datei hoch.
+              CSV/Excel muss Spalten "Nummer" und "Saldo" enthalten.
+            </p>
+          </DialogHeader>
+
+          {/* Upload area */}
+          {importPreview.length === 0 && (
+            <div className="space-y-3 py-2">
+              {isImportParsing ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">KI analysiert die Bilanz...</p>
+                  <p className="text-xs text-muted-foreground">Dies kann 15–30 Sekunden dauern</p>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
+                    onClick={() => importFileRef.current?.click()}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleImportFile(f); }}
+                  >
+                    <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm font-medium">PDF, Bild oder CSV/Excel hier ablegen</p>
+                    <p className="text-xs text-muted-foreground mt-1">PDF/JPG/PNG → KI-Extraktion &nbsp;|&nbsp; CSV/XLSX → direkt einlesen</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" className="flex-1" onClick={() => importFileRef.current?.click()}>
+                      <FileSpreadsheet className="h-4 w-4 mr-2" /> CSV / Excel hochladen
+                    </Button>
+                    <Button variant="outline" className="flex-1" onClick={() => importPdfFileRef.current?.click()}>
+                      <FileText className="h-4 w-4 mr-2" /> PDF / Bild hochladen (KI)
+                    </Button>
+                  </div>
+                  <input ref={importFileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
+                  <input ref={importPdfFileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Preview table */}
+          {importPreview.length > 0 && (
+            <div className="flex flex-col flex-1 min-h-0">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium">{importPreview.length} Konten gefunden – {selectedImportIds.size} ausgewählt</p>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setSelectedImportIds(new Set(importPreview.map((_, i) => i)))}>
+                    Alle auswählen
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setSelectedImportIds(new Set())}>
+                    Alle abwählen
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => { setImportPreview([]); setSelectedImportIds(new Set()); }}>
+                    Neue Datei
+                  </Button>
+                </div>
+              </div>
+              <div className="overflow-auto flex-1 border border-border rounded-lg">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+                    <tr>
+                      <th className="w-8 px-3 py-2">
+                        <input type="checkbox"
+                          checked={selectedImportIds.size === importPreview.length}
+                          onChange={e => setSelectedImportIds(e.target.checked ? new Set(importPreview.map((_, i) => i)) : new Set())}
+                          className="rounded"
+                        />
+                      </th>
+                      <th className="text-left px-3 py-2 font-medium">Nr.</th>
+                      <th className="text-left px-3 py-2 font-medium">Bezeichnung</th>
+                      <th className="text-left px-3 py-2 font-medium">Typ</th>
+                      <th className="text-right px-3 py-2 font-medium">Saldo CHF</th>
+                      <th className="text-left px-3 py-2 font-medium">Im Kontenplan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.map((item, i) => {
+                      const inPlan = rows?.some(r => r.accountNumber === item.number);
+                      return (
+                        <tr key={i} className={`border-t border-border ${selectedImportIds.has(i) ? "bg-primary/5" : ""}`}>
+                          <td className="px-3 py-1.5">
+                            <input type="checkbox" checked={selectedImportIds.has(i)}
+                              onChange={e => setSelectedImportIds(prev => { const s = new Set(prev); e.target.checked ? s.add(i) : s.delete(i); return s; })}
+                              className="rounded"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-xs">{item.number}</td>
+                          <td className="px-3 py-1.5">{item.name}</td>
+                          <td className="px-3 py-1.5">
+                            <Badge variant="outline" className="text-xs">
+                              {item.accountType === "asset" ? "Aktiven" : item.accountType === "liability" ? "Fremdkapital" : "Eigenkapital"}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-mono">
+                            {new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2 }).format(item.balance)}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            {inPlan
+                              ? <span className="text-green-600 text-xs">✓ Vorhanden</span>
+                              : <span className="text-amber-600 text-xs">⚠ Nicht gefunden</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="mt-3">
+            <Button variant="outline" onClick={() => setShowImport(false)}>Abbrechen</Button>
+            {importPreview.length > 0 && (
+              <Button onClick={applyImport} disabled={selectedImportIds.size === 0}>
+                <Upload className="h-4 w-4 mr-2" />
+                {selectedImportIds.size} Salden übernehmen
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1585,7 +1940,7 @@ const METHOD_LABELS: Record<string, string> = {
   degressive: "Degressiv",
 };
 
-function DepreciationTab() {
+export function DepreciationTab() {
   const { data: settings, isLoading, refetch } = trpc.yearEnd.listDepreciationSettings.useQuery();
   const { data: allAccounts } = trpc.accounts.list.useQuery();
   const createMut = trpc.yearEnd.createDepreciationSetting.useMutation({
@@ -1973,9 +2328,24 @@ function buildTree(accounts: AccountRow[]): TreeCategory[] {
   return tree;
 }
 
-function ChartOfAccountsTab() {
+// Undo action types for Kontenplan
+type UndoAction =
+  | { type: "toggleActive"; id: number; previousActive: boolean; accountLabel: string }
+  | { type: "updateVat"; id: number; previousVatRelevant: boolean; previousVatRate: string | null; accountLabel: string }
+  | { type: "updateAccount"; id: number; previousName: string; previousNumber: string; accountLabel: string }
+  | { type: "deleteAccount"; accountData: { number: string; name: string; accountType: string; normalBalance: string; category?: string; subCategory?: string; isBankAccount?: boolean; isVatRelevant?: boolean; defaultVatRate?: string | null }; accountLabel: string }
+  | { type: "createAccount"; id: number; accountLabel: string };
+
+export function ChartOfAccountsTab() {
   const { data: allAccounts, isLoading, refetch } = trpc.settings.getAllAccounts.useQuery();
   const utils = trpc.useUtils();
+
+  // Undo stack
+  const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+  const pushUndo = useCallback((action: UndoAction) => {
+    setUndoStack(prev => [...prev.slice(-19), action]); // keep last 20
+  }, []);
+
   const updateMut = trpc.settings.updateAccount.useMutation({
     onSuccess: (data) => {
       refetch();
@@ -1997,6 +2367,10 @@ function ChartOfAccountsTab() {
       if (data.bankAccountCreated) {
         toast.success("Bankkonto automatisch in Bankkonten erstellt");
         utils.settings.getBankAccounts.invalidate();
+      }
+      // Push undo for create
+      if (data.id) {
+        pushUndo({ type: "createAccount", id: data.id, accountLabel: `${addNumber} ${addName}` });
       }
       refetch(); setShowAdd(false); resetAddForm();
     },
@@ -2033,6 +2407,8 @@ function ChartOfAccountsTab() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editNumber, setEditNumber] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [editSubCategory, setEditSubCategory] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showKmuConfirm, setShowKmuConfirm] = useState(false);
@@ -2044,6 +2420,8 @@ function ChartOfAccountsTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const [isPdfParsing, setIsPdfParsing] = useState(false);
+  const [selectedImportIds, setSelectedImportIds] = useState<Set<number>>(new Set());
+  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
 
   // DnD sensors
   const sensors = useSensors(
@@ -2063,6 +2441,67 @@ function ChartOfAccountsTab() {
     setAddNumber(""); setAddName(""); setAddType("expense");
     setAddCategory(""); setAddSubCategory(""); setAddIsBankAccount(false);
   };
+
+  // Undo handler
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const action = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+
+    switch (action.type) {
+      case "toggleActive":
+        toggleActiveMut.mutate({ id: action.id, isActive: action.previousActive });
+        toast.info(`Rückgängig: ${action.accountLabel} ${action.previousActive ? "aktiviert" : "deaktiviert"}`);
+        break;
+      case "updateVat":
+        updateVatMut.mutate({
+          id: action.id,
+          isVatRelevant: action.previousVatRelevant,
+          defaultVatRate: action.previousVatRate,
+        });
+        toast.info(`Rückgängig: MWST für ${action.accountLabel} zurückgesetzt`);
+        break;
+      case "updateAccount":
+        updateMut.mutate({
+          id: action.id,
+          name: action.previousName,
+          number: action.previousNumber,
+        });
+        toast.info(`Rückgängig: ${action.accountLabel} zurückgesetzt`);
+        break;
+      case "createAccount":
+        deleteMut.mutate({ id: action.id });
+        toast.info(`Rückgängig: Konto ${action.accountLabel} gelöscht`);
+        break;
+      case "deleteAccount":
+        createMut.mutate({
+          number: action.accountData.number,
+          name: action.accountData.name,
+          accountType: action.accountData.accountType as any,
+          normalBalance: action.accountData.normalBalance as any,
+          category: action.accountData.category,
+          subCategory: action.accountData.subCategory,
+          isBankAccount: action.accountData.isBankAccount ?? false,
+        });
+        toast.info(`Rückgängig: Konto ${action.accountLabel} wiederhergestellt`);
+        break;
+    }
+  }, [undoStack, toggleActiveMut, updateVatMut, updateMut, deleteMut, createMut]);
+
+  // Keyboard shortcut Ctrl+Z
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        // Only if not editing an input
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleUndo]);
 
   const tree = useMemo(() => {
     if (!allAccounts) return [];
@@ -2112,13 +2551,24 @@ function ChartOfAccountsTab() {
     setEditingId(acc.id);
     setEditName(acc.name);
     setEditNumber(acc.number);
+    setEditCategory(acc.category || "");
+    setEditSubCategory(acc.subCategory || "");
   };
 
   const saveEdit = (acc: AccountRow) => {
+    pushUndo({
+      type: "updateAccount",
+      id: acc.id,
+      previousName: acc.name,
+      previousNumber: acc.number,
+      accountLabel: `${acc.number} ${acc.name}`,
+    });
     updateMut.mutate({
       id: acc.id,
       name: editName !== acc.name ? editName : undefined,
       number: editNumber !== acc.number ? editNumber : undefined,
+      category: editCategory !== (acc.category || "") ? (editCategory || null) : undefined,
+      subCategory: editSubCategory !== (acc.subCategory || "") ? (editSubCategory || null) : undefined,
     });
     setEditingId(null);
   };
@@ -2157,6 +2607,11 @@ function ChartOfAccountsTab() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {undoStack.length > 0 && (
+            <Button variant="outline" size="sm" onClick={handleUndo} className="text-orange-600 border-orange-300 hover:bg-orange-50">
+              <Undo2 className="h-4 w-4 mr-1" /> Rückgängig
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={expandAll}>Alle öffnen</Button>
           <Button variant="outline" size="sm" onClick={collapseAll}>Alle schliessen</Button>
           <Button variant={dragEnabled ? "default" : "outline"} size="sm" onClick={() => setDragEnabled(!dragEnabled)}>
@@ -2358,6 +2813,31 @@ function ChartOfAccountsTab() {
                               <span className="flex-1 truncate">{acc.name}</span>
                             )}
 
+                            {/* Category + SubCategory selectors (only in edit mode) */}
+                            {editingId === acc.id && (
+                              <>
+                                <Select value={editCategory} onValueChange={val => { setEditCategory(val); setEditSubCategory(""); }}>
+                                  <SelectTrigger className="w-40 h-7 text-xs">
+                                    <SelectValue placeholder="Kategorie..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {["Umlaufvermögen","Anlagevermögen","Fremdkapital","Eigenkapital",
+                                      "Drittaufwand","Personalaufwand","Mietaufwand","Zinsaufwand",
+                                      "Unterhalt und Reparatur","Abschreibungen","Versicherungen",
+                                      "Betriebs- und Hilfsmaterial","Verwaltungsaufwand","Werbeaufwand",
+                                      "\u00dcbriger Aufwand","Dienstleistungsertrag","Kapitalertrag","\u00dcbriger Ertrag"
+                                    ].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  value={editSubCategory}
+                                  onChange={e => setEditSubCategory(e.target.value)}
+                                  className="w-36 h-7 text-xs"
+                                  placeholder="Unterkategorie..."
+                                />
+                              </>
+                            )}
+
                             {/* Account type badge */}
                             <Badge variant="outline" className="text-xs shrink-0">
                               {ACCOUNT_TYPE_LABELS[acc.accountType] || acc.accountType}
@@ -2375,6 +2855,13 @@ function ChartOfAccountsTab() {
                               <Switch
                                 checked={!!acc.isVatRelevant}
                                 onCheckedChange={(checked) => {
+                                  pushUndo({
+                                    type: "updateVat",
+                                    id: acc.id,
+                                    previousVatRelevant: !!acc.isVatRelevant,
+                                    previousVatRate: acc.defaultVatRate,
+                                    accountLabel: `${acc.number} ${acc.name}`,
+                                  });
                                   updateVatMut.mutate({
                                     id: acc.id,
                                     isVatRelevant: checked,
@@ -2390,6 +2877,13 @@ function ChartOfAccountsTab() {
                               <Select
                                 value={acc.defaultVatRate || "8.10"}
                                 onValueChange={(val) => {
+                                  pushUndo({
+                                    type: "updateVat",
+                                    id: acc.id,
+                                    previousVatRelevant: true,
+                                    previousVatRate: acc.defaultVatRate,
+                                    accountLabel: `${acc.number} ${acc.name}`,
+                                  });
                                   updateVatMut.mutate({
                                     id: acc.id,
                                     isVatRelevant: true,
@@ -2413,7 +2907,15 @@ function ChartOfAccountsTab() {
                             {/* Active toggle */}
                             <button
                               className="shrink-0"
-                              onClick={() => toggleActiveMut.mutate({ id: acc.id, isActive: !acc.isActive })}
+                              onClick={() => {
+                                pushUndo({
+                                  type: "toggleActive",
+                                  id: acc.id,
+                                  previousActive: acc.isActive,
+                                  accountLabel: `${acc.number} ${acc.name}`,
+                                });
+                                toggleActiveMut.mutate({ id: acc.id, isActive: !acc.isActive });
+                              }}
                               title={acc.isActive ? "Deaktivieren" : "Aktivieren"}
                             >
                               {acc.isActive ? (
@@ -2441,8 +2943,24 @@ function ChartOfAccountsTab() {
                                 <Button
                                   size="sm" variant="ghost"
                                   onClick={() => {
-                                    if (confirm(`Konto ${acc.number} ${acc.name} wirklich löschen?`))
+                                    if (confirm(`Konto ${acc.number} ${acc.name} wirklich löschen?`)) {
+                                      pushUndo({
+                                        type: "deleteAccount",
+                                        accountData: {
+                                          number: acc.number,
+                                          name: acc.name,
+                                          accountType: acc.accountType,
+                                          normalBalance: acc.normalBalance,
+                                          category: acc.category || undefined,
+                                          subCategory: acc.subCategory || undefined,
+                                          isBankAccount: acc.isBankAccount ?? false,
+                                          isVatRelevant: acc.isVatRelevant ?? false,
+                                          defaultVatRate: acc.defaultVatRate,
+                                        },
+                                        accountLabel: `${acc.number} ${acc.name}`,
+                                      });
                                       deleteMut.mutate({ id: acc.id });
+                                    }
                                   }}
                                 >
                                   <Trash2 className="h-3.5 w-3.5 text-red-500" />
@@ -2470,7 +2988,7 @@ function ChartOfAccountsTab() {
 
       {/* Import Dialog */}
       <Dialog open={showImport} onOpenChange={setShowImport}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Kontenplan importieren</DialogTitle>
           </DialogHeader>
@@ -2480,6 +2998,16 @@ function ChartOfAccountsTab() {
               Bei Excel/CSV werden die Spalten "Nummer" und "Name" automatisch erkannt.
               Bei PDF wird der Kontenplan per KI extrahiert.
             </p>
+            {/* PDF progress indicator */}
+            {isPdfParsing && (
+              <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-primary">KI analysiert PDF...</p>
+                  <p className="text-xs text-muted-foreground">{pdfProgress || "Kontenplan wird extrahiert, bitte warten..."}</p>
+                </div>
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
               <Button variant="outline" onClick={() => fileInputRef.current?.click()} disabled={isPdfParsing}>
                 <FileSpreadsheet className="h-4 w-4 mr-2" /> Excel/CSV
@@ -2592,6 +3120,7 @@ function ChartOfAccountsTab() {
                       return { number: num, name, accountType, category: cat, subCategory: sub };
                     }).filter((a): a is NonNullable<typeof a> => a !== null && !!a.number && !!a.name);
                     setImportPreview(parsed);
+                    setSelectedImportIds(new Set(parsed.map((_, i) => i)));
                     toast.success(`${parsed.length} Konten aus Datei gelesen`);
                   } catch (err) {
                     toast.error("Fehler beim Lesen der Datei");
@@ -2705,41 +3234,100 @@ function ChartOfAccountsTab() {
               </p>
             )}
             {importPreview.length > 0 && (
-              <div className="border rounded-lg max-h-64 overflow-y-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nr.</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Typ</TableHead>
-                      <TableHead>Kategorie</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {importPreview.slice(0, 50).map((a, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="font-mono text-xs">{a.number}</TableCell>
-                        <TableCell className="text-sm">{a.name}</TableCell>
-                        <TableCell><Badge variant="outline" className="text-xs">{ACCOUNT_TYPE_LABELS[a.accountType] || a.accountType}</Badge></TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{a.category || "-"}</TableCell>
+              <div className="space-y-2">
+                {/* Select all / deselect all toolbar */}
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-border cursor-pointer"
+                      checked={selectedImportIds.size === importPreview.length}
+                      ref={(el) => { if (el) el.indeterminate = selectedImportIds.size > 0 && selectedImportIds.size < importPreview.length; }}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedImportIds(new Set(importPreview.map((_, i) => i)));
+                        } else {
+                          setSelectedImportIds(new Set());
+                        }
+                      }}
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      {selectedImportIds.size === importPreview.length
+                        ? `Alle ${importPreview.length} Konten ausgewählt`
+                        : `${selectedImportIds.size} von ${importPreview.length} ausgewählt`}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className="text-xs text-primary underline hover:no-underline"
+                      onClick={() => setSelectedImportIds(new Set(importPreview.map((_, i) => i)))}
+                    >Alle</button>
+                    <button
+                      className="text-xs text-muted-foreground underline hover:no-underline"
+                      onClick={() => setSelectedImportIds(new Set())}
+                    >Keine</button>
+                  </div>
+                </div>
+                {/* Preview table – tall, scrollable */}
+                <div className="border rounded-lg overflow-y-auto" style={{ maxHeight: "55vh" }}>
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-card z-10">
+                      <TableRow>
+                        <TableHead className="w-8"></TableHead>
+                        <TableHead className="w-16">Nr.</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead className="w-24">Typ</TableHead>
+                        <TableHead>Kategorie</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {importPreview.length > 50 && (
-                  <p className="text-xs text-muted-foreground p-2 text-center">... und {importPreview.length - 50} weitere</p>
-                )}
+                    </TableHeader>
+                    <TableBody>
+                      {importPreview.map((a, i) => (
+                        <TableRow
+                          key={i}
+                          className={`cursor-pointer transition-colors ${
+                            selectedImportIds.has(i) ? "bg-primary/5" : "opacity-50"
+                          }`}
+                          onClick={() => {
+                            const next = new Set(selectedImportIds);
+                            if (next.has(i)) next.delete(i); else next.add(i);
+                            setSelectedImportIds(next);
+                          }}
+                        >
+                          <TableCell className="py-1.5" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-border cursor-pointer"
+                              checked={selectedImportIds.has(i)}
+                              onChange={() => {
+                                const next = new Set(selectedImportIds);
+                                if (next.has(i)) next.delete(i); else next.add(i);
+                                setSelectedImportIds(next);
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="font-mono text-xs py-1.5">{a.number}</TableCell>
+                          <TableCell className="text-sm py-1.5">{a.name}</TableCell>
+                          <TableCell className="py-1.5"><Badge variant="outline" className="text-xs">{ACCOUNT_TYPE_LABELS[a.accountType] || a.accountType}</Badge></TableCell>
+                          <TableCell className="text-xs text-muted-foreground py-1.5">{a.category || "-"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowImport(false); setImportPreview([]); }}>Abbrechen</Button>
+            <Button variant="outline" onClick={() => { setShowImport(false); setImportPreview([]); setSelectedImportIds(new Set()); setPdfProgress(null); }}>Abbrechen</Button>
             <Button
-              onClick={() => bulkImportMut.mutate({ accounts: importPreview as any, mode: importMode })}
-              disabled={importPreview.length === 0 || bulkImportMut.isPending}
+              onClick={() => {
+                const selected = importPreview.filter((_, i) => selectedImportIds.has(i));
+                bulkImportMut.mutate({ accounts: selected as any, mode: importMode });
+              }}
+              disabled={selectedImportIds.size === 0 || bulkImportMut.isPending}
             >
               {bulkImportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
-              {importPreview.length} Konten importieren
+              {selectedImportIds.size} von {importPreview.length} Konten importieren
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2837,7 +3425,7 @@ function SortableAccountList({ accounts, dragEnabled, onDragEnd, children }: {
 
 // ─── DSG (Datenschutz) Tab ───────────────────────────────────────────────────
 
-function DsgTab() {
+export function DsgTab() {
   const [activeSection, setActiveSection] = useReactState<"audit" | "export" | "privacy">("audit");
 
   return (
@@ -3225,7 +3813,7 @@ function PrivacySection() {
 
 // ─── Suppliers (Lieferanten) Tab ─────────────────────────────────────────────
 
-function SuppliersTab() {
+export function SuppliersTab() {
   const [search, setSearch] = useReactState("");
   const [showInactive, setShowInactive] = useReactState(false);
   const [showDialog, setShowDialog] = useReactState(false);
@@ -3672,7 +4260,7 @@ function SuppliersTab() {
 
 // ─── Customers (Kunden) Tab ──────────────────────────────────────────────────
 
-function CustomersTab() {
+export function CustomersTab() {
   const [search, setSearch] = useReactState("");
   const [showDialog, setShowDialog] = useReactState(false);
   const [editCustomer, setEditCustomer] = useReactState<any>(null);
@@ -3681,6 +4269,7 @@ function CustomersTab() {
   const [expandedCustomer, setExpandedCustomer] = useReactState<number | null>(null);
   const [showImportDialog, setShowImportDialog] = useReactState(false);
   const [importPreview, setImportPreview] = useReactState<Array<{name:string;company?:string;street?:string;zipCode?:string;city?:string;country?:string;email?:string;phone?:string;salutation?:string;notes?:string}>>([]);
+  const customerImportFileRef = useRef<HTMLInputElement>(null);
 
   // Customer form
   const [cCustNr, setCCustNr] = useReactState("");
@@ -3812,25 +4401,87 @@ function CustomersTab() {
     try {
       const XLSX = await import("xlsx");
       const data = await file.arrayBuffer();
-      const wb = XLSX.read(data);
+      // For CSV files: try UTF-8 first, then Latin-1 as fallback (handles umlauts from Excel exports)
+      const isCSV = file.name.toLowerCase().endsWith('.csv');
+      let wb;
+      if (isCSV) {
+        try {
+          const text = new TextDecoder('utf-8').decode(data);
+          wb = XLSX.read(text, { type: 'string' });
+        } catch {
+          const text = new TextDecoder('iso-8859-1').decode(data);
+          wb = XLSX.read(text, { type: 'string' });
+        }
+      } else {
+        wb = XLSX.read(data);
+      }
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
-      const parsed = rows.map((r: Record<string, any>) => {
-        const name = String(r["Name"] ?? r["Kunde"] ?? r["Kontakt"] ?? r["name"] ?? "").trim();
-        const company = String(r["Firma"] ?? r["Unternehmen"] ?? r["company"] ?? "").trim() || undefined;
-        const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
-        const zipCode = String(r["PLZ"] ?? r["Postleitzahl"] ?? r["zipCode"] ?? r["zip"] ?? "").trim() || undefined;
-        const city = String(r["Ort"] ?? r["Stadt"] ?? r["city"] ?? "").trim() || undefined;
-        const country = String(r["Land"] ?? r["country"] ?? "").trim() || undefined;
-        const email = String(r["E-Mail"] ?? r["Email"] ?? r["email"] ?? "").trim() || undefined;
-        const phone = String(r["Telefon"] ?? r["Tel"] ?? r["phone"] ?? "").trim() || undefined;
-        const salutation = String(r["Anrede"] ?? r["salutation"] ?? "").trim() || undefined;
-        const notes = String(r["Notizen"] ?? r["Bemerkung"] ?? r["notes"] ?? "").trim() || undefined;
-        return { name, company, street, zipCode, city, country, email, phone, salutation, notes };
-      }).filter(c => c.name.length > 0);
+
+      // Read as raw array rows (header:1) to handle both standard headers and positional formats
+      const rawRows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: '' });
+
+      // Detect if file has standard headers (Name/Firma/etc.) in first non-empty row
+      const headerRowIdx = rawRows.findIndex(r => r.some((c: any) => {
+        const v = String(c ?? '').toLowerCase().trim();
+        return ['name', 'firma', 'kunde', 'kontakt', 'company'].includes(v);
+      }));
+
+      let parsed: Array<{ name: string; company?: string; street?: string; zipCode?: string; city?: string; country?: string; email?: string; phone?: string; salutation?: string; notes?: string; customerNumber?: string }>;
+
+      if (headerRowIdx >= 0) {
+        // Standard header-based import
+        const headers = rawRows[headerRowIdx].map((h: any) => String(h ?? '').trim());
+        const dataRows = rawRows.slice(headerRowIdx + 1);
+        parsed = dataRows.map((r: any[]) => {
+          const get = (...keys: string[]) => {
+            for (const k of keys) {
+              const idx = headers.findIndex(h => h.toLowerCase() === k.toLowerCase());
+              if (idx >= 0 && r[idx] != null && String(r[idx]).trim()) return String(r[idx]).trim();
+            }
+            return '';
+          };
+          const name = get('Name', 'Kunde', 'Kontakt', 'name');
+          const company = get('Firma', 'Unternehmen', 'company') || undefined;
+          const street = get('Strasse', 'Adresse', 'street', 'address') || undefined;
+          const zipCode = get('PLZ', 'Postleitzahl', 'zipCode', 'zip') || undefined;
+          const city = get('Ort', 'Stadt', 'city') || undefined;
+          const country = get('Land', 'country') || undefined;
+          const email = get('E-Mail', 'Email', 'email') || undefined;
+          const phone = get('Telefon', 'Tel', 'phone') || undefined;
+          const salutation = get('Anrede', 'salutation') || undefined;
+          const notes = get('Notizen', 'Bemerkung', 'notes') || undefined;
+          const customerNumber = get('Kunden-Nr.', 'KundenNr', 'Kundennummer', 'Nr.', 'Nr') || undefined;
+          return { name, company, street, zipCode, city, country, email, phone, salutation, notes, customerNumber };
+        }).filter(c => c.name.length > 0);
+      } else {
+        // Positional import: detect column with Kunden-Nr. (numeric) and Name+Ort (text with comma)
+        // Format: col[1] = Kunden-Nr. (number), col[2] = "Name, Ort" (text)
+        // Filter rows where col[1] is a valid customer number (1-9000) and col[2] has content
+        const customerRows = rawRows.filter(r =>
+          typeof r[1] === 'number' && r[1] > 0 && r[1] < 9000 &&
+          String(r[2] ?? '').trim().length > 2
+        );
+        // Deduplicate by Kunden-Nr.
+        const seen = new Set<number>();
+        const uniqueRows = customerRows.filter(r => {
+          if (seen.has(r[1])) return false;
+          seen.add(r[1]);
+          return true;
+        });
+        parsed = uniqueRows.map(r => {
+          const nameOrt = String(r[2]).trim();
+          const lastComma = nameOrt.lastIndexOf(',');
+          const name = lastComma > 0 ? nameOrt.substring(0, lastComma).trim() : nameOrt;
+          const city = lastComma > 0 ? nameOrt.substring(lastComma + 1).trim() : undefined;
+          const customerNumber = String(r[1]);
+          return { name, city: city || undefined, customerNumber };
+        }).filter(c => c.name.length > 0);
+      }
+
       setImportPreview(parsed);
       toast.success(`${parsed.length} Kunden aus Datei gelesen`);
     } catch (err) {
+      console.error('Import error:', err);
       toast.error("Fehler beim Lesen der Datei");
     }
     e.target.value = "";
@@ -4132,13 +4783,11 @@ function CustomersTab() {
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 className="hidden"
-                id="customer-import-file"
+                ref={customerImportFileRef}
                 onChange={handleImportFile}
               />
-              <Button variant="outline" asChild>
-                <label htmlFor="customer-import-file" className="cursor-pointer">
-                  <Upload className="h-4 w-4 mr-2" /> Datei wählen
-                </label>
+              <Button variant="outline" onClick={() => customerImportFileRef.current?.click()}>
+                <Upload className="h-4 w-4 mr-2" /> Datei wählen
               </Button>
             </div>
             {importPreview.length > 0 && (
@@ -4231,7 +4880,7 @@ function CustomersTab() {
 
 // ─── Templates (Vorlagen) Tab ────────────────────────────────────────────────
 
-function TemplatesTab() {
+export function TemplatesTab() {
   const [showUpload, setShowUpload] = useReactState(false);
   const [uploadName, setUploadName] = useReactState("");
   const [uploadType, setUploadType] = useReactState("invoice");
@@ -4733,7 +5382,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   none: { label: "Kein Abo", color: "bg-gray-100 text-gray-800" },
 };
 
-function SubscriptionTab() {
+export function SubscriptionTab() {
   const subQuery = trpc.stripe.getSubscription.useQuery();
   const createCheckout = trpc.stripe.createCheckout.useMutation();
   const createPortal = trpc.stripe.createPortal.useMutation();
@@ -4759,7 +5408,7 @@ function SubscriptionTab() {
   const handleManageSubscription = async () => {
     try {
       const { url } = await createPortal.mutateAsync({
-        returnUrl: `${window.location.origin}/settings?tab=subscription`,
+        returnUrl: `${window.location.origin}/admin?tab=subscription`,
       });
       if (url) window.location.href = url;
     } catch (err: any) {
@@ -4898,6 +5547,290 @@ function SubscriptionTab() {
         Alle Preise in CHF, exkl. MWST. 30 Tage kostenlose Testphase bei Erstregistrierung.
         Sie können Ihr Abo jederzeit über das Stripe-Kundenportal verwalten oder kündigen.
       </p>
+    </div>
+  );
+}
+
+// ─── Avatar Settings Tab ──────────────────────────────────────────────────────
+
+export function AvatarSettingsTab() {
+  const { data: settings, isLoading } = trpc.avatarSettings.get.useQuery();
+  const utils = trpc.useUtils();
+  const saveMutation = trpc.avatarSettings.save.useMutation({
+    onSuccess: () => {
+      toast.success("Avatar-Einstellungen gespeichert");
+      utils.avatarSettings.get.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const [language, setLanguage] = useState("de-CH");
+  const [style, setStyle] = useState<"concise" | "balanced" | "detailed">("concise");
+  const [maxSentences, setMaxSentences] = useState(2);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [avatarName, setAvatarName] = useState("Berater");
+
+  useEffect(() => {
+    if (settings) {
+      setLanguage(settings.language ?? "de-CH");
+      setStyle((settings.style as any) ?? "concise");
+      setMaxSentences(settings.maxSentences ?? 2);
+      setCustomPrompt(settings.customPrompt ?? "");
+      setAvatarName(settings.avatarName ?? "Berater");
+    }
+  }, [settings]);
+
+  const handleSave = () => {
+    saveMutation.mutate({ language, style, maxSentences, customPrompt, avatarName });
+  };
+
+  if (isLoading) return <div className="py-8 text-center text-muted-foreground text-sm">Lädt...</div>;
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <h3 className="text-base font-semibold mb-1">Avatar-Chatbot Einstellungen</h3>
+        <p className="text-sm text-muted-foreground">Konfigurieren Sie Stil und Sprache des KI-Beraters. Nur Administratoren können diese Einstellungen ändern.</p>
+      </div>
+
+      <div className="grid gap-5">
+        {/* Avatar Name */}
+        <div className="space-y-1.5">
+          <Label>Name des Beraters</Label>
+          <Input
+            value={avatarName}
+            onChange={e => setAvatarName(e.target.value)}
+            placeholder="z.B. Marc, Berater, Assistent"
+          />
+        </div>
+
+        {/* Sprache */}
+        <div className="space-y-1.5">
+          <Label>Sprache</Label>
+          <Select value={language} onValueChange={setLanguage}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="de-CH">Deutsch (Schweiz)</SelectItem>
+              <SelectItem value="de-DE">Deutsch (Deutschland)</SelectItem>
+              <SelectItem value="fr-CH">Français (Suisse)</SelectItem>
+              <SelectItem value="it-CH">Italiano (Svizzera)</SelectItem>
+              <SelectItem value="en-US">English (US)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Antwortstil */}
+        <div className="space-y-1.5">
+          <Label>Antwortstil</Label>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { value: "concise", label: "Kurz & Präzise", desc: "1–2 Sätze" },
+              { value: "balanced", label: "Ausgewogen", desc: "2–4 Sätze" },
+              { value: "detailed", label: "Ausführlich", desc: "4–6 Sätze" },
+            ] as const).map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setStyle(opt.value)}
+                className={`border rounded-lg p-3 text-left transition-all ${
+                  style === opt.value
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border hover:border-primary/50"
+                }`}
+              >
+                <div className="text-sm font-medium">{opt.label}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Max. Sätze */}
+        <div className="space-y-1.5">
+          <Label>Maximale Sätze pro Antwort: <span className="text-primary font-bold">{maxSentences}</span></Label>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            value={maxSentences}
+            onChange={e => setMaxSentences(Number(e.target.value))}
+            className="w-full accent-primary"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>1 (sehr kurz)</span>
+            <span>10 (sehr ausführlich)</span>
+          </div>
+        </div>
+
+        {/* Benutzerdefinierter Prompt */}
+        <div className="space-y-1.5">
+          <Label>Zusätzliche Anweisungen (optional)</Label>
+          <Textarea
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
+            placeholder="z.B. Antworte immer auf Schweizerdeutsch. Erwähne immer die relevanten Kontonummern. Sei besonders präzise bei MWST-Fragen."
+            maxLength={2000}
+            className="min-h-[100px]"
+          />
+          <p className="text-xs text-muted-foreground">{customPrompt.length}/2000 Zeichen</p>
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-2">
+        <Button onClick={handleSave} disabled={saveMutation.isPending}>
+          {saveMutation.isPending ? "Speichert..." : "Einstellungen speichern"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Import Automation Tab ────────────────────────────────────────────────────
+
+export function ImportAutomationTab() {
+  const { data: settings, isLoading } = trpc.importAutomation.get.useQuery();
+  const utils = trpc.useUtils();
+  const saveMutation = trpc.importAutomation.save.useMutation({
+    onSuccess: () => {
+      toast.success("Import-Automatisierungs-Einstellungen gespeichert");
+      utils.importAutomation.get.invalidate();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const [autoKiCategorize, setAutoKiCategorize] = useState(true);
+  const [autoGenerateBookingTexts, setAutoGenerateBookingTexts] = useState(true);
+  const [autoRefreshLearned, setAutoRefreshLearned] = useState(true);
+  const [autoDetectTransfers, setAutoDetectTransfers] = useState(true);
+  const [autoMatchDocuments, setAutoMatchDocuments] = useState(false);
+
+  useEffect(() => {
+    if (settings) {
+      setAutoKiCategorize(settings.autoKiCategorize ?? true);
+      setAutoGenerateBookingTexts(settings.autoGenerateBookingTexts ?? true);
+      setAutoRefreshLearned(settings.autoRefreshLearned ?? true);
+      setAutoDetectTransfers(settings.autoDetectTransfers ?? true);
+      setAutoMatchDocuments(settings.autoMatchDocuments ?? false);
+    }
+  }, [settings]);
+
+  const handleSave = () => {
+    saveMutation.mutate({
+      autoKiCategorize,
+      autoGenerateBookingTexts,
+      autoRefreshLearned,
+      autoDetectTransfers,
+      autoMatchDocuments,
+    });
+  };
+
+  if (isLoading) return <div className="py-8 text-center text-muted-foreground text-sm">Lädt...</div>;
+
+  const automationItems = [
+    {
+      key: "autoKiCategorize" as const,
+      label: "KI-Kategorisierung",
+      description: "Schlägt automatisch Soll/Haben-Konten für jede Transaktion vor (LLM-basiert). Empfohlen für neue Transaktionen ohne gelernte Regel.",
+      value: autoKiCategorize,
+      onChange: setAutoKiCategorize,
+      badge: "KI",
+      badgeColor: "bg-purple-100 text-purple-800",
+    },
+    {
+      key: "autoGenerateBookingTexts" as const,
+      label: "Buchungstexte generieren",
+      description: "Erstellt lesbare Buchungstexte aus Rohdaten (z.B. \"Sunrise 1. Quartal 2026\" statt \"SUNRISE COMMUNICATIONS AG REF 12345\").",
+      value: autoGenerateBookingTexts,
+      onChange: setAutoGenerateBookingTexts,
+      badge: "KI",
+      badgeColor: "bg-purple-100 text-purple-800",
+    },
+    {
+      key: "autoRefreshLearned" as const,
+      label: "Refresh (gelernt)",
+      description: "Wendet gelernte Buchungsregeln auf neue Transaktionen an. Überschreibt KI-Vorschläge bei bekannten Gegenparteien mit höherer Konfidenz (98%).",
+      value: autoRefreshLearned,
+      onChange: setAutoRefreshLearned,
+      badge: "Regeln",
+      badgeColor: "bg-blue-100 text-blue-800",
+    },
+    {
+      key: "autoDetectTransfers" as const,
+      label: "Kontoüberträge erkennen",
+      description: "Erkennt automatisch interne Transfers zwischen eigenen Bankkonten (gleicher Betrag, entgegengesetztes Vorzeichen, max. 2 Tage Differenz).",
+      value: autoDetectTransfers,
+      onChange: setAutoDetectTransfers,
+      badge: "Analyse",
+      badgeColor: "bg-green-100 text-green-800",
+    },
+    {
+      key: "autoMatchDocuments" as const,
+      label: "Dokument-Matching",
+      description: "Gleicht hochgeladene Belege automatisch mit Banktransaktionen ab (Betrag, Gegenpartei, Datum). Kann bei vielen Dokumenten länger dauern.",
+      value: autoMatchDocuments,
+      onChange: setAutoMatchDocuments,
+      badge: "Optional",
+      badgeColor: "bg-orange-100 text-orange-800",
+    },
+  ];
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <div>
+        <h3 className="text-base font-semibold mb-1">Import-Automatisierung</h3>
+        <p className="text-sm text-muted-foreground">
+          Konfigurieren Sie, welche KI-Aktionen nach jedem Bankimport automatisch ausgeführt werden.
+          Aktivierte Aktionen laufen im Hintergrund und sparen manuelle Klicks.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {automationItems.map(item => (
+          <div
+            key={item.key}
+            className="flex items-start gap-4 p-4 border rounded-lg bg-card hover:bg-muted/30 transition-colors"
+          >
+            <Switch
+              checked={item.value}
+              onCheckedChange={item.onChange}
+              className="mt-0.5 shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-sm font-medium">{item.label}</span>
+                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${item.badgeColor}`}>
+                  {item.badge}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{item.description}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 pt-2">
+        <Button onClick={handleSave} disabled={saveMutation.isPending}>
+          {saveMutation.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Speichern...</> : "Einstellungen speichern"}
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Änderungen gelten ab dem nächsten Import.
+        </p>
+      </div>
+
+      <div className="border rounded-lg p-4 bg-muted/20">
+        <div className="flex items-start gap-2">
+          <Bolt className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium mb-1">Empfohlene Konfiguration</p>
+            <p className="text-xs text-muted-foreground">
+              Für optimale Ergebnisse empfehlen wir: <strong>KI-Kategorisierung</strong>, <strong>Buchungstexte</strong> und <strong>Refresh (gelernt)</strong> aktiviert.
+              Das Dokument-Matching kann optional aktiviert werden, wenn Sie regelmässig Belege hochladen.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

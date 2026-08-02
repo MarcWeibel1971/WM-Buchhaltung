@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "c3d4e5f6-a7b8-4901-abcd-ef0123456789",
+  "id": "2433b78c-fac5-4d64-9939-5e7061495b23",
   "prevId": "46cb0ac1-f446-4d29-8f11-7eaaf520d0aa",
   "tables": {
     "accounts": {
@@ -218,6 +218,107 @@
         }
       },
       "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "avatar_settings": {
+      "name": "avatar_settings",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "organizationId": {
+          "name": "organizationId",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "language": {
+          "name": "language",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'de-CH'"
+        },
+        "style": {
+          "name": "style",
+          "type": "enum('concise','balanced','detailed')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'concise'"
+        },
+        "maxSentences": {
+          "name": "maxSentences",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 2
+        },
+        "customPrompt": {
+          "name": "customPrompt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "voiceId": {
+          "name": "voiceId",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "avatarName": {
+          "name": "avatarName",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'Berater'"
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "avatar_settings_id": {
+          "name": "avatar_settings_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "avatar_settings_organizationId_unique": {
+          "name": "avatar_settings_organizationId_unique",
+          "columns": [
+            "organizationId"
+          ]
+        }
+      },
       "checkConstraint": {}
     },
     "bank_accounts": {
@@ -3018,15 +3119,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "reminderLevel1Days": { "name": "reminderLevel1Days", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 15 },
-        "reminderLevel1Fee": { "name": "reminderLevel1Fee", "type": "decimal(15,2)", "primaryKey": false, "notNull": true, "autoincrement": false, "default": "'0'" },
-        "reminderLevel1Grace": { "name": "reminderLevel1Grace", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 10 },
-        "reminderLevel2Days": { "name": "reminderLevel2Days", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 30 },
-        "reminderLevel2Fee": { "name": "reminderLevel2Fee", "type": "decimal(15,2)", "primaryKey": false, "notNull": true, "autoincrement": false, "default": "'20'" },
-        "reminderLevel2Grace": { "name": "reminderLevel2Grace", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 10 },
-        "reminderLevel3Days": { "name": "reminderLevel3Days", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 60 },
-        "reminderLevel3Fee": { "name": "reminderLevel3Fee", "type": "decimal(15,2)", "primaryKey": false, "notNull": true, "autoincrement": false, "default": "'40'" },
-        "reminderLevel3Grace": { "name": "reminderLevel3Grace", "type": "int", "primaryKey": false, "notNull": true, "autoincrement": false, "default": 7 },
         "isActive": {
           "name": "isActive",
           "type": "boolean",

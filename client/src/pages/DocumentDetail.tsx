@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useRoute, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
   ArrowLeft, Save, RefreshCw, Loader2, FileText, Building2,
   CreditCard, Receipt, BookOpen, Banknote, CheckCircle2, AlertCircle,
   Sparkles, GraduationCap, ExternalLink, CheckSquare, ArrowRight,
-  CircleDot, Clock, XCircle
+  CircleDot, Clock, XCircle, Link2, Search
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -73,19 +74,36 @@ function formatDate(d: Date | string | null | undefined) {
 // ─── Component ──────────────────────────────────────────────────────────────
 export default function DocumentDetail() {
   const [, params] = useRoute("/documents/:id");
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const docId = params?.id ? parseInt(params.id) : null;
+
+  // Parse initial tab from URL query param
+  const urlTab = useMemo(() => {
+    const search = window.location.search;
+    const p = new URLSearchParams(search);
+    return p.get("tab") || "kontakt";
+  }, []);
 
   // Local editable state
   const [editedMeta, setEditedMeta] = useState<DocumentMetadata>({});
   const [editedNotes, setEditedNotes] = useState("");
   const [editedDocType, setEditedDocType] = useState("other");
   const [isDirty, setIsDirty] = useState(false);
-  const [activeTab, setActiveTab] = useState("kontakt");
+  const [activeTab, setActiveTab] = useState(urlTab);
   const [bookingDebitId, setBookingDebitId] = useState<number | null>(null);
   const [bookingCreditId, setBookingCreditId] = useState<number | null>(null);
   const [bookingText, setBookingText] = useState("");
   const [isBooking, setIsBooking] = useState(false);
+
+  // Manual link dialog state
+  const [manualLinkOpen, setManualLinkOpen] = useState(false);
+  const [manualLinkSearch, setManualLinkSearch] = useState("");
+  const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
+
+  // KK-Sammelbuchung state
+  const [kkItems, setKkItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string; confidence?: number; matchSource?: string; matchRulePattern?: string | null }>>([]);
+  const [kkParsed, setKkParsed] = useState(false);
+  const [kkPaidAmount, setKkPaidAmount] = useState(""); // effektiv bezahlter Betrag (Bankbelastung)
 
   // Queries
   const { data, isLoading, isError, refetch } = trpc.documents.getById.useQuery(
@@ -96,6 +114,12 @@ export default function DocumentDetail() {
   const accountsQuery = trpc.accounts.list.useQuery(undefined, {
     staleTime: 60_000,
   });
+
+  // Unmatched bank transactions for manual linking
+  const unmatchedTxQuery = trpc.bankImport.listUnmatchedTransactions.useQuery(
+    {},
+    { enabled: manualLinkOpen, staleTime: 30_000 }
+  );
 
   // Mutations
   const updateMutation = trpc.documents.updateMetadata.useMutation({
@@ -120,6 +144,99 @@ export default function DocumentDetail() {
     },
   });
 
+  // Direct booking mutation (for documents without bank transaction, e.g. Barauslagen)
+  const bookDirectMutation = trpc.documents.bookDirect.useMutation({
+    onSuccess: (result) => {
+      toast.success(`Beleg verbucht (Journal #${result.entryId})`);
+      setIsBooking(false);
+      navigate("/belege");
+    },
+    onError: (err: any) => {
+      toast.error("Verbuchung fehlgeschlagen: " + err.message);
+      setIsBooking(false);
+    },
+  });
+
+  // Manual match mutation
+  const manualMatchMutation = trpc.documents.manualMatch.useMutation({
+    onSuccess: () => {
+      toast.success("Beleg manuell mit Transaktion verknüpft");
+      setManualLinkOpen(false);
+      setSelectedTxId(null);
+      refetch();
+    },
+    onError: (err: any) => toast.error("Verknüpfung fehlgeschlagen: " + err.message),
+  });
+
+  // KK-Sammelbuchung: Nemotron-Toggle (Standard: Nemotron)
+  const [useNemotron, setUseNemotron] = React.useState(true);
+
+  // Nemotron-Bildanalyse Mutation
+  const parsePdfWithNemotronMutation = trpc.creditCard.parsePdfWithNemotron.useMutation({
+    onSuccess: (result) => {
+      if (!result.items?.length) { toast.error("Keine Positionen erkannt (Nemotron)"); return; }
+      const mapped = result.items.map((item: any) => {
+        let debitAccountId = "";
+        if (item.suggestedAccount) {
+          const m = item.suggestedAccount.match(/^(\d{4})/);
+          if (m) {
+            const found = accountsQuery.data?.find((a: any) => a.number === m[1]);
+            if (found) debitAccountId = String(found.id);
+          }
+        }
+        return { date: item.date, description: item.description, amount: item.amount, debitAccountId, confidence: item.confidence, matchSource: item.matchSource, matchRulePattern: item.matchRulePattern };
+      });
+      setKkItems(mapped);
+      setKkParsed(true);
+      toast.success(`${mapped.length} Positionen mit Nemotron erkannt (${result.pagesProcessed} Seiten analysiert)`);
+    },
+    onError: (e) => toast.error("Nemotron-Analyse fehlgeschlagen: " + e.message),
+  });
+
+  // KK-Sammelbuchung: parsePdf
+  const parsePdfMutation = trpc.creditCard.parsePdf.useMutation({
+    onSuccess: (result) => {
+      if (!result.items?.length) { toast.error("Keine Positionen erkannt"); return; }
+      const mapped = result.items.map((item: any) => {
+        let debitAccountId = "";
+        if (item.suggestedAccount) {
+          const m = item.suggestedAccount.match(/^(\d{4})/);
+          if (m) {
+            const found = accountsQuery.data?.find((a: any) => a.number === m[1]);
+            if (found) debitAccountId = String(found.id);
+          }
+        }
+        return { date: item.date, description: item.description, amount: item.amount, debitAccountId, confidence: item.confidence, matchSource: item.matchSource, matchRulePattern: item.matchRulePattern };
+      });
+      setKkItems(mapped);
+      setKkParsed(true);
+      toast.success(`${result.items.length} Positionen erkannt`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // KK-Sammelbuchung: approveCcFromBankImport (zwei Buchungen: 1082/1032 + Aufwand/1082)
+  const approveCcFromBankImportMutation = trpc.creditCard.approveCcFromBankImport.useMutation({
+    onSuccess: (result) => {
+      toast.success(`KK-Abrechnung verbucht: ${result.itemCount} Positionen, CHF ${result.totalAmount} (bezahlt: CHF ${result.paidAmount})`);
+      setKkItems([]);
+      setKkParsed(false);
+      navigate("/belege");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // KK-Sammelbuchung: approveWithItems (Fallback ohne Banktransaktion)
+  const approveWithItemsMutation = trpc.creditCard.approveWithItems.useMutation({
+    onSuccess: (result) => {
+      toast.success(`KK-Sammelbuchung verbucht: ${result.itemCount} Positionen, CHF ${result.totalAmount}`);
+      setKkItems([]);
+      setKkParsed(false);
+      navigate("/belege");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const reanalyzeMutation = trpc.documents.reanalyze.useMutation({
     onSuccess: (result) => {
       toast.success("Beleg wurde neu analysiert");
@@ -142,10 +259,30 @@ export default function DocumentDetail() {
       if (data.bookingSuggestion?.vatRate != null && meta.vatRate == null) {
         meta.vatRate = data.bookingSuggestion.vatRate;
       }
+      // Fallback: If referenceNumber is empty but qrReference exists, use qrReference
+      if (!meta.referenceNumber && meta.qrReference) {
+        meta.referenceNumber = meta.qrReference;
+      }
       setEditedMeta(meta);
       setEditedNotes(data.document.notes || "");
       setEditedDocType(data.document.documentType || "other");
       setIsDirty(false);
+      
+      // Pre-fill booking fields from bookingSuggestion (for both linked tx and direct booking)
+      if (data.bookingSuggestion?.accountId) {
+        // For Eingangsrechnungen/Quittungen: Soll = Aufwandkonto, Haben = Kasse/Bank
+        const expenseAccountId = data.bookingSuggestion.accountId;
+        // Try to find Kasse (1000) as default for direct booking
+        const kasseAccount = accountsQuery.data?.find((a: any) => a.number === '1000' && a.isActive);
+        const kasseId = kasseAccount?.id || null;
+        
+        if (!data.linkedTransaction) {
+          // Direct booking (no bank tx): default Soll=Aufwand, Haben=Kasse
+          setBookingDebitId(expenseAccountId);
+          setBookingCreditId(kasseId);
+          setBookingText(data.bookingSuggestion.bookingText || meta.description || '');
+        }
+      }
       
       // Pre-fill booking fields from linked transaction
       // IMPORTANT: Use the SAME account as shown in the Kontierung tab (bookingSuggestion)
@@ -265,59 +402,87 @@ export default function DocumentDetail() {
     );
   }
 
-  const { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount } = data;
+  const { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus, journalEntryAccounts } = data;
   const isPdf = doc.mimeType === "application/pdf";
   const isImage = doc.mimeType.startsWith("image/");
   const hasLinkedTx = !!linkedTransaction;
   const txIsBooked = linkedTransaction?.status === "approved" || linkedTransaction?.status === "booked";
   const txAmount = linkedTransaction ? Math.abs(parseFloat(linkedTransaction.amount)) : 0;
+  const docAmount = editedMeta.totalAmount || editedMeta.netAmount || 0;
+  // isDirectBooked: only true if journal entry exists AND is approved (not just pending)
+  const isDirectBooked = !!doc.journalEntryId && !hasLinkedTx && journalEntryStatus === "approved";
+  // isDirectPending: journal entry exists but still pending (ausstehend)
+  const isDirectPending = !!doc.journalEntryId && !hasLinkedTx && journalEntryStatus === "pending";
 
   const handleBookTransaction = () => {
-    if (!linkedTransaction || !bookingDebitId || !bookingCreditId) {
+    if (!bookingDebitId || !bookingCreditId) {
       toast.error("Bitte Soll- und Haben-Konto auswählen");
       return;
     }
     setIsBooking(true);
-    approveMutation.mutate({
-      transactionId: linkedTransaction.id,
-      debitAccountId: bookingDebitId,
-      creditAccountId: bookingCreditId,
-      description: bookingText || undefined,
-    });
+    
+    if (linkedTransaction) {
+      // Book via bank transaction approval
+      approveMutation.mutate({
+        transactionId: linkedTransaction.id,
+        debitAccountId: bookingDebitId,
+        creditAccountId: bookingCreditId,
+        description: bookingText || undefined,
+      });
+    } else {
+      // Direct booking without bank transaction (Barauslage)
+      const amount = docAmount > 0 ? String(docAmount) : "0";
+      const bookingDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
+      bookDirectMutation.mutate({
+        documentId: doc.id,
+        debitAccountId: bookingDebitId,
+        creditAccountId: bookingCreditId,
+        amount,
+        description: bookingText || undefined,
+        bookingDate,
+        vatAmount: editedMeta.vatAmount ? String(editedMeta.vatAmount) : undefined,
+        vatRate: editedMeta.vatRate ? String(editedMeta.vatRate) : undefined,
+      });
+    }
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" style={{ background: "var(--paper)" }}>
       {/* Header */}
-      <div className="flex items-center gap-3 p-4 border-b border-border bg-card">
+      <div
+        className="flex items-center gap-3 p-4"
+        style={{ borderBottom: "1px solid var(--hair)", background: "var(--surface)" }}
+      >
         <Button variant="ghost" size="icon" onClick={() => navigate("/documents")}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-bold truncate">{doc.filename}</h2>
-          <div className="flex items-center gap-2 mt-0.5">
-            <Badge variant="outline" className="text-xs">
+          <h2 className="display text-[18px] font-medium truncate" style={{ color: "var(--ink)" }}>
+            {doc.filename}
+          </h2>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            <span className="pill">
               {DOC_TYPE_LABELS[doc.documentType] || doc.documentType}
-            </Badge>
+            </span>
             {doc.matchStatus === "matched" || doc.matchStatus === "manual" ? (
-              <Badge className="text-xs bg-green-100 text-green-700 border-green-200">
-                <CheckCircle2 className="w-3 h-3 mr-1" />
-                Verknüpft
-              </Badge>
+              <span className="pill pill--pos">
+                <CheckCircle2 className="w-3 h-3" />
+                Mit Bank abgeglichen
+              </span>
             ) : (
-              <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
-                <AlertCircle className="w-3 h-3 mr-1" />
-                Offen
-              </Badge>
+              <span className="pill pill--warn">
+                <AlertCircle className="w-3 h-3" />
+                Nicht verbucht
+              </span>
             )}
             {bookingSuggestion && (
-              <Badge className={`text-xs ${bookingSuggestion.source === 'auto_learn' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-purple-100 text-purple-700 border-purple-200'}`}>
+              <span className={bookingSuggestion.source === 'auto_learn' ? 'pill pill--info' : 'pill pill--ai'}>
                 {bookingSuggestion.source === 'auto_learn' ? (
-                  <><GraduationCap className="w-3 h-3 mr-1" />Gelernt</>
+                  <><GraduationCap className="w-3 h-3" />Gelernt</>
                 ) : (
-                  <><Sparkles className="w-3 h-3 mr-1" />KI-Vorschlag</>
+                  <><Sparkles className="w-3 h-3" />KI-Vorschlag</>
                 )}
-              </Badge>
+              </span>
             )}
           </div>
         </div>
@@ -329,11 +494,7 @@ export default function DocumentDetail() {
             disabled={reanalyzeMutation.isPending}
             className="gap-1.5"
           >
-            {reanalyzeMutation.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
+            {reanalyzeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Neu analysieren
           </Button>
           <Button
@@ -342,11 +503,7 @@ export default function DocumentDetail() {
             disabled={!isDirty || updateMutation.isPending}
             className="gap-1.5"
           >
-            {updateMutation.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Save className="w-4 h-4" />
-            )}
+            {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             Speichern
           </Button>
         </div>
@@ -354,13 +511,17 @@ export default function DocumentDetail() {
 
       {/* Split Panel */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Document Preview */}
-        <div className="w-1/2 border-r border-border bg-muted/30 flex flex-col">
-          <div className="flex-1 overflow-auto p-2">
+        {/* Left: Document Preview — KLAX paper surface */}
+        <div
+          className="w-1/2 flex flex-col"
+          style={{ borderRight: "1px solid var(--hair)", background: "var(--surface-2)" }}
+        >
+          <div className="flex-1 overflow-auto p-3">
             {isPdf ? (
               <iframe
                 src={doc.s3Url}
-                className="w-full h-full min-h-[70vh] rounded-lg border border-border"
+                className="w-full h-full min-h-[70vh]"
+                style={{ background: "var(--surface)", border: "1px solid var(--hair)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2)" }}
                 title="PDF Vorschau"
               />
             ) : isImage ? (
@@ -368,18 +529,20 @@ export default function DocumentDetail() {
                 <img
                   src={doc.s3Url}
                   alt={doc.filename}
-                  className="max-w-full max-h-full object-contain rounded-lg shadow-sm"
+                  className="max-w-full max-h-full object-contain"
+                  style={{ borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2)" }}
                 />
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                <FileText className="w-16 h-16 mb-3 opacity-30" />
-                <p>Vorschau nicht verfügbar</p>
+              <div className="flex flex-col items-center justify-center h-full" style={{ color: "var(--ink-3)" }}>
+                <FileText className="w-14 h-14 mb-3 opacity-30" />
+                <p className="text-[13px]">Vorschau nicht verfügbar</p>
                 <a
                   href={doc.s3Url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary mt-2 text-sm flex items-center gap-1"
+                  className="mt-2 text-[12.5px] flex items-center gap-1 hover:underline"
+                  style={{ color: "var(--klax-accent)" }}
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   Datei öffnen
@@ -401,23 +564,23 @@ export default function DocumentDetail() {
                 <Receipt className="w-3.5 h-3.5" />
                 Belegdetails
               </TabsTrigger>
-              <TabsTrigger value="kontierung" className="gap-1.5 text-xs">
-                <BookOpen className="w-3.5 h-3.5" />
-                Kontierung
-              </TabsTrigger>
+              {doc.documentType !== "credit_card_statement" && (
+                <TabsTrigger value="kontierung" className="gap-1.5 text-xs">
+                  <BookOpen className="w-3.5 h-3.5" />
+                  Kontierung
+                </TabsTrigger>
+              )}
               <TabsTrigger value="zahlung" className="gap-1.5 text-xs">
                 <Banknote className="w-3.5 h-3.5" />
                 Zahlung
               </TabsTrigger>
-              {hasLinkedTx && (
-                <TabsTrigger value="verbuchen" className="gap-1.5 text-xs">
-                  <CheckSquare className="w-3.5 h-3.5" />
-                  Verbuchen
-                  {txIsBooked && (
-                    <span className="ml-1 w-2 h-2 rounded-full bg-green-500 inline-block" />
-                  )}
-                </TabsTrigger>
-              )}
+              <TabsTrigger value="verbuchen" className="gap-1.5 text-xs">
+                <CheckSquare className="w-3.5 h-3.5" />
+                Verbuchen
+                {(txIsBooked || isDirectBooked) && (
+                  <span className="ml-1 w-2 h-2 rounded-full bg-green-500 inline-block" />
+                )}
+              </TabsTrigger>
             </TabsList>
 
             {/* ─── Tab: Kontakt ─────────────────────────────────────── */}
@@ -504,7 +667,7 @@ export default function DocumentDetail() {
                 {/* Linked Supplier Info */}
                 {supplier && (
                   <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-xs font-medium text-blue-700 mb-1">Verknüpfter Lieferant</p>
+                    <p className="text-xs font-medium text-blue-700 mb-1">Zugeordneter Lieferant</p>
                     <p className="text-sm font-medium">{supplier.name}</p>
                     {supplier.street && (
                       <p className="text-xs text-muted-foreground">
@@ -868,15 +1031,26 @@ export default function DocumentDetail() {
               {/* Payment Status */}
               <div className="bg-card border border-border rounded-xl p-4">
                 <h3 className="font-semibold text-sm mb-2">Zahlungsstatus</h3>
-                {doc.matchStatus === "matched" || doc.matchStatus === "manual" ? (
-                  <div className="flex items-center gap-2 text-green-700">
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span className="text-sm font-medium">Mit Banktransaktion verknüpft</span>
-                    {doc.bankTransactionId && (
+                {(doc.matchStatus === "matched" || doc.matchStatus === "manual") && doc.bankTransactionId ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-green-700">
+                      <CheckCircle2 className="w-5 h-5" />
+                      <span className="text-sm font-medium">Mit Banktransaktion verknüpft</span>
                       <Badge variant="outline" className="text-xs ml-1">
                         Txn #{doc.bankTransactionId}
                       </Badge>
+                    </div>
+                    {journalEntryStatus === 'approved' && (
+                      <div className="flex items-center gap-2 text-green-700 mt-1">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span className="text-xs">Verbucht im Journal</span>
+                      </div>
                     )}
+                  </div>
+                ) : (doc.matchStatus === "matched" || doc.matchStatus === "manual") && !doc.bankTransactionId ? (
+                  <div className="flex items-center gap-2 text-green-700">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span className="text-sm font-medium">Verbucht (ohne Banktransaktion)</span>
                   </div>
                 ) : doc.matchStatus === "pain001" ? (
                   <div className="flex items-center gap-2 text-blue-700">
@@ -890,16 +1064,18 @@ export default function DocumentDetail() {
                   </div>
                 )}
               </div>
+
+              {/* Buchungskonten werden im Verbuchen-Tab angezeigt, nicht hier */}
             </TabsContent>
 
             {/* ─── Tab: Verbuchen ──────────────────────────────────── */}
-            {hasLinkedTx && (
-              <TabsContent value="verbuchen" className="flex-1 overflow-auto p-4 space-y-4 mt-0">
-                {/* Transaction Info */}
+            <TabsContent value="verbuchen" className="flex-1 overflow-auto p-4 space-y-4 mt-0">
+              {/* Show linked transaction info if exists */}
+              {hasLinkedTx && (
                 <div className="bg-card border border-border rounded-xl p-4 space-y-3">
                   <h3 className="font-semibold text-sm flex items-center gap-2">
                     <CircleDot className="w-4 h-4 text-muted-foreground" />
-                    Verknüpfte Transaktion
+                    Abgeglichene Transaktion
                   </h3>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
@@ -914,7 +1090,7 @@ export default function DocumentDetail() {
                     </div>
                     <div className="col-span-2">
                       <span className="text-xs text-muted-foreground">Buchungstext</span>
-                      <p className="font-medium">{linkedTransaction!.description || '–'}</p>
+                      <p className="font-medium">{linkedTransaction!.description || '\u2013'}</p>
                     </div>
                     {linkedTransaction!.counterparty && (
                       <div className="col-span-2">
@@ -954,119 +1130,566 @@ export default function DocumentDetail() {
                     </div>
                   </div>
                 </div>
+              )}
 
-                {/* Booking Form - only if not yet booked */}
-                {!txIsBooked ? (
-                  <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-                    <h3 className="font-semibold text-sm flex items-center gap-2">
-                      <CheckSquare className="w-4 h-4 text-muted-foreground" />
-                      Buchung erstellen
-                    </h3>
-
-                    <div className="grid grid-cols-1 gap-3">
-                      <div>
-                        <Label className="text-xs text-muted-foreground">Buchungstext</Label>
-                        <Input
-                          value={bookingText}
-                          onChange={(e) => setBookingText(e.target.value)}
-                          placeholder="Buchungstext"
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Soll-Konto</Label>
-                          <Select
-                            value={bookingDebitId ? String(bookingDebitId) : "none"}
-                            onValueChange={(val) => setBookingDebitId(val === "none" ? null : Number(val))}
-                          >
-                            <SelectTrigger className="mt-1">
-                              <SelectValue placeholder="Soll-Konto wählen..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-60">
-                              <SelectItem value="none">Kein Konto</SelectItem>
-                              {accountOptions.map((a: any) => (
-                                <SelectItem key={a.id} value={String(a.id)}>
-                                  {a.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <Label className="text-xs text-muted-foreground">Haben-Konto</Label>
-                          <Select
-                            value={bookingCreditId ? String(bookingCreditId) : "none"}
-                            onValueChange={(val) => setBookingCreditId(val === "none" ? null : Number(val))}
-                          >
-                            <SelectTrigger className="mt-1">
-                              <SelectValue placeholder="Haben-Konto wählen..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-60">
-                              <SelectItem value="none">Kein Konto</SelectItem>
-                              {accountOptions.map((a: any) => (
-                                <SelectItem key={a.id} value={String(a.id)}>
-                                  {a.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div className="bg-muted/50 rounded-lg p-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-muted-foreground">Betrag</span>
-                          <span className="text-lg font-bold">CHF {formatCHF(txAmount)}</span>
-                        </div>
-                      </div>
-
-                      <Button
-                        onClick={handleBookTransaction}
-                        disabled={isBooking || !bookingDebitId || !bookingCreditId}
-                        className="w-full gap-2"
-                        size="lg"
-                      >
-                        {isBooking ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <CheckSquare className="w-4 h-4" />
-                        )}
-                        Transaktion verbuchen
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                    <div className="flex items-center gap-3">
-                      <CheckCircle2 className="w-8 h-8 text-green-600" />
-                      <div>
-                        <p className="font-semibold text-green-800">Erfolgreich verbucht</p>
-                        <p className="text-sm text-green-600">
-                          Journal-Eintrag #{linkedTransaction!.journalEntryId}
-                        </p>
-                        <p className="text-sm text-green-600 mt-0.5">
-                          Betrag: CHF {formatCHF(txAmount)}
-                        </p>
-                      </div>
+              {/* Direct booking info (no bank transaction) */}
+              {!hasLinkedTx && !isDirectBooked && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-amber-800 text-sm">Direktverbuchung (ohne Banktransaktion)</p>
+                      <p className="text-xs text-amber-600 mt-0.5">
+                        Dieser Beleg ist nicht mit einer Banktransaktion verknüpft. Sie können ihn direkt verbuchen (z.B. Barauslage, Kassabeleg) oder manuell mit einer Transaktion verknüpfen.
+                      </p>
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="mt-3 gap-1.5"
-                      onClick={() => navigate("/journal")}
+                      className="shrink-0 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-100"
+                      onClick={() => setManualLinkOpen(true)}
                     >
-                      <ArrowRight className="w-4 h-4" />
-                      Im Journal anzeigen
+                      <Link2 className="w-3.5 h-3.5" />
+                      Verknüpfen
                     </Button>
                   </div>
-                )}
-              </TabsContent>
-            )}
+                </div>
+              )}
+
+              {/* KK-Abrechnung: Verbuchungsvorschlag */}
+              {doc.documentType === "credit_card_statement" && !txIsBooked && !isDirectBooked && (
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-purple-600" />
+                    <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Zwei Buchungen</p>
+                  </div>
+                  {/* Buchungsübersicht */}
+                  <div className="bg-white border border-purple-200 rounded-lg p-3 space-y-1.5 text-xs">
+                    <p className="font-semibold text-purple-800 mb-1">Buchungsvorschlag:</p>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Buchung 1 (Bankzahlung):</span>
+                      <span className="font-mono">1082 Durchlaufkonto VISA <span className="text-muted-foreground">an</span> 1032 LUKB</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Buchung 2 (Sammelbuchung):</span>
+                      <span className="font-mono">Div. Aufwandkonten <span className="text-muted-foreground">an</span> 1082 Durchlaufkonto</span>
+                    </div>
+                  </div>
+                  {/* Zahlungsbetrag (effektiv bezahlt) */}
+                  <div>
+                    <Label className="text-xs text-purple-700 font-semibold">Effektiv bezahlter Betrag (Buchung 1: 1082 / 1032)</Label>
+                    <p className="text-xs text-purple-500 mb-1">Entspricht dem Bankbelastungsbetrag – kann kleiner sein als das Abrechnungstotal (z.B. wegen Guthaben vom Vormonat)</p>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={kkPaidAmount}
+                      onChange={(e) => setKkPaidAmount(e.target.value)}
+                      placeholder={docAmount > 0 ? docAmount.toFixed(2) : "0.00"}
+                      className="mt-1 font-mono"
+                    />
+                  </div>
+                  <p className="text-xs text-purple-600">
+                    Die KI analysiert alle Einzelpositionen und schlägt Aufwandskonten vor. Sie können die Konten vor dem Verbuchen anpassen (Buchung 2).
+                  </p>
+
+                  {/* Parse-Button mit Nemotron-Toggle */}
+                  {!kkParsed && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setUseNemotron(!useNemotron)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                            useNemotron ? 'bg-purple-600' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                            useNemotron ? 'translate-x-4.5' : 'translate-x-0.5'
+                          }`} />
+                        </button>
+                        <span className="text-xs text-purple-700 font-medium">
+                          {useNemotron ? '🧠 Nemotron (Bildanalyse, empfohlen)' : '📄 Standard-KI (Text-Extraktion)'}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        className={`gap-1.5 text-white ${
+                          useNemotron
+                            ? 'bg-purple-700 hover:bg-purple-800'
+                            : 'bg-purple-600 hover:bg-purple-700'
+                        }`}
+                        disabled={(useNemotron ? parsePdfWithNemotronMutation.isPending : parsePdfMutation.isPending) || !doc.s3Url}
+                        onClick={() => {
+                          if (useNemotron) {
+                            parsePdfWithNemotronMutation.mutate({ documentUrl: doc.s3Url });
+                          } else {
+                            parsePdfMutation.mutate({ documentUrl: doc.s3Url });
+                          }
+                        }}
+                      >
+                        {(useNemotron ? parsePdfWithNemotronMutation.isPending : parsePdfMutation.isPending) ? (
+                          <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {useNemotron ? 'Nemotron analysiert Bilder...' : 'Positionen werden analysiert...'}</>
+                        ) : (
+                          <><Sparkles className="w-3.5 h-3.5" /> {useNemotron ? 'Mit Nemotron analysieren' : 'Positionen mit KI analysieren'}</>
+                        )}
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Positions table */}
+                  {kkParsed && kkItems.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-purple-700">{kkItems.length} Positionen erkannt</span>
+                        <Button
+                          variant="ghost" size="sm"
+                          className="text-xs text-purple-600 h-7 px-2"
+                          onClick={() => { setKkItems([]); setKkParsed(false); }}
+                        >
+                          Neu analysieren
+                        </Button>
+                      </div>
+                      <div className="overflow-x-auto rounded border border-purple-200">
+                        <table className="w-full text-xs">
+                          <thead className="bg-purple-100">
+                            <tr>
+                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Datum</th>
+                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Beschreibung</th>
+                              <th className="px-2 py-1.5 text-right font-medium text-purple-700">Betrag</th>
+                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Aufwandskonto</th>
+                              <th className="px-2 py-1.5 text-center font-medium text-purple-700">Konfidenz</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-purple-100 bg-white">
+                            {kkItems.map((item, idx) => (
+                              <tr key={idx}>
+                                <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">{item.date}</td>
+                                <td className="px-2 py-1.5">{item.description}</td>
+                                <td className="px-2 py-1.5 text-right font-mono">{parseFloat(item.amount).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                <td className="px-2 py-1.5">
+                                  <Select
+                                    value={item.debitAccountId}
+                                    onValueChange={(v) => setKkItems(prev => prev.map((it, i) => i === idx ? { ...it, debitAccountId: v } : it))}
+                                  >
+                                    <SelectTrigger className="h-7 text-xs w-48"><SelectValue placeholder="Konto..." /></SelectTrigger>
+                                    <SelectContent>
+                                      {accountOptions
+                                        .filter((a: any) => a.number.startsWith('4') || a.number.startsWith('6') || a.number.startsWith('1'))
+                                        .map((a: any) => (
+                                          <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                                <td className="px-2 py-1.5 text-center">
+                                  {item.confidence != null && (
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <span
+                                        title={item.matchSource === 'rule'
+                                          ? `Gelernte Buchungsregel: "${item.matchRulePattern}" passt – sehr hohe Konfidenz`
+                                          : item.matchSource === 'llm_known_account'
+                                          ? 'KI-Vorschlag: bekanntes Konto aus Kontenplan verwendet'
+                                          : 'KI-Schätzung: kein direkter Regelabgleich möglich'}
+                                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold cursor-help ${
+                                          item.confidence >= 90 ? 'bg-green-100 text-green-700 border border-green-200'
+                                          : item.confidence >= 75 ? 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+                                          : 'bg-red-100 text-red-600 border border-red-200'
+                                        }`}
+                                      >
+                                        {item.confidence}%
+                                      </span>
+                                      <span className="text-[9px] text-muted-foreground">
+                                        {item.matchSource === 'rule' ? '📚 Regel' : '🤖 KI'}
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-purple-50">
+                            <tr>
+                              <td colSpan={2} className="px-2 py-1.5 font-semibold text-purple-800">Total</td>
+                              <td className="px-2 py-1.5 text-right font-mono font-semibold text-purple-800">
+                                CHF {kkItems.reduce((s, i) => s + parseFloat(i.amount || '0'), 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td></td>
+                              <td></td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+
+                      {/* Approve button - zwei Buchungen */}
+                      <Button
+                        className="w-full bg-green-600 hover:bg-green-700 text-white gap-1.5"
+                        disabled={kkItems.some(i => !i.debitAccountId) || approveCcFromBankImportMutation.isPending || approveWithItemsMutation.isPending}
+                        onClick={() => {
+                          const statementDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
+                          const counterparty = editedMeta.counterparty || doc.filename;
+                          const items = kkItems.map(i => ({
+                            date: i.date,
+                            description: i.description,
+                            amount: i.amount,
+                            debitAccountId: parseInt(i.debitAccountId),
+                          }));
+                          // Wenn Banktransaktion verknüpft: approveCcFromBankImport (zwei Buchungen)
+                          if (linkedTransaction?.id) {
+                            approveCcFromBankImportMutation.mutate({
+                              bankTransactionId: linkedTransaction.id,
+                              statementDate,
+                              counterparty,
+                              paidAmount: kkPaidAmount || undefined,
+                              items,
+                            });
+                          } else {
+                            // Ohne Banktransaktion: approveWithItems (eine Sammelbuchung)
+                            approveWithItemsMutation.mutate({ statementDate, counterparty, items });
+                          }
+                        }}
+                      >
+                        {(approveCcFromBankImportMutation.isPending || approveWithItemsMutation.isPending) ? (
+                          <><Loader2 className="w-4 h-4 animate-spin" /> Wird verbucht...</>
+                        ) : (
+                          <><CheckCircle2 className="w-4 h-4" /> {linkedTransaction?.id ? `KK-Abrechnung verbuchen (2 Buchungen, ${kkItems.length} Positionen)` : `Sammelbuchung verbuchen (${kkItems.length} Positionen)`}</>
+                        )}
+                      </Button>
+                      {kkItems.some(i => !i.debitAccountId) && (
+                        <p className="text-xs text-amber-600">Bitte für alle Positionen ein Aufwandskonto auswählen.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* KK-Abrechnung: Verbucht-Status */}
+              {doc.documentType === "credit_card_statement" && (txIsBooked || isDirectBooked) && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="w-8 h-8 text-green-600" />
+                    <div>
+                      <p className="font-semibold text-green-800">KK-Abrechnung verbucht</p>
+                      <p className="text-sm text-green-600">Zwei Journal-Einträge wurden erstellt (1082/1032 + Aufwandkonten/1082)</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-1.5"
+                    onClick={() => navigate("/freigaben?filter=booked")}
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                    Im Journal anzeigen
+                  </Button>
+                </div>
+              )}
+
+              {/* Booking Form - show if not yet booked (either via tx or direct) - NOT for KK (handled above) */}
+              {!txIsBooked && !isDirectBooked && doc.documentType !== "credit_card_statement" ? (
+                <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <CheckSquare className="w-4 h-4 text-muted-foreground" />
+                    Buchung erstellen
+                  </h3>
+
+                  {/* Buchungsvorschlag-Banner */}
+                  {bookingSuggestion && (
+                    <div className={`rounded-lg border p-3 text-xs ${
+                      bookingSuggestion.source === 'auto_learn'
+                        ? 'bg-blue-50 border-blue-200'
+                        : 'bg-purple-50 border-purple-200'
+                    }`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          {bookingSuggestion.source === 'auto_learn' ? (
+                            <><GraduationCap className="w-3.5 h-3.5 text-blue-600" />
+                            <span className="font-semibold text-blue-700">Gelernte Buchungsregel</span></>
+                          ) : (
+                            <><Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                            <span className="font-semibold text-purple-700">KI-Buchungsvorschlag</span></>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={`h-6 px-2 text-xs ${
+                            bookingSuggestion.source === 'auto_learn'
+                              ? 'text-blue-700 hover:bg-blue-100'
+                              : 'text-purple-700 hover:bg-purple-100'
+                          }`}
+                          onClick={() => {
+                            if (bookingSuggestion.accountId) {
+                              const amt = linkedTransaction ? parseFloat(linkedTransaction.amount) : -(docAmount);
+                              const bankAccountId = linkedBankAccount?.accountId || null;
+                              if (amt < 0) {
+                                setBookingDebitId(bookingSuggestion.accountId);
+                                if (bankAccountId) setBookingCreditId(bankAccountId);
+                              } else {
+                                if (bankAccountId) setBookingDebitId(bankAccountId);
+                                setBookingCreditId(bookingSuggestion.accountId);
+                              }
+                              if (bookingSuggestion.bookingText) setBookingText(bookingSuggestion.bookingText);
+                            }
+                          }}
+                        >
+                          ↺ Vorschlag übernehmen
+                        </Button>
+                      </div>
+                      <div className="mt-1.5 space-y-0.5" style={{ color: bookingSuggestion.source === 'auto_learn' ? 'var(--blue-700, #1d4ed8)' : '#7c3aed' }}>
+                        <p><span className="opacity-70">Konto:</span> <span className="font-mono font-medium">{bookingSuggestion.accountNumber} {bookingSuggestion.accountName}</span></p>
+                        {bookingSuggestion.vatRate != null && (
+                          <p><span className="opacity-70">MWST:</span> <span className="font-medium">{bookingSuggestion.vatRate}%</span></p>
+                        )}
+                        {bookingSuggestion.bookingText && (
+                          <p><span className="opacity-70">Buchungstext:</span> <span className="font-medium">{bookingSuggestion.bookingText}</span></p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Buchungstext</Label>
+                      <Input
+                        value={bookingText}
+                        onChange={(e) => setBookingText(e.target.value)}
+                        placeholder="Buchungstext"
+                        className="mt-1"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Soll-Konto</Label>
+                        <Select
+                          value={bookingDebitId ? String(bookingDebitId) : "none"}
+                          onValueChange={(val) => setBookingDebitId(val === "none" ? null : Number(val))}
+                        >
+                          <SelectTrigger className="mt-1">
+                            <SelectValue placeholder="Soll-Konto wählen..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60">
+                            <SelectItem value="none">Kein Konto</SelectItem>
+                            {accountOptions.map((a: any) => (
+                              <SelectItem key={a.id} value={String(a.id)}>
+                                {a.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Haben-Konto</Label>
+                        <Select
+                          value={bookingCreditId ? String(bookingCreditId) : "none"}
+                          onValueChange={(val) => setBookingCreditId(val === "none" ? null : Number(val))}
+                        >
+                          <SelectTrigger className="mt-1">
+                            <SelectValue placeholder="Haben-Konto wählen..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60">
+                            <SelectItem value="none">Kein Konto</SelectItem>
+                            {accountOptions.map((a: any) => (
+                              <SelectItem key={a.id} value={String(a.id)}>
+                                {a.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="bg-muted/50 rounded-lg p-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Betrag</span>
+                        <span className="text-lg font-bold">CHF {formatCHF(hasLinkedTx ? txAmount : docAmount)}</span>
+                      </div>
+                    </div>
+
+                    <Button
+                      onClick={handleBookTransaction}
+                      disabled={isBooking || !bookingDebitId || !bookingCreditId}
+                      className="w-full gap-2"
+                      size="lg"
+                    >
+                      {isBooking ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <CheckSquare className="w-4 h-4" />
+                      )}
+                      {hasLinkedTx ? 'Transaktion verbuchen' : 'Beleg direkt verbuchen'}
+                    </Button>
+                    {isBooking && (
+                      <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+                        <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-primary">Buchung wird erstellt...</p>
+                          <p className="text-xs text-muted-foreground">Journal-Eintrag wird angelegt. Bitte warten.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : isDirectPending ? (
+                // Journal entry exists but is still pending (ausstehend) - not yet approved
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-8 h-8 text-amber-600" />
+                    <div>
+                      <p className="font-semibold text-amber-800">Im Journal – ausstehend</p>
+                      <p className="text-sm text-amber-600">
+                        Journal-Eintrag #{doc.journalEntryId} wartet auf Freigabe
+                      </p>
+                      <p className="text-sm text-amber-600 mt-0.5">
+                        Betrag: CHF {formatCHF(docAmount)}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-100"
+                    onClick={() => navigate("/freigaben")}
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                    Zur Freigabe
+                  </Button>
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="w-8 h-8 text-green-600" />
+                    <div>
+                      <p className="font-semibold text-green-800">Erfolgreich verbucht</p>
+                      <p className="text-sm text-green-600">
+                        Journal-Eintrag #{hasLinkedTx ? linkedTransaction!.journalEntryId : doc.journalEntryId}
+                      </p>
+                      <p className="text-sm text-green-600 mt-0.5">
+                        Betrag: CHF {formatCHF(hasLinkedTx ? txAmount : docAmount)}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 gap-1.5"
+                    onClick={() => navigate("/freigaben?filter=booked")}
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                    Im Journal anzeigen
+                  </Button>
+                </div>
+              )}
+            </TabsContent>
           </Tabs>
         </div>
       </div>
+
+      {/* Manual Link Dialog */}
+      <Dialog open={manualLinkOpen} onOpenChange={setManualLinkOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-primary" />
+              Manuell mit Banktransaktion verknüpfen
+            </DialogTitle>
+            <DialogDescription>
+              Wählen Sie eine ausstehende Banktransaktion, die zu diesem Beleg gehört.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Suche nach Buchungstext, Gegenpartei, Betrag..."
+                value={manualLinkSearch}
+                onChange={(e) => setManualLinkSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+
+            <div className="max-h-80 overflow-y-auto space-y-1.5">
+              {unmatchedTxQuery.isLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : (() => {
+                const txList = (unmatchedTxQuery.data || []).filter((tx: any) => {
+                  if (!manualLinkSearch) return true;
+                  const q = manualLinkSearch.toLowerCase();
+                  return (
+                    (tx.description || '').toLowerCase().includes(q) ||
+                    (tx.counterparty || '').toLowerCase().includes(q) ||
+                    String(tx.amount).includes(q)
+                  );
+                });
+                if (txList.length === 0) {
+                  return (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      Keine ausstehenden Transaktionen gefunden
+                    </div>
+                  );
+                }
+                return txList.map((tx: any) => {
+                  const amt = parseFloat(tx.amount);
+                  const isSelected = selectedTxId === tx.id;
+                  return (
+                    <button
+                      key={tx.id}
+                      onClick={() => setSelectedTxId(isSelected ? null : tx.id)}
+                      className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                        isSelected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/40 hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{tx.description || '(kein Text)'}</p>
+                          {tx.counterparty && (
+                            <p className="text-xs text-muted-foreground truncate">{tx.counterparty}</p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(tx.transactionDate).toLocaleDateString('de-CH')}
+                          </p>
+                        </div>
+                        <span className={`font-bold text-sm shrink-0 ${
+                          amt < 0 ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          CHF {Math.abs(amt).toLocaleString('de-CH', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setManualLinkOpen(false); setSelectedTxId(null); }}>
+              Abbrechen
+            </Button>
+            <Button
+              onClick={() => {
+                if (!docId || !selectedTxId) return;
+                manualMatchMutation.mutate({ documentId: docId, transactionId: selectedTxId });
+              }}
+              disabled={!selectedTxId || manualMatchMutation.isPending}
+              className="gap-1.5"
+            >
+              {manualMatchMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Link2 className="w-4 h-4" />
+              )}
+              Verknüpfen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

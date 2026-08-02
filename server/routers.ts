@@ -5,6 +5,15 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, orgProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
+import { invokeNemotron } from "./nemotron";
+import { pdfUrlToImages } from "./pdfToImages";
+import {
+  extractInvoiceFields,
+  extractBankStatement,
+  detectDocumentStructure,
+  enhanceExtractionWithLocateAnything,
+} from "./locateAnything";
+import { transcribeAudio } from "./_core/voiceTranscription";
 import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
   getJournalEntries, getJournalEntryWithLines, createJournalEntry,
@@ -12,13 +21,13 @@ import {
   getBankAccounts, getPendingBankTransactions, getBankTransactionsByStatus, saveBankTransaction, approveBankTransaction, updateBankTransaction, getBankTransactionsByIds,
   getEmployees, getPayrollEntries,
   getBalanceSheet, getIncomeStatement,
-  getVatPeriods, getCreditCardStatements, getDashboardStats,
+  getVatPeriods, getCreditCardStatements, getDashboardStats, getMonthlyAggregates,
   getDb,
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, organizations } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings, organizations } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { globalRulesRouter } from "./globalRulesRouter";
 import { yearEndRouter } from "./yearEndRouter";
@@ -32,7 +41,10 @@ import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
 import { remindersRouter } from "./remindersRouter";
 import { stripeRouter } from "./stripeRouter";
+import { posRouter } from "./posRouter";
+import { ebicsRouter } from "./ebicsRouter";
 import { searchCompanies } from "./uidSearch";
+import { invitationsRouter } from "./invitationsRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
@@ -162,6 +174,27 @@ const accountsRouter = router({
     .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
     .query(({ input, ctx }) => getAccountBalance(ctx.organizationId, input.accountId, input.fiscalYear)),
 
+  // Returns the total balance of all bank/cash accounts (1000-1099) for the dashboard
+  getBankBalance: orgProcedure
+    .input(z.object({ fiscalYear: z.number().optional() }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return { balance: 0, accounts: [] };
+      // Get all accounts in range 1000-1099 (Flüssige Mittel)
+      const bankAccs = await db.select().from(accounts)
+        .where(and(
+          eq(accounts.organizationId, ctx.organizationId),
+          sql`${accounts.number} >= '1000' AND ${accounts.number} <= '1099'`
+        ));
+      let totalBalance = 0;
+      const accountBalances: Array<{ id: number; number: string; name: string; balance: number }> = [];
+      for (const acc of bankAccs) {
+        const bal = await getAccountBalance(ctx.organizationId, acc.id, input.fiscalYear);
+        totalBalance += bal;
+        accountBalances.push({ id: acc.id, number: acc.number, name: acc.name, balance: bal });
+      }
+      return { balance: totalBalance, accounts: accountBalances };
+    }),
   getLedger: orgProcedure
     .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
     .query(async ({ input, ctx }) => {
@@ -383,6 +416,10 @@ const journalRouter = router({
       await db.update(journalEntries)
         .set({ status: "pending", approvedBy: null, approvedAt: null })
         .where(eq(journalEntries.id, input.entryId));
+      // Also clear journalEntryId from linked documents so they no longer show as "verbucht"
+      await db.update(documents)
+        .set({ journalEntryId: null, matchStatus: "unmatched" })
+        .where(eq(documents.journalEntryId, input.entryId));
       return { success: true };
     }),
 
@@ -452,6 +489,10 @@ const journalRouter = router({
         await db.update(journalEntries)
           .set({ status: "pending", approvedBy: null, approvedAt: null })
           .where(eq(journalEntries.id, id));
+        // Also clear journalEntryId from linked documents
+        await db.update(documents)
+          .set({ journalEntryId: null, matchStatus: "unmatched" })
+          .where(eq(documents.journalEntryId, id));
         reverted++;
       }
       return { reverted, skipped };
@@ -1172,6 +1213,10 @@ Regeln:
 
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+      // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
+      if (tx.status === "matched" && tx.journalEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
+      }
 
       const amount = Math.abs(parseFloat(tx.amount as string));
       const year = new Date(tx.transactionDate as any).getFullYear();
@@ -1238,6 +1283,10 @@ Regeln:
 
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+      // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
+      if (tx.status === "matched" && tx.journalEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
+      }
 
       const year = new Date(tx.transactionDate as any).getFullYear();
 
@@ -1915,6 +1964,69 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       undoSnapshots.delete(ctx.user.id as number);
       return { success: true };
     }),
+
+  // ── Delete an import batch (rollback) ──
+  deleteImport: orgProcedure
+    .input(z.object({ importBatchId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Only allow deleting imports from this org
+      const txns = await db.select({ id: bankTransactions.id, status: bankTransactions.status })
+        .from(bankTransactions)
+        .where(and(
+          eq(bankTransactions.organizationId, ctx.organizationId),
+          eq(bankTransactions.importBatchId, input.importBatchId),
+        ));
+      // Check if any transactions are already booked (approved = verbucht)
+      const booked = txns.filter(t => (t.status as string) === 'approved');
+      if (booked.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${booked.length} Transaktion(en) sind bereits verbucht und k\u00f6nnen nicht gel\u00f6scht werden.`,
+        });
+      }
+      // Delete all pending/ignored transactions from this batch
+      const ids = txns.map(t => t.id);
+      if (ids.length > 0) {
+        // Unlink any matched documents
+        await db.update(documents).set({ bankTransactionId: null, matchStatus: 'unmatched', matchScore: null })
+          .where(inArray(documents.bankTransactionId, ids));
+        await db.delete(bankTransactions)
+          .where(and(
+            eq(bankTransactions.organizationId, ctx.organizationId),
+            eq(bankTransactions.importBatchId, input.importBatchId),
+          ));
+      }
+      // Delete import history record
+      await db.delete(importHistory)
+        .where(and(
+          eq(importHistory.organizationId, ctx.organizationId),
+          eq(importHistory.importBatchId, input.importBatchId),
+        ));
+      return { deleted: ids.length };
+    }),
+
+  // ── Validate IBAN before import ──
+  validateImportIban: orgProcedure
+    .input(z.object({ bankAccountId: z.number(), fileIban: z.string() }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return { valid: true };
+      const [acct] = await db.select({ iban: bankAccounts.iban })
+        .from(bankAccounts)
+        .where(and(
+          eq(bankAccounts.id, input.bankAccountId),
+          eq(bankAccounts.organizationId, ctx.organizationId),
+        ));
+      if (!acct?.iban) return { valid: true }; // No IBAN configured, skip check
+      const normalizeIban = (s: string) => s.replace(/\s/g, '').toUpperCase();
+      const accountIban = normalizeIban(acct.iban);
+      const fileIban = normalizeIban(input.fileIban);
+      const valid = accountIban === fileIban;
+      return { valid, accountIban, fileIban };
+    }),
 });
 
 // ─── Credit Card Router ───────────────────────────────────────────────────────
@@ -2078,13 +2190,172 @@ Antwort NUR als JSON-Array, keine Erklärung:
       if (!jsonMatch) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "KI konnte keine Positionen extrahieren" });
 
       try {
-        const items = JSON.parse(jsonMatch[0]);
-        return { items: items.map((i: any) => ({
-          date: i.date ?? "",
-          description: i.description ?? "",
-          amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
-          suggestedAccount: i.suggestedAccount ?? "",
-        })) };
+        const rawItems = JSON.parse(jsonMatch[0]);
+        // Enrich each item with confidence score and matched rule info
+        const enrichedItems = await Promise.all(rawItems.map(async (i: any) => {
+          const description = i.description ?? "";
+          const suggestedAccount = i.suggestedAccount ?? "";
+          // Check if a learned rule matches this description
+          const matchedRule = await findMatchingRule(ctx.organizationId, description);
+          let confidence = 70; // Default LLM confidence
+          let matchSource = "llm";
+          let matchRulePattern: string | null = null;
+          if (matchedRule) {
+            // Rule matched: high confidence
+            confidence = 95;
+            matchSource = "rule";
+            matchRulePattern = matchedRule.counterpartyPattern;
+          } else {
+            // LLM: estimate confidence based on whether account number was found in rules context
+            const accountNum = suggestedAccount.match(/^(\d{4})/)?.[1];
+            const ruleForAccount = allRules.find(r => {
+              const acct = acctMap[r.debitAccountId!];
+              return acct && acct.number === accountNum;
+            });
+            if (ruleForAccount) {
+              confidence = 80; // LLM used a known account
+              matchSource = "llm_known_account";
+            } else {
+              confidence = 65; // LLM guessed
+              matchSource = "llm_guess";
+            }
+          }
+          return {
+            date: i.date ?? "",
+            description,
+            amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
+            suggestedAccount,
+            confidence,
+            matchSource,
+            matchRulePattern,
+          };
+        }));
+        return { items: enrichedItems };
+      } catch {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
+      }
+    }),
+
+  // Nemotron-basiertes PDF-Parsing mit Bildverständnis
+  parsePdfWithNemotron: orgProcedure
+    .input(z.object({ documentUrl: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+      // Kontext laden
+      const allRules = await getAllBookingRules(ctx.organizationId);
+      const allAccts = await getAllAccounts(ctx.organizationId);
+      const [orgRow] = await (await getDb())!.select({ name: companySettings.companyName })
+        .from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
+      const companyName = orgRow?.name ?? "Ihre Firma";
+
+      const acctMap: Record<number, { number: string; name: string }> = {};
+      allAccts.forEach(a => { acctMap[a.id] = { number: a.number, name: a.name }; });
+
+      const rulesContext = allRules
+        .filter(r => r.debitAccountId)
+        .map(r => {
+          const acct = acctMap[r.debitAccountId!];
+          return acct ? `${r.counterpartyPattern} → ${acct.number} ${acct.name}` : null;
+        })
+        .filter(Boolean)
+        .join("\n");
+
+      const accountList = allAccts
+        .filter(a => a.number.startsWith("4") || a.number.startsWith("1"))
+        .map(a => `${a.number} ${a.name}`)
+        .join("\n");
+
+      // PDF in Bilder konvertieren (max. 3 Seiten für Kreditkartenabrechnungen)
+      let images: Array<{ base64: string; pageNumber: number }> = [];
+      try {
+        images = await pdfUrlToImages(input.documentUrl, 3);
+      } catch (err) {
+        console.error("PDF-zu-Bild-Konvertierung fehlgeschlagen:", err);
+        // Fallback auf Text-only Parsing
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF konnte nicht verarbeitet werden" });
+      }
+
+      if (images.length === 0) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Keine Seiten im PDF gefunden" });
+      }
+
+      // Nemotron-Prompt mit Bildern
+      const systemPrompt = `Du bist Buchhalter für ${companyName} in der Schweiz (SKR04 Kontenplan).
+Analysiere diese Kreditkartenabrechnung VISUELL und extrahiere ALLE Einzelpositionen.
+WICHTIG:
+- Erkenne Tabellen, Logos, Stempel und handschriftliche Notizen
+- Extrahiere ALLE Transaktionen, überspringe keine
+- Beträge in CHF (Absolutwert, ohne Minus)
+- Ignoriere: Saldo Vormonat, Zahlung, Neuer Saldo, Total
+- QR-Referenz: 27-stellige Zahl falls vorhanden
+- Vorsteuer-Konto 1170 bei Eingangsrechnungen mit MWST
+GELERNTE KONTENZUORDNUNGEN (höchste Priorität):
+${rulesContext || "(keine gelernten Regeln)"}
+KONTENPLAN:
+${accountList}
+Antworte NUR als JSON-Array:
+[{"date":"YYYY-MM-DD","description":"Vendor","amount":"123.45","suggestedAccount":"4xxx Kontoname","qrReference":"","vatRate":0}]`;
+
+      // Alle Seiten als Bilder an Nemotron senden
+      const imageContents = images.map(img => ({
+        type: "image_url" as const,
+        image_url: {
+          url: `data:image/png;base64,${img.base64}`,
+          detail: "high" as const,
+        },
+      }));
+
+      const result = await invokeNemotron({
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: [
+              ...imageContents,
+              { type: "text", text: "Extrahiere alle Transaktionen aus dieser Kreditkartenabrechnung als JSON-Array." },
+            ],
+          },
+        ],
+        maxTokens: 4096,
+        temperature: 0.05,
+      });
+
+      // JSON extrahieren
+      let jsonStr = result.content;
+      const jsonMatch = jsonStr.match(/\[\s*\{[\s\S]*\}\s*\]/);
+      if (!jsonMatch) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Nemotron konnte keine Positionen extrahieren. Antwort: ${jsonStr.slice(0, 200)}` });
+      }
+
+      try {
+        const rawItems = JSON.parse(jsonMatch[0]);
+        const enrichedItems = await Promise.all(rawItems.map(async (i: any) => {
+          const description = i.description ?? "";
+          const matchedRule = await findMatchingRule(ctx.organizationId, description);
+          let confidence = 75;
+          let matchSource = "nemotron";
+          let matchRulePattern: string | null = null;
+          if (matchedRule) {
+            confidence = 95;
+            matchSource = "rule";
+            matchRulePattern = matchedRule.counterpartyPattern;
+          }
+          return {
+            date: i.date ?? "",
+            description,
+            amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
+            suggestedAccount: i.suggestedAccount ?? "",
+            qrReference: i.qrReference ?? "",
+            vatRate: i.vatRate ?? 0,
+            confidence,
+            matchSource,
+            matchRulePattern,
+          };
+        }));
+        return { items: enrichedItems, pagesProcessed: images.length };
       } catch {
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
       }
@@ -3050,9 +3321,103 @@ const reportsRouter = router({
   dashboard: orgProcedure
     .input(z.object({ fiscalYear: z.number() }))
     .query(({ input, ctx }) => getDashboardStats(ctx.organizationId, input.fiscalYear)),
-});
 
-// ─── VAT Router ───────────────────────────────────────────────────────────────
+  monthlyAggregates: orgProcedure
+    .input(z.object({ months: z.number().optional() }))
+    .query(({ input, ctx }) => getMonthlyAggregates(ctx.organizationId, input.months ?? 6)),
+  cashflowForecast: orgProcedure
+    .query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      const orgId = ctx.organizationId;
+      // Current bank balance (Konto 1020, 1021, 1032)
+      const bankAccNums = ['1020', '1021', '1032'];
+      const bankAccRows = await db.select({ number: accounts.number, id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.organizationId, orgId), inArray(accounts.number, bankAccNums)));
+      const bankAccIds = bankAccRows.map(a => a.id);
+      let currentBalance = 0;
+      if (bankAccIds.length > 0) {
+        const lines = await db.select({ side: journalLines.side, amount: journalLines.amount })
+          .from(journalLines)
+          .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+          .where(and(
+            eq(journalEntries.organizationId, orgId),
+            eq(journalEntries.status, 'approved'),
+            inArray(journalLines.accountId, bankAccIds),
+          ));
+        for (const l of lines) {
+          const amt = parseFloat(String(l.amount));
+          currentBalance += l.side === 'debit' ? amt : -amt;
+        }
+      }
+      // Open invoices (receivables) – next 13 weeks
+      const today = new Date();
+      const weeks: Array<{ week: number; label: string; inflow: number; outflow: number; balance: number }> = [];
+      let runningBalance = currentBalance;
+      // Get open invoices from invoices table
+      let openInvoices: Array<{ dueDate: string | null; totalAmount: string | null; type: string }> = [];
+      try {
+        const invoicesTable = (await import('../drizzle/schema')).invoices;
+        const rawInvoices = await db.select({ dueDate: invoicesTable.dueDate, total: invoicesTable.total })
+          .from(invoicesTable)
+          .where(and(
+            eq(invoicesTable.organizationId, orgId),
+            inArray(invoicesTable.status, ['sent', 'partially_paid']),
+          ));
+        // All open invoices are outgoing (receivables) in this system
+        openInvoices = rawInvoices.map(inv => ({ dueDate: inv.dueDate, totalAmount: inv.total, type: 'outgoing' }));
+      } catch { /* invoices table may not exist */ }
+      // Average monthly expenses from last 3 months
+      const threeMonthsAgo = new Date(today);
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      const expenseLines = await db.select({ amount: journalLines.amount })
+        .from(journalLines)
+        .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+        .innerJoin(accounts, eq(journalLines.accountId, accounts.id))
+        .where(and(
+          eq(journalEntries.organizationId, orgId),
+          eq(journalEntries.status, 'approved'),
+          eq(journalLines.side, 'debit'),
+          eq(accounts.accountType, 'expense'),
+          gte(journalEntries.bookingDate, threeMonthsAgo.toISOString().substring(0, 10)),
+        ));
+      const totalExpenses3M = expenseLines.reduce((s, l) => s + parseFloat(String(l.amount)), 0);
+      const weeklyExpenseBase = totalExpenses3M / 13; // 3 months ≈ 13 weeks
+      for (let w = 0; w < 13; w++) {
+        const weekStart = new Date(today);
+        weekStart.setDate(weekStart.getDate() + w * 7);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        const weekStartStr = weekStart.toISOString().substring(0, 10);
+        const weekEndStr = weekEnd.toISOString().substring(0, 10);
+        // Inflows: invoices due this week
+        const inflow = openInvoices
+          .filter(inv => inv.type === 'outgoing' && inv.dueDate && inv.dueDate >= weekStartStr && inv.dueDate <= weekEndStr)
+          .reduce((s, inv) => s + parseFloat(String(inv.totalAmount ?? '0')), 0);
+        // Outflows: invoices to pay + estimated expenses
+        const outflowInvoices = openInvoices
+          .filter(inv => inv.type === 'incoming' && inv.dueDate && inv.dueDate >= weekStartStr && inv.dueDate <= weekEndStr)
+          .reduce((s, inv) => s + parseFloat(String(inv.totalAmount ?? '0')), 0);
+        const outflow = outflowInvoices + weeklyExpenseBase;
+        runningBalance += inflow - outflow;
+        const label = `KW${String(weekStart.getMonth() + 1).padStart(2, '0')}/${String(weekStart.getDate()).padStart(2, '0')}`;
+        weeks.push({
+          week: w + 1,
+          label,
+          inflow: Math.round(inflow * 100) / 100,
+          outflow: Math.round(outflow * 100) / 100,
+          balance: Math.round(runningBalance * 100) / 100,
+        });
+      }
+      return {
+        currentBalance: Math.round(currentBalance * 100) / 100,
+        weeks,
+        weeklyExpenseBase: Math.round(weeklyExpenseBase * 100) / 100,
+      };
+    }),
+});
+// ─── VAT Routerr ───────────────────────────────────────────────────────────────
 const vatRouter = router({
   list: orgProcedure
     .input(z.object({ year: z.number().optional() }))
@@ -3476,11 +3841,27 @@ const documentsRouter = router({
 
   // Auto-match unmatched documents with pending bank transactions
   autoMatch: orgProcedure
-    .input(z.object({ threshold: z.number().default(50) }))
+    .input(z.object({ threshold: z.number().default(40) }))
     .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docsTbl, bankTransactions: txnsTbl } = await import("../drizzle/schema");
+      const { and, eq: eqOp, sql: sqlOp } = await import("drizzle-orm");
+      // Debug: count what we have
+      const unmatchedDocs = await db.select().from(docsTbl)
+        .where(and(
+          eqOp(docsTbl.organizationId, ctx.organizationId),
+          eqOp(docsTbl.matchStatus, 'unmatched'),
+          sqlOp`${docsTbl.aiMetadata} IS NOT NULL`,
+        ));
+      const pendingTxns = await db.select().from(txnsTbl)
+        .where(and(
+          eqOp(txnsTbl.organizationId, ctx.organizationId),
+          eqOp(txnsTbl.status, 'pending'),
+        ));
       const matches = await autoMatchDocuments(ctx.organizationId, input.threshold);
       const applied = await applyMatches(matches);
-      return { matched: applied, total: matches.length, details: matches };
+      return { matched: applied, total: matches.length, details: matches, debug: { unmatchedDocs: unmatchedDocs.length, pendingTxns: pendingTxns.length } };
     }),
 
   // Unmatch a document from a transaction
@@ -3703,7 +4084,45 @@ const documentsRouter = router({
         if (ba) linkedBankAccount = { id: ba.id, accountId: ba.accountId, name: ba.bank || ba.name || `Konto ${ba.id}` };
       }
       
-      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount };
+      // Load journal entry with debit/credit accounts (for Belegdetails tab and consistency)
+      let journalEntryStatus: string | null = null;
+      let journalEntryAccounts: {
+        debitAccountId: number | null;
+        debitAccountNumber: string | null;
+        debitAccountName: string | null;
+        creditAccountId: number | null;
+        creditAccountNumber: string | null;
+        creditAccountName: string | null;
+      } | null = null;
+
+      // Load from document's journalEntryId
+      const journalEntryId = doc.journalEntryId || linkedTransaction?.journalEntryId || null;
+      if (journalEntryId) {
+        const { journalEntries: jeTbl, journalLines: jlTbl } = await import("../drizzle/schema");
+        const [je] = await db.select({ status: jeTbl.status }).from(jeTbl).where(eqOp(jeTbl.id, journalEntryId)).limit(1);
+        if (je) journalEntryStatus = je.status;
+
+        // Load journal lines to get actual booked accounts
+        const lines = await db.select().from(jlTbl).where(eqOp(jlTbl.entryId, journalEntryId));
+        const debitLine = lines.find(l => l.side === 'debit');
+        const creditLine = lines.find(l => l.side === 'credit');
+
+        const debitAcct = debitLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl).where(eqOp(acctsTbl.id, debitLine.accountId)).limit(1).then(r => r[0]) : null;
+        const creditAcct = creditLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl).where(eqOp(acctsTbl.id, creditLine.accountId)).limit(1).then(r => r[0]) : null;
+
+        if (debitAcct || creditAcct) {
+          journalEntryAccounts = {
+            debitAccountId: debitAcct?.id ?? null,
+            debitAccountNumber: debitAcct?.number ?? null,
+            debitAccountName: debitAcct?.name ?? null,
+            creditAccountId: creditAcct?.id ?? null,
+            creditAccountNumber: creditAcct?.number ?? null,
+            creditAccountName: creditAcct?.name ?? null,
+          };
+        }
+      }
+      
+      return { document: doc, metadata, supplier, bookingSuggestion, linkedTransaction, linkedBankAccount, journalEntryStatus, journalEntryAccounts };
     }),
 
   // Update document metadata (user edits from detail view)
@@ -3999,9 +4418,601 @@ Antworte NUR mit dem JSON-Objekt.`,
 
       return { success: true };
     }),
+
+  // Direct booking from document (without bank transaction, e.g. Barauslagen)
+  bookDirect: orgProcedure
+    .input(z.object({
+      documentId: z.number(),
+      debitAccountId: z.number(),
+      creditAccountId: z.number(),
+      amount: z.string(),
+      description: z.string().optional(),
+      bookingDate: z.string(),
+      vatAmount: z.string().optional(),
+      vatRate: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      
+      // Verify document exists
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      // ── Duplikat-Schutz: Bereits verbuchtes Dokument ──
+      if (doc.journalEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Dieser Beleg wurde bereits verbucht (Journal-Eintrag #${doc.journalEntryId}). Doppelbuchung verhindert.` });
+      }
+      
+      const year = new Date(input.bookingDate).getFullYear();
+      // ── Vorsteuer-Automatik: Konto 1170 bei Eingangsrechnungen mit MWST ──
+      // Nettobetrag = Totalbetrag - MWST-Betrag
+      const totalAmount = parseFloat(input.amount);
+      const vatAmt = input.vatAmount ? parseFloat(input.vatAmount) : 0;
+      const netAmount = vatAmt > 0 ? (totalAmount - vatAmt).toFixed(2) : input.amount;
+      const lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string; vatAmount?: string; vatRate?: string }> = [
+        { accountId: input.debitAccountId, side: "debit", amount: netAmount },
+        { accountId: input.creditAccountId, side: "credit", amount: input.amount },
+      ];
+      // Add VAT info to the expense line if provided
+      if (input.vatAmount && input.vatRate) {
+        lines[0].vatAmount = input.vatAmount;
+        lines[0].vatRate = input.vatRate;
+        // Automatische Vorsteuer-Buchung auf Konto 1170
+        const vorsteuerAccount = await getAccountByNumber(ctx.organizationId, "1170");
+        if (vorsteuerAccount) {
+          lines.push({
+            accountId: vorsteuerAccount.id,
+            side: "debit",
+            amount: vatAmt.toFixed(2),
+            vatRate: input.vatRate,
+          });
+        }
+      }
+      
+      const entryId = await createJournalEntry({
+        organizationId: ctx.organizationId,
+        bookingDate: input.bookingDate,
+        description: input.description || `Beleg: ${doc.filename}`,
+        source: "manual",
+        fiscalYear: year,
+        status: "approved",
+        lines,
+      });
+      await approveJournalEntry(entryId, ctx.user.id);
+      
+      // Link document to journal entry
+      await db.update(docs)
+        .set({
+          journalEntryId: entryId,
+          matchStatus: 'manual',
+        })
+        .where(eqOp(docs.id, input.documentId));
+      
+      return { entryId };
+    }),
+
+  // Delete a single document (admin)
+  delete: orgProcedure
+    .input(z.object({ documentId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "Nur Admins können Belege löschen" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      // Delete S3 file if key exists
+      if (doc.s3Key) {
+        try {
+          const { storageDelete } = await import("./storage");
+          await storageDelete(doc.s3Key);
+        } catch { /* S3 delete failed, continue */ }
+      }
+      await db.delete(docs).where(eqOp(docs.id, input.documentId));
+      return { success: true };
+    }),
+
+  // Bulk delete documents (admin)
+  bulkDelete: orgProcedure
+    .input(z.object({ ids: z.array(z.number()).min(1).max(200) }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "Nur Admins können Belege löschen" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { documents: docs } = await import("../drizzle/schema");
+      const { inArray: inArrayOp } = await import("drizzle-orm");
+      // Load docs to get S3 keys
+      const rows = await db.select({ id: docs.id, s3Key: docs.s3Key }).from(docs)
+        .where(inArrayOp(docs.id, input.ids));
+      // Delete S3 files
+      for (const row of rows) {
+        if (row.s3Key) {
+          try {
+            const { storageDelete } = await import("./storage");
+            await storageDelete(row.s3Key);
+          } catch { /* S3 delete failed, continue */ }
+        }
+      }
+       await db.delete(docs).where(inArrayOp(docs.id, input.ids));
+      return { deleted: rows.length };
+    }),
+
+  // Nemotron: Kamerafoto direkt analysieren (kein separates OCR)
+  analyzeImageWithNemotron: orgProcedure
+    .input(z.object({
+      imageUrl: z.string(), // S3-URL des hochgeladenen Fotos
+      documentId: z.number().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!process.env.OPENROUTER_API_KEY) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nemotron nicht konfiguriert" });
+      }
+      const allAccts = await getAllAccounts(ctx.organizationId);
+      const accountList = allAccts
+        .filter(a => a.number.startsWith("4") || a.number.startsWith("2") || a.number.startsWith("1"))
+        .slice(0, 50)
+        .map(a => `${a.number} ${a.name}`)
+        .join("\n");
+
+      const result = await invokeNemotron({
+        messages: [
+          {
+            role: "system",
+            content: `Du bist ein Schweizer Buchhalter. Analysiere dieses Belegfoto und extrahiere die Buchhaltungsdaten.
+KONTENPLAN (SKR04):
+${accountList}
+Antworte NUR als JSON-Objekt:
+{"documentType":"invoice_in|receipt|other","counterparty":"Firmenname","documentDate":"YYYY-MM-DD","totalAmount":123.45,"vatRate":8.1,"vatAmount":9.50,"currency":"CHF","invoiceNumber":"RE-2026-001","qrReference":"","suggestedDebitAccount":"4xxx Kontoname","suggestedCreditAccount":"2000 Kreditoren","confidence":85,"description":"Kurzbeschreibung"}`,
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url" as const,
+                image_url: { url: input.imageUrl, detail: "high" as const },
+              },
+              { type: "text", text: "Analysiere diesen Beleg und extrahiere alle Buchhaltungsdaten." },
+            ],
+          },
+        ],
+        maxTokens: 1024,
+        temperature: 0.05,
+      });
+
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Nemotron konnte keine Daten extrahieren" });
+      }
+      const extracted = JSON.parse(jsonMatch[0]);
+
+      // Optionally update document metadata in DB
+      if (input.documentId) {
+        const db = await getDb();
+        if (db) {
+          const meta = {
+            documentType: extracted.documentType,
+            counterparty: extracted.counterparty,
+            documentDate: extracted.documentDate,
+            totalAmount: extracted.totalAmount,
+            vatRate: extracted.vatRate,
+            vatAmount: extracted.vatAmount,
+            currency: extracted.currency || "CHF",
+            invoiceNumber: extracted.invoiceNumber,
+            qrReference: extracted.qrReference,
+            suggestedAccount: extracted.suggestedDebitAccount,
+            description: extracted.description,
+          };
+          await db.update(documents)
+            .set({ aiMetadata: JSON.stringify(meta), documentType: extracted.documentType || "other" })
+            .where(and(eq(documents.id, input.documentId), eq(documents.organizationId, ctx.organizationId)));
+        }
+      }
+
+      return {
+        documentType: extracted.documentType,
+        counterparty: extracted.counterparty,
+        documentDate: extracted.documentDate,
+        totalAmount: extracted.totalAmount,
+        vatRate: extracted.vatRate,
+        vatAmount: extracted.vatAmount,
+        currency: extracted.currency || "CHF",
+        invoiceNumber: extracted.invoiceNumber,
+        qrReference: extracted.qrReference,
+        suggestedDebitAccount: extracted.suggestedDebitAccount,
+        suggestedCreditAccount: extracted.suggestedCreditAccount,
+        confidence: extracted.confidence ?? 80,
+        description: extracted.description,
+        reasoning: result.reasoning,
+      };
+    }),
+});
+
+// ─── NVIDIA LocateAnything-3B Vision Endpoints ───────────────────────────────
+const locateAnythingRouter = router({
+  /**
+   * Analysiert ein Belegfoto mit LocateAnything-3B.
+   * Gibt Bounding Boxes für alle erkannten Felder zurück.
+   * Ergänzt die Nemotron-Pipeline bei niedriger Konfidenz.
+   */
+  analyzeInvoice: orgProcedure
+    .input(z.object({
+      imageUrl: z.string().optional(),
+      imageBase64: z.string().optional(),
+      mimeType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      if (!input.imageBase64 && !input.imageUrl) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "imageUrl oder imageBase64 erforderlich" });
+      }
+      const result = await extractInvoiceFields(
+        input.imageBase64 ?? "",
+        input.mimeType ?? "image/png"
+      );
+      return result;
+    }),
+
+  /**
+   * Analysiert einen Kontoauszug oder eine Kreditkartenabrechnung.
+   */
+  analyzeBankStatement: orgProcedure
+    .input(z.object({
+      imageBase64: z.string(),
+      mimeType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return extractBankStatement(input.imageBase64, input.mimeType ?? "image/png");
+    }),
+
+  /**
+   * Erkennt die Dokumentstruktur (Tabellen, Felder, QR-Codes, Stempel).
+   */
+  detectStructure: orgProcedure
+    .input(z.object({
+      imageBase64: z.string(),
+      mimeType: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return detectDocumentStructure(input.imageBase64, input.mimeType ?? "image/png");
+    }),
+
+  /**
+   * Kombinierter Enhancer: Reichert ein Nemotron-Ergebnis mit LocateAnything-Boxes an.
+   * Wird automatisch aufgerufen wenn Nemotron-Konfidenz < 85%.
+   */
+  enhanceExtraction: orgProcedure
+    .input(z.object({
+      nemotronResult: z.record(z.unknown()).nullable(),
+      imageBase64: z.string(),
+      documentType: z.enum(["invoice", "lohnausweis", "bank_statement", "generic"]).optional(),
+    }))
+    .mutation(async ({ input }) => {
+      return enhanceExtractionWithLocateAnything(
+        input.nemotronResult,
+        input.imageBase64,
+        input.documentType ?? "generic"
+      );
+    }),
+});
+
+// ─── Avatar Chat Router ─────────────────────────────────────────────────────
+const avatarChatRouter = router({
+  chat: orgProcedure
+    .input(z.object({
+      message: z.string().min(1).max(2000),
+      conversationHistory: z.array(z.object({
+        role: z.string(),
+        content: z.string(),
+      })).max(20).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'DB not available' });
+
+      const orgId = ctx.organizationId;
+
+      // Load avatar settings from DB
+      const [avatarCfg] = await db.select().from(avatarSettings)
+        .where(eq(avatarSettings.organizationId, orgId))
+        .limit(1);
+      const cfgMaxSentences = avatarCfg?.maxSentences ?? 2;
+      const cfgCustomPrompt = avatarCfg?.customPrompt ?? '';
+      const cfgAvatarName = avatarCfg?.avatarName ?? 'Berater';
+      const cfgVoiceId = avatarCfg?.voiceId;
+
+      // Gather accounting context
+      let contextText = '';
+      try {
+        // Recent journal entries
+        const recentJournals = await db.select({
+          id: journalEntries.id,
+          description: journalEntries.description,
+          bookingDate: journalEntries.bookingDate,
+          status: journalEntries.status,
+        }).from(journalEntries)
+          .where(eq(journalEntries.organizationId, orgId))
+          .orderBy(desc(journalEntries.createdAt))
+          .limit(5);
+
+        // Active accounts
+        const activeAccounts = await db.select({
+          number: accounts.number,
+          name: accounts.name,
+          category: accounts.category,
+          accountType: accounts.accountType,
+        }).from(accounts)
+          .where(and(eq(accounts.organizationId, orgId), eq(accounts.isActive, true)))
+          .limit(30);
+
+        // Recent documents (using available schema columns)
+        const recentDocs = await db.select({
+          id: documents.id,
+          filename: documents.filename,
+          documentType: documents.documentType,
+          matchStatus: documents.matchStatus,
+          aiMetadata: documents.aiMetadata,
+          createdAt: documents.createdAt,
+        }).from(documents)
+          .where(eq(documents.organizationId, orgId))
+          .orderBy(desc(documents.createdAt))
+          .limit(5);
+
+        // Financial context from income statement
+        const currentYear = new Date().getFullYear();
+        const dashStats = await getDashboardStats(orgId, currentYear);
+        const incomeStmt = await getIncomeStatement(orgId, currentYear);
+        const totalRevenue = incomeStmt?.revenues?.reduce((s: number, r: {balance: number}) => s + (r.balance || 0), 0) ?? 0;
+        const totalExpenses = incomeStmt?.expenses?.reduce((s: number, r: {balance: number}) => s + (r.balance || 0), 0) ?? 0;
+        contextText = `
+## Aktuelle Buchhaltungsdaten der Organisation (GJ ${currentYear}):
+
+### Finanzstatus:
+- Ertrag YTD: CHF ${totalRevenue.toFixed(2)}
+- Aufwand YTD: CHF ${totalExpenses.toFixed(2)}
+- Ergebnis: CHF ${(totalRevenue - totalExpenses).toFixed(2)}
+- Ausstehende Buchungen: ${dashStats?.pendingEntries ?? 0}
+- Ungematchte Banktransaktionen: ${dashStats?.pendingBankTransactions ?? 0}
+
+### Letzte Journalbuchungen (${recentJournals.length}):
+${recentJournals.map(j => `- ${j.bookingDate}: ${j.description} | Status: ${j.status}`).join('\n')}
+
+### Aktive Konten (Auswahl):
+${activeAccounts.map(a => `- ${a.number} ${a.name} (${a.accountType})`).join('\n')}
+
+### Letzte Belege (${recentDocs.length}):
+${recentDocs.map(d => {
+  let meta: Record<string, unknown> = {};
+  try { meta = JSON.parse(d.aiMetadata ?? '{}'); } catch {}
+  return `- ${d.filename} | Typ: ${d.documentType} | Match: ${d.matchStatus} | Betrag: CHF ${meta.amount ?? '?'}`;
+}).join('\n')}
+`;
+      } catch (e) {
+        console.error('Avatar chat context error:', e);
+      }
+
+      const systemPrompt = `Du bist ${cfgAvatarName}, der Buchhaltungsberater der WM Weibel Mueller AG. Antworte IMMER extrem kurz und direkt – maximal ${cfgMaxSentences} Sätze. Keine Einleitungen, kein Smalltalk, kein "Gerne", kein "Natürlich". Nur die Antwort.${cfgCustomPrompt ? '\n' + cfgCustomPrompt : ''}
+Kontext: Schweizer Buchhaltung (OR, MWST, Swiss GAAP FER). Software: Belege-KI, Bank-Import (CSV/MT940), Freigaben, QR-Rechnungen, Berichte, MWST-Abrechnung, Kontenplan SKR04.
+${contextText}`;
+
+      const history = input.conversationHistory ?? [];
+      const messages = [
+        { role: 'system' as const, content: systemPrompt },
+        ...history.map(h => ({ role: h.role as 'user' | 'assistant', content: h.content })),
+        { role: 'user' as const, content: input.message },
+      ];
+
+      // Nemotron mit Reasoning verwenden falls OPENROUTER_API_KEY vorhanden
+      let reply: string;
+      let reasoning: string | undefined;
+      if (process.env.OPENROUTER_API_KEY) {
+        try {
+          const nemotronResult = await invokeNemotron({
+            messages,
+            maxTokens: 512,
+            temperature: 0.2,
+            enableReasoning: true,
+          });
+          reply = nemotronResult.content || 'Entschuldigung, ich konnte keine Antwort generieren.';
+          reasoning = nemotronResult.reasoning;
+        } catch (e) {
+          console.error('Nemotron Chat Fehler, Fallback auf LLM:', e);
+          const llmResponse = await invokeLLM({ messages });
+          const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
+          reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
+        }
+      } else {
+        const llmResponse = await invokeLLM({ messages });
+        const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
+        reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
+      }
+      // TTS via ElevenLabs (optional) – return as base64 data URL to avoid CORS issues
+      let audioUrl: string | undefined;
+      const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+      if (elevenLabsKey && reply) {
+        try {
+          // Use voiceId from avatar settings, env var, or default to Daniel
+          const voiceId = cfgVoiceId ?? process.env.ELEVENLABS_VOICE_ID ?? 'onwK4e9ZLuTAKqWW03F9';
+          // Truncate reply to 500 chars for TTS to keep response size manageable
+          const ttsText = reply.length > 500 ? reply.substring(0, 497) + '...' : reply;
+          const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+            method: 'POST',
+            headers: {
+              'xi-api-key': elevenLabsKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              text: ttsText,
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: { stability: 0.6, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
+            }),
+          });
+          if (ttsRes.ok) {
+            const audioBuffer = await ttsRes.arrayBuffer();
+            // Return as base64 data URL so browser can play without CORS issues
+            const base64 = Buffer.from(audioBuffer).toString('base64');
+            audioUrl = `data:audio/mpeg;base64,${base64}`;
+          } else {
+            const errText = await ttsRes.text().catch(() => '');
+            console.error('ElevenLabs TTS error:', ttsRes.status, errText);
+          }
+        } catch (e) {
+          console.error('ElevenLabs TTS error:', e);
+        }
+      }
+      return { reply, audioUrl };
+    }),
+
+  transcribeVoice: protectedProcedure
+    .input(z.object({
+      audioUrl: z.string().url(),
+      language: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const result = await transcribeAudio({
+        audioUrl: input.audioUrl,
+        language: input.language ?? 'de',
+        prompt: 'Buchhaltung Schweiz',
+      });
+      if ('error' in result) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: result.error });
+      }
+      return { text: result.text, language: result.language };
+    }),
+
+  // Speak greeting text via ElevenLabs TTS
+  speakGreeting: orgProcedure
+    .input(z.object({ text: z.string().min(1).max(500) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      let audioUrl: string | undefined;
+      const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
+      if (elevenLabsKey) {
+        try {
+          // Load voice ID from avatar settings
+          let voiceId = process.env.ELEVENLABS_VOICE_ID ?? 'onwK4e9ZLuTAKqWW03F9';
+          if (db) {
+            const [cfg] = await db.select().from(avatarSettings)
+              .where(eq(avatarSettings.organizationId, ctx.organizationId))
+              .limit(1);
+            if (cfg?.voiceId) voiceId = cfg.voiceId;
+          }
+          const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+            method: 'POST',
+            headers: { 'xi-api-key': elevenLabsKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: input.text,
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: { stability: 0.6, similarity_boost: 0.8, style: 0.2, use_speaker_boost: true },
+            }),
+          });
+          if (ttsRes.ok) {
+            const buf = await ttsRes.arrayBuffer();
+            audioUrl = `data:audio/mpeg;base64,${Buffer.from(buf).toString('base64')}`;
+          } else {
+            console.error('ElevenLabs TTS greeting error:', ttsRes.status);
+          }
+        } catch (e) {
+          console.error('ElevenLabs TTS greeting error:', e);
+        }
+      }
+      return { audioUrl };
+    }),
 });
 
 // ─── App Router ───────────────────────────────────────────────────────────────
+// ─── Avatar Settings Router ──────────────────────────────────────────────────
+const avatarSettingsRouter = router({
+  get: orgProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return null;
+    const [row] = await db.select().from(avatarSettings)
+      .where(eq(avatarSettings.organizationId, ctx.organizationId))
+      .limit(1);
+    return row ?? null;
+  }),
+
+  save: orgProcedure
+    .input(z.object({
+      language: z.string().max(10).optional(),
+      style: z.enum(["concise", "balanced", "detailed"]).optional(),
+      maxSentences: z.number().min(1).max(10).optional(),
+      customPrompt: z.string().max(2000).optional(),
+      voiceId: z.string().max(100).optional(),
+      avatarName: z.string().max(100).optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== 'admin') throw new TRPCError({ code: 'FORBIDDEN', message: 'Nur Administratoren können die Avatar-Einstellungen ändern.' });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      const [existing] = await db.select({ id: avatarSettings.id })
+        .from(avatarSettings)
+        .where(eq(avatarSettings.organizationId, ctx.organizationId))
+        .limit(1);
+      const data: Record<string, unknown> = { organizationId: ctx.organizationId };
+      if (input.language !== undefined) data.language = input.language;
+      if (input.style !== undefined) data.style = input.style;
+      if (input.maxSentences !== undefined) data.maxSentences = input.maxSentences;
+      if (input.customPrompt !== undefined) data.customPrompt = input.customPrompt;
+      if (input.voiceId !== undefined) data.voiceId = input.voiceId;
+      if (input.avatarName !== undefined) data.avatarName = input.avatarName;
+      if (existing) {
+        await db.update(avatarSettings).set(data).where(eq(avatarSettings.organizationId, ctx.organizationId));
+      } else {
+        await db.insert(avatarSettings).values(data as any);
+      }
+      return { success: true };
+    }),
+});
+
+// ─── Import Automation Router ───────────────────────────────────────────────
+const importAutomationRouter = router({
+  get: orgProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return null;
+    const [row] = await db.select().from(importAutomationSettings)
+      .where(eq(importAutomationSettings.organizationId, ctx.organizationId))
+      .limit(1);
+    // Return defaults if no row exists
+    return row ?? {
+      autoKiCategorize: true,
+      autoGenerateBookingTexts: true,
+      autoRefreshLearned: true,
+      autoDetectTransfers: true,
+      autoMatchDocuments: false,
+    };
+  }),
+
+  save: orgProcedure
+    .input(z.object({
+      autoKiCategorize: z.boolean(),
+      autoGenerateBookingTexts: z.boolean(),
+      autoRefreshLearned: z.boolean(),
+      autoDetectTransfers: z.boolean(),
+      autoMatchDocuments: z.boolean(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      const [existing] = await db.select({ id: importAutomationSettings.id })
+        .from(importAutomationSettings)
+        .where(eq(importAutomationSettings.organizationId, ctx.organizationId))
+        .limit(1);
+      const data = { ...input, organizationId: ctx.organizationId };
+      if (existing) {
+        await db.update(importAutomationSettings).set(data)
+          .where(eq(importAutomationSettings.organizationId, ctx.organizationId));
+      } else {
+        await db.insert(importAutomationSettings).values(data);
+      }
+      return { success: true };
+    }),
+});
+
 export const appRouter = router({
   system: systemRouter,
   auth: authRouter,
@@ -4025,6 +5036,13 @@ export const appRouter = router({
   invoices: invoicesRouter,
   reminders: remindersRouter,
   stripe: stripeRouter,
+  avatarChat: avatarChatRouter,
+  locateAnything: locateAnythingRouter,
+  avatarSettings: avatarSettingsRouter,
+  importAutomation: importAutomationRouter,
+  invitations: invitationsRouter,
+  pos: posRouter,
+  ebics: ebicsRouter,
   uidSearch: router({
     search: publicProcedure
       .input(z.object({ name: z.string().min(2).max(200) }))
@@ -4042,3 +5060,8 @@ export const appRouter = router({
 
 export type AppRouter = typeof appRouter;
 
+
+// ─── POS Router (wird direkt in appRouter eingebunden) ───────────────────────
+// Hinweis: posRouter wird am Ende dieser Datei nach appRouter definiert und
+// dann via Patch in den appRouter eingefügt – da appRouter bereits exportiert
+// ist, erstellen wir einen separaten Export.

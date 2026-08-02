@@ -972,3 +972,428 @@
 - [x] Verbuchen-Tab: Soll/Haben-Konten aus Kontierung-Tab (bookingSuggestion) übernehmen, nicht aus Transaktion
 - [x] Verbuchen-Tab: Bankkonto aus linkedBankAccount verwenden
 - [x] Konsistenz: Kontierung-Tab und Verbuchen-Tab zeigen gleichen Kontovorschlag (bookingSuggestion hat Priorität)
+
+## Verbesserung: Saldosteuersatz-Auswahl im Onboarding
+- [x] Onboarding: Bei MWST-Methode "Saldosteuersatz" ein Dropdown mit offiziellen ESTV-Saldosteuersätzen anzeigen
+- [x] ESTV-Saldosteuersätze als Konstante hinterlegen (0.1% bis 6.8%)
+- [x] Saldosteuersatz in Organization-Schema speichern (vatSaldoRate)
+
+## Bug: GJ-Wähler zeigt aktuelles Jahr statt erstes Geschäftsjahr
+- [x] FiscalYearContext: Default-GJ auf das älteste offene Geschäftsjahr setzen (aus DB geladen, nicht hardcoded)
+- [x] Wenn GJ 2025 im Onboarding gewählt wird, soll Dashboard automatisch GJ 2025 anzeigen
+
+## Redesign: Belegzentrierte Informationsarchitektur (Komplett-Überarbeitung)
+
+### Sidebar-Navigation (neu)
+- [x] Sidebar komplett umbauen: Dashboard, Inbox, Belege, Bank, Freigaben, Rechnungen, Berichte, Abschluss & MWST, Einstellungen, Admin
+- [x] Belege-Section mit Unterpunkten: Alle Belege, Neu hochgeladen, Von KI verarbeitet, Zu prüfen, Gematcht, Archiv
+- [x] Bank-Section mit Unterpunkten: Banktransaktionen, Importe, Ungematchte, Gematchte, Bankkonten & Karten
+- [x] Freigaben-Section mit Unterpunkten: Bereit zur Genehmigung, Mit Warnungen, Manuell angepasst, Verbucht
+- [x] Rechnungen-Section mit Unterpunkten: Ausgangsrechnungen, Offene Forderungen, Zahlungseingänge, Mahnwesen, Kunden
+- [x] Berichte-Section: Erfolgsrechnung, Bilanz, Kontoblätter, Journal
+- [x] Abschluss & MWST: MWST, Periodenabschluss, Jahresabschluss
+- [x] Einstellungen und Admin-Bereich konsolidieren
+- [x] Umbenennungen: Journal→Freigaben, Bankimport→Bank, Dokumente→Belege, Kreditkarte→unter Bank
+
+### Inbox-Seite (neu)
+- [x] Neue Inbox-Seite: Zentrale Aufgabenübersicht für alles was Aufmerksamkeit braucht
+- [x] Inbox zeigt: Neue Belege, KI-Vorschläge zur Freigabe, Ungematchte Banktx, Offene Rechnungen, Fällige Zahlungen
+- [x] Inbox: Klickbare Aufgaben-Karten die direkt zum jeweiligen Bereich navigieren
+
+### Dashboard (komplett neu)
+- [x] Block 1: "Heute zu erledigen" – Aufgaben-Übersicht mit Empty State
+- [x] Block 2: "KI hat für dich vorbereitet" – Automatisch erkannt, Gematcht, Automatisierungsquote, Match-Quote
+- [x] Block 3: Belege + Bank Statusübersicht (nebeneinander)
+- [x] Block 4: Freigaben + Rechnungen Statusübersicht (nebeneinander)
+- [x] Block 5: Finanzstatus – Liquidität, Ertrag, Aufwand, Ergebnis, Off. Forderungen, Off. Verbindlichkeiten
+- [x] Block 6: Fristen & Hinweise – MWST, Periodenabschluss
+- [x] Primäre CTAs: Beleg hochladen, Bank importieren, Rechnung erstellen
+
+### Belege-Seite (aufgewertet)
+- [x] Belege-Seite: Status-Tabs (Alle, Neu, KI verarbeitet, Zu prüfen, Gematcht, Archiv) via Sidebar-Sub-Items
+- [x] Belege: KI-Workflow sichtbar machen (bestehende Documents-Seite mit Status-Filtern)
+
+### Bank-Bereich (konsolidiert)
+- [x] Bank-Seite: Bankimport und Kreditkarte zusammenführen unter "Bank"
+- [x] Bank: Sidebar-Sub-Items für Transaktionen, Importe, Ungematchte, Gematchte, Konten & Karten
+
+### Freigaben-Seite (neu, ersetzt Journal als Primärbereich)
+- [x] Freigaben-Seite: Ersetzt Journal als primären Arbeitsbereich
+- [x] Freigaben: Sidebar-Sub-Items für Bereit zur Genehmigung, Mit Warnungen, Manuell angepasst, Verbucht
+- [x] Journal bleibt als technische Detailansicht unter Berichte erreichbar
+
+### Empty States & CTAs
+- [x] Aktivierende Empty States: "Lade Rechnungen hoch...", "Alle Vorschläge verbucht...", etc.
+- [x] Globale primäre CTAs: Beleg hochladen, Bank importieren, Rechnung erstellen
+
+### Routing
+- [x] Alle neuen Routes registrieren in App.tsx
+- [x] Alte Routes als Redirects beibehalten für Kompatibilität
+
+## Verbesserung: Rückgängig-Button im Kontenplan
+- [x] Rückgängig-Button im Kontenplan hinzufügen (letzte Änderung rückgängig machen)
+- [x] Undo-Stack für Kontenplan-Aktionen (Aktivieren/Deaktivieren, MWST-Toggle, Umbenennung, Erstellen, Löschen)
+
+## Bug: Referenznummer aus QR-Einzahlungsschein wird nicht erkannt
+- [x] KI-Analyse soll Referenznummer (RF-Nummer, QR-Referenz, ESR-Referenz) aus Belegen extrahieren
+- [x] Referenznummer ins Feld "Referenznummer" übernehmen (+ Fallback: qrReference → referenceNumber)
+
+## Bug: IBAN aus QR-Einzahlungsschein wird nicht korrekt erkannt
+- [x] IBAN im Zahlungs-Tab zeigt "CH00 0000 0000 0000 0000 0" statt der korrekten IBAN aus dem Beleg
+- [x] LLM-Prompt verbessert: IBAN aus QR-Zahlteil 'Konto / Zahlbar an' wird jetzt explizit extrahiert
+
+## Bug: Sidebar-Sub-Items nicht aktiviert (Belege, Bank, Freigaben)
+- [x] Sub-Items in Belege-Section klickbar machen mit Filter-Funktionalität (Neu hochgeladen, Von KI verarbeitet, Zu prüfen, Gematcht, Archiv)
+- [x] Sub-Items in Bank-Section klickbar machen (Importe, Ungematchte, Gematchte, Konten & Karten)
+- [x] Sub-Items in Freigaben-Section klickbar machen (Mit Warnungen, Manuell angepasst, Verbucht)
+
+## Feature: Verbuchung ohne Banktransaktion (Barauslagen)
+- [x] Verbuchen-Tab im Belegdetail auch ohne verknüpfte Banktransaktion ermöglichen
+- [x] Barauslagen direkt aus dem Beleg verbuchen können (Soll/Haben manuell wählen)
+- [x] Konto "Kasse" (1000) als Default-Gegenkonto für Barauslagen
+
+## Bug: Bankkonto-Dropdown im Bankimport
+- [x] Bankkonto-Dropdown funktioniert korrekt – zeigt Bankkonten aus Einstellungen (Daten-Problem wenn leer, kein Code-Bug)
+
+## UX: Bankimport - Hinweis wenn keine Bankkonten erfasst
+- [x] Wenn bankAccounts leer ist: Hinweis + Link zu Einstellungen → Bankkonten anzeigen
+
+## UX: Sidebar vereinfachen + Filter-Kacheln
+- [x] Sidebar: Unterpunkte bei Belege entfernen (nur "Alle Belege" bleibt als Einstieg)
+- [x] Sidebar: Unterpunkte bei Bank entfernen (nur "Banktransaktionen" bleibt)
+- [x] Sidebar: Unterpunkte bei Freigaben entfernen (nur "Freigaben" bleibt)
+- [x] Belege-Seite: Farbige Filter-Kacheln oben (Alle, Neu, KI verarbeitet, Zu prüfen, Gematcht, Archiv)
+- [x] Bank-Seite: Farbige Filter-Kacheln oben (Alle, Ungematchte, Gematchte, Importe)
+- [x] Freigaben-Seite: Farbige Filter-Kacheln oben (Bereit, Mit Warnungen, Manuell, Verbucht)
+- [ ] Rechnungen-Unterpunkte bleiben in Sidebar (echte Seiten)
+- [ ] Berichte-Unterpunkte bleiben in Sidebar (echte Seiten)
+
+## QR-Rechnung PDF in Neue Rechnung
+- [x] Neue Rechnung: Button "Verbuchen & QR-Rechnung PDF" hinzufügen (Entwurf → Verbuchen → PDF öffnen in einem Schritt)
+
+## UX: Fortschrittsanzeige bei KI-Operationen und Importen
+- [x] Fortschrittsanzeige bei KI-Analyse von Belegen (Dokument-Upload + "Alle neu analysieren")
+- [x] Fortschrittsanzeige bei Bankimport (CAMT/MT940/CSV/PDF-Upload + KI-Kategorisierung)
+- [x] Fortschrittsanzeige bei Kreditkarten-PDF-Analyse
+- [x] Fortschrittsanzeige bei Auto-Match (Dokument-Matching)
+- [x] Fortschrittsanzeige bei Kontenplan-Import (Excel/CSV/PDF)
+
+## UX: Kontenplan-Import-Dialog verbessern
+- [x] Dialog-Höhe vergrössern (mehr Konten sichtbar im Vorschaufenster)
+- [x] Checkbox-Spalte hinzufügen: Alle auswählen / einzeln an-/abwählen
+- [x] Import-Button zeigt Anzahl ausgewählter Konten (nicht immer alle)
+- [x] "Alle auswählen" / "Alle abwählen" Toggle-Button
+
+## Feature: Kontenplan Kategorie-Verschiebung
+- [x] Kontenplan: Beim Bearbeiten eines Kontos Kategorie und Unterkategorie ändern können (Dropdown)
+- [ ] Kontenplan: Konto per Drag & Drop in andere Kategorie verschieben (wie Eröffnungssaldi) [offen - Dropdown bereits implementiert]
+
+## Feature: Eröffnungssaldi Import
+- [x] Eröffnungssaldi: Import-Button für Eröffnungsbilanz (PDF oder Excel/CSV)
+- [x] Eröffnungssaldi: KI-Extraktion aus PDF (Kontonummer + Saldo)
+- [x] Eröffnungssaldi: Excel/CSV-Parser (Spalten: Konto, Bezeichnung, Saldo)
+- [x] Eröffnungssaldi: Vorschaufenster mit Bulk-Auswahl (Checkbox, Alle/Keine)
+- [x] Eröffnungssaldi: Fortschrittsanzeige bei KI-Extraktion
+
+## Belege-Seite: Übersicht/Details-Toggle + Label-Klärung
+- [x] Zwischen Suche und Dokumentenliste: Toggle "Übersicht" / "Details" einbauen
+- [x] Übersicht-Modus: nur erste Zeile (Dateiname + Badges) sichtbar
+- [x] Details-Modus: auch zweite/dritte Zeile (Gegenpartei, Betrag, Datum, MWST, Beschreibung) sichtbar
+- [x] "Offen" Label umbenennen in "Nicht verbucht" (= noch kein Journal-Eintrag vorhanden)
+
+## Bugfix: Beleg-Status-Konsistenz
+- [x] Beim Zurücksetzen eines Journal-Eintrags (reset/revert): verknüpfte Belege-Status auch zurücksetzen (journalEntryId auf null)
+- [x] Beim Verbuchen: verknüpfte Belege-Status auf "verbucht" setzen (bereits vorhanden)
+- [x] DocumentDetail.tsx: Beleg-Status-Konsistenz durch journalEntryId-Clearing beim Revert sichergestellt
+
+## Bugfix: DocumentDetail Status-Anzeige
+- [x] DocumentDetail: "Offen" Badge oben links → "Nicht verbucht" umbenennen
+- [x] DocumentDetail: "Erfolgreich verbucht" Banner nur zeigen wenn Journal-Eintrag Status = "approved", nicht bei "pending/ausstehend"
+- [x] DocumentDetail: Bei Journal-Status "pending" → Banner "Im Journal (ausstehend)" mit anderem Design (orange statt grün)
+
+## Feature: 3D-ChatBot-Avatar (Berater-Look)
+- [x] npm-Pakete installieren: @pixiv/three-vrm, three, @react-three/fiber, @react-three/drei
+- [x] VRM-Modell: NeonGlitch86 "EL BUENO" Placeholder zu S3 hochgeladen (/manus-storage/advisor_avatar_c531768f.vrm)
+- [x] AvatarScene.tsx: Three.js/React Three Fiber Komponente mit VRM-Loader, Idle-Animation, Lip-Sync, CSS-Fallback-Avatar
+- [x] AvatarChatWidget.tsx: Schwebendes Widget unten rechts (Button zum Öffnen/Schliessen)
+- [x] AvatarChatWidget.tsx: Chat-Interface (Texteingabe + Nachrichtenverlauf + Sprachaufnahme)
+- [x] Backend: tRPC-Procedure avatarChat.chat mit System-Prompt (Buchhaltungs-Kontext + Software-Doku)
+- [x] Backend: Zugriff auf echte Daten (Konten, Belege, Buchungen) im Avatar-Chat
+- [x] Spracheingabe: Mikrofon-Button + Whisper-Transkription (Built-in via avatarChat.transcribeVoice)
+- [x] TTS: Browser Web Speech API als Fallback (ElevenLabs optional via ELEVENLABS_API_KEY)
+- [x] Lip-Sync: Audio-Analyse für Mundbewegung des Avatars (CSS-Fallback + WebAudio für ElevenLabs)
+- [x] App.tsx: AvatarChatWidget global einbinden (auf allen Seiten sichtbar)
+- [x] ElevenLabs API-Key als Secret konfigurieren (ELEVENLABS_API_KEY gesetzt, Daniel-Stimme eleven_multilingual_v2)
+
+## Bugfix: Avatar-Widget Absturz + Mikrofon
+- [x] Avatar-Absturz behoben: WebGL/Three.js entfernt, reiner CSS-Avatar (kein WebGL-Context-Loss mehr)
+- [x] CSS-Avatar: professioneller Berater mit grauem Haar, Brille, Jacket, Krawatte, Lip-Sync
+- [x] VAD-Mikrofon implementiert: automatisches Senden nach 1.5s Stille (kein manuelles Stop nötig)
+- [x] AudioContext.decodeAudioData für robuste ElevenLabs-Wiedergabe
+
+## Bugfix: Zahlungsstatus "Mit Banktransaktion verknüpft" falsch angezeigt
+- [x] DocumentDetail Zahlung-Tab: "Mit Banktransaktion verknüpft" nur anzeigen wenn bankTransactionId tatsächlich gesetzt ist
+- [x] Sprach-Transkription: direkter /api/upload/transcribe Endpunkt ohne S3-Umweg implementiert
+
+## Bugfix: BankImport Bankkonto-Auswahl
+- [x] BankImport: Bankkonto-Dropdown zeigt keine Bankkonten obwohl hinterlegt (INNER JOIN → LEFT JOIN, fehlende accounts-Einträge für accountId 210001-210003)
+
+## Feature: Avatar-Chatbot Einstellungen (Admin)
+- [x] DB: avatar_settings Tabelle (organizationId, language, style, customPrompt, voiceId, maxSentences) – Schema erstellt und migriert
+- [x] Backend: avatarSettings.get und avatarSettings.upsert tRPC-Prozeduren (orgProcedure)
+- [x] Admin-UI: AvatarSettingsTab in Settings.tsx (Tab "Avatar-Chatbot")
+- [x] Avatar-Chat: Einstellungen aus DB laden (maxSentences, customPrompt, avatarName, voiceId) und in System-Prompt einbauen
+
+## Bugfix: Bankimport zeigt 0 Transaktionen
+- [x] Bankimport: 46 ungematchte Transaktionen in DB vorhanden, aber Bankimport zeigt 0 Transaktionen – GJ-Filter für ausstehende Transaktionen entfernt (getBankTransactionsByStatus)
+
+## Feature: Geschäftsjahr-Konsistenz
+- [x] Bankimport: Ausstehende Transaktionen ohne GJ-Filter anzeigen (alle pending immer sichtbar)
+- [x] Bankimport: Beim Upload automatisch GJ wechseln basierend auf Transaktionsdatum (auto-switch + Warnung bei geschlossenem GJ)
+- [x] Alle Ansichten: Konsistenter GJ-Wechsel über FiscalYearContext (isOpen, fiscalYearInfos exportiert)
+- [x] Layout.tsx: GJ-Selector markiert geschlossene Jahre visuell (Schloss-Icon)
+- [x] AvatarSettingsTab: Komponente in Settings.tsx implementiert
+
+## Feature: Import-Automatisierungs-Einstellungen
+
+- [x] DB-Schema: import_automation_settings Tabelle (organizationId, autoKiCategorize, autoGenerateBookingTexts, autoRefreshLearned, autoDetectTransfers, autoMatchDocuments) – alle Default true
+- [x] Backend: importAutomationRouter (get/upsert) via orgProcedure
+- [x] Frontend: Neuer Tab "Import-Automatisierung" in Einstellungen (unter Bankkonten)
+- [x] Frontend: Toggle-Switches für jede Auto-Aktion mit Beschreibung
+- [x] Frontend: Link im Admin-Bereich der Sidebar zu diesem Tab
+- [x] BankImport: Nach Upload die Einstellungen laden und nur aktivierte Aktionen ausführen
+- [ ] BankImport: Visuelle Anzeige welche Aktionen beim letzten Import ausgeführt wurden (optional)
+
+## Feature: Bankimport GJ-Pflicht und GJ-Filter
+
+- [x] Bankimport: Beim Import prüfen ob passendes GJ geöffnet ist; wenn nicht → Fehlermeldung mit Hinweis GJ zu eröffnen
+- [x] Bankimport: Ausstehende Transaktionen immer nach gewähltem GJ filtern (nicht mehr "alle pending anzeigen")
+- [x] Bankimport: GJ-Wechsel beim Upload nur wenn Ziel-GJ geöffnet ist (kein auto-switch zu geschlossenem GJ)
+
+## Feature: Belege-Seite Verbesserungen
+
+- [x] Belege: "Dokumente" → "Belege" umbenennen (Seitenname, Sidebar, Header)
+- [x] Belege: Prominenter "Abgleichen"-Banner wenn ungematchte Belege vorhanden (oben, mit Anzahl)
+- [x] Belege: Farbliche Unterscheidung der Dokumentkategorien (Rechnungen=blau, Kreditkartenabrechnungen=lila, Barbelege=grün)
+- [x] Backend: credit_card_statement zu VALID_DOC_TYPES hinzugefügt (wurde vorher als 'other' gespeichert)
+
+## Bugfix: Auto-Match findet keine Banktransaktionen
+- [x] Auto-Match: Debug-Info hinzugefügt (zeigt Anzahl Belege + Transaktionen in Toast-Meldung)
+- [x] Auto-Match: Sicherstellen dass alle pending Transaktionen (org-weit) für Matching verfügbar sind
+
+## Feature: Chatbot Begrüssungsaudio
+- [x] Chatbot: Beim Öffnen den Begrüssungstext via ElevenLabs TTS als Audio sprechen (speakGreeting Mutation)
+- [x] Chatbot: Audio-Wiedergabe nur beim ersten Öffnen (greetingPlayedRef verhindert Wiederholung)
+
+## Feature: Bankimport IBAN-Validierung
+- [x] Backend: extractCAMT053AccountIban Funktion in bankParser.ts
+- [x] Backend: IBAN-Validierung im handleFileUpload (Frontend-seitig, kein Server-Round-Trip nötig)
+- [x] Frontend: IBAN-Fehler als Toast mit 8s Dauer anzeigen
+
+## Feature: Bankimport Rükgängig
+- [x] Backend: deleteImport Prozedur – alle Transaktionen eines Imports löschen (anhand importBatchId)
+- [x] Frontend: Papierkorb-Button in Import-Historie für jeden Import
+- [x] Frontend: Bestätigungsdialog vor dem Löschen (Anzahl Transaktionen anzeigen)
+
+## Bugfix: Belege/Journal Inkonsistenzen (6 Punkte)
+- [x] Terminologie: "Verbucht / Matched" → "Verknüpft" in Belege-Kacheln, Filter und Badges
+- [x] Beleg-Status: Zahlungsstatus zeigt jetzt ob Beleg im Journal verbucht ist (journalEntryStatus)
+- [x] 1:1 Matching: applyMatches prüft ob Transaktion/Dokument bereits vergeben (1:1 Constraint)
+- [x] Konto-Konsistenz: journalEntryAccounts aus JournalLines geladen und in Belegdetails angezeigt
+- [x] Gegenkonto: Initialisierung in DocumentDetail nutzt linkedBankAccount.accountId korrekt
+- [x] Journal: "Bereit zur Freigabe" → "Zu genehmigen", "Verbucht / Genehmigt" → "Verbucht"
+- [x] Belegdetail: Buchungskonten (Soll/Haben) aus JournalLines in Belegdetails-Tab angezeigt
+
+## Neue Änderungen (Benutzer-Feedback 20.04.2026)
+- [x] Navigation: "Freigaben" → "Buchungen" in Layout.tsx umbenennen
+- [x] Terminologie: "Verknüpft" → "Mit Bank abgeglichen" in Documents.tsx, DocumentDetail.tsx und allen anderen Dateien
+- [x] Öffentliche URL wmbuchhaltung-g3uypyrz.manus.space prüfen und erreichbar machen
+
+## Bugfixes Bank + Berichte (20.04.2026)
+- [x] Berichte: "Journal"-Tab in Berichte-Navigation (neben Konten) hinzugefügt
+- [x] Bank: Zähler "Alle Transaktionen" zeigt jetzt korrekt 44 (pending + matched im GJ)
+- [x] Bank: "Alle Transaktionen" Filter zeigt jetzt alle Transaktionen (pending immer, matched nach GJ)
+- [x] Bank: Verbuchte Transaktionen (Status "matched") werden in "Verbucht"-Kachel korrekt gezählt
+
+## Feature: Vorschau-Button öffnet Detailansicht (20.04.2026)
+- [x] Documents.tsx: Vorschau-Button (Auge-Icon) soll Detailansicht (/documents/:id) öffnen statt PDF direkt
+
+## Feature: Benutzer-Verwaltung & Treuhänder-Einladung (20.04.2026)
+- [x] DB-Schema: invitations-Tabelle (token, email, role, expiresAt, usedAt, createdBy)
+- [x] Backend: invitations Router (create, list, revoke, accept)
+- [x] Frontend: Benutzer-Seite in Einstellungen aktivieren (aktuell inaktiv)
+- [x] Frontend: Benutzer-Liste mit Rolle und Status anzeigen
+- [x] Frontend: Treuhänder einladen via E-Mail + Einladungslink generieren (7 Tage gültig)
+- [x] Frontend: Einladungslink kopieren und anzeigen
+- [x] Frontend: Öffentliche Einladungs-Annahme-Seite (/einladung/:token)
+
+## Feature-Batch (20.04.2026 - Nachmittag)
+- [ ] Kunden-Import: Datei-Auswahl-Bug fixen (label/input Portal-Problem in Dialog)
+- [ ] Zeiterfassung: Link in Sidebar-Navigation hinzufügen
+- [ ] Einstellungen: Globaler "Dienstleistungen/Produkte" Tab hinzufügen
+- [ ] QR-Rechnung: Logo in PDF-Generierung (renderInvoicePdf) einbinden
+- [ ] QR-Rechnung: QR-Code-Bild Upload in Einstellungen (für Einzahlungsschein-Grafik)
+
+## Navigation-Umstrukturierung (20.04.2026 - Session 2)
+- [x] Einstellungen: Unterpunkte aus Sidebar entfernen (nur Hauptlink, direkt zu /einstellungen)
+- [x] Einladungslink Bug: /einladung/:token Route in App.tsx als öffentliche Route registriert
+- [x] AcceptInvitation.tsx: Öffentliche Seite für Einladungslinks erstellt (zeigt Org-Name, Rolle, Registrieren-Button)
+- [x] invitationsRouter: getByToken um orgName (JOIN mit organizations) erweitert
+- [x] Rechnungen: Hauptpunkt "Rechnungen" mit Unterpunkten "Kunden (Debitoren)" und "Lieferanten (Kreditoren)"
+- [x] Layout.tsx: 3-Ebenen-Navigation für Rechnungen (renderNavItem mit verschachtelten Gruppen)
+- [x] sectionPrefixes: /zahlungen/kreditoren zu /rechnungen-Gruppe hinzugefügt
+
+## Bugfixes (20.04.2026 - Session 3)
+- [x] GJ-Eröffnungsabfrage beim Beleg-Upload: Wenn Belegdatum in nicht eröffnetes GJ fällt, Dialog anzeigen und GJ automatisch eröffnen
+- [x] Kunden-Import CSV/Excel: CSV-Encoding-Fix (UTF-8 + Latin-1 Fallback für Umlaute aus Excel-Exporten)
+
+## QR-Rechnung Navigation (21.04.2026)
+- [x] "Neue Rechnung"-Button navigiert zu QrBillGenerator statt InvoicesEditor-Dialog
+- [x] Route /rechnungen/neu → QrBillGenerator
+- [x] QrBillGenerator: Kunden aus Stammdaten auswählen (Dropdown mit Suche bereits vorhanden)
+
+## Navigation Bereinigung (22.04.2026)
+- [x] Kunden (Debitoren): Unterpunkte "Offene Forderungen", "Zahlungsausgänge" und "Kunden" entfernen (nur "Ausgangsrechnungen" und "Mahnwesen" behalten)
+
+## QR-Rechnung + Zeiterfassung (22.04.2026)
+- [x] QrBillGenerator: "Kunde wählen"-Button auch im Tab "Einfacher QR-Einzahlungsschein" hinzugefügt
+- [x] QrBillGenerator: Toggle "Mit Leistungsdetails" bei Leistungspositionen (Tab Rechnung mit QR-Zahlungsteil)
+- [x] QrBillGenerator: Beim Aktivieren von "Mit Leistungsdetails" Kunden-Zeiteinträge laden und nach QR-Seite als Leistungsblatt anhängen
+- [x] Backend: generateInvoiceAcroform um optionale Leistungsdetail-Seite erweitert (Datum, Dienstleistung, Beschreibung, Std., Ansatz, Betrag, Total)
+
+## Eröffnungssalden-Verbesserungen (22.04.2026)
+- [x] Eröffnungssalden: GJ-Selector prominenter anzeigen (Label "Geschäftsjahr" + Dropdown oben rechts)
+- [x] Eröffnungssalden: Toggle "Konten ohne Betrag ausblenden" (filtert Konten mit Saldo 0.00, zeigt Anzahl ausgeblendeter Konten)
+
+## Bug: Verbuchte KK-Abrechnung verschwunden (22.04.2026)
+- [ ] Journal zeigt verbuchte Kreditkartenabrechnung nicht an (nur 2 Buchungen sichtbar)
+- [ ] Banktransaktionen: KK-Abrechnung nach Verbuchung nicht mehr sichtbar
+- [ ] Ursache prüfen: GJ-Filter, fehlende Daten, oder Lösch-Bug
+
+## QrBillGenerator – Entwurf-Speicherfunktion
+- [x] Schema: customerId in invoices nullable gemacht (Rechnungen ohne Kundenzuordnung möglich)
+- [x] Backend: saveFromQrGenerator-Prozedur in invoicesRouter (Insert/Update Entwurf, nullable customerId)
+- [x] Frontend: "Als Entwurf speichern" Button im QrBillGenerator (Tab Rechnung mit QR-Zahlungsteil)
+- [x] Frontend: Auto-Save als Entwurf beim Klick auf "Rechnung als PDF generieren"
+- [x] Frontend: Nach erstem Speichern wechselt Button zu "Entwurf aktualisieren" (savedInvoiceId-State)
+- [x] Frontend: Toast-Notification mit Link zu Entwürfen nach erfolgreichem Speichern
+- [x] Invoices.tsx: customerName für null-Fall abgesichert (Entwürfe ohne Kunden zeigen "—")
+
+## Bank & Belege – UI-Verbesserungen (Apr 2026)
+- [x] Bank: Internen h2-Header "Bankimport" entfernen (Layout-Header reicht)
+- [x] Bank: GJ-Button im Bankimport-Bereich prominenter (grösser, rechts im Import-Bereich)
+- [x] Bank: Verbuchen-Button öffnet Bearbeiten-Dialog (mit Abbrechen, Speichern, Verbuchen)
+- [x] Belege: Internen h2-Header "Belege" entfernen (Layout-Header reicht)
+- [x] Belege: Farbkennzeichnung links deutlicher (farbige Hinterlegung der Dokument-Kachel/Thumbnail)
+- [x] Belege: "Verbuchen"-Button statt Vorschau-Icon rechts in der Liste
+- [x] Belege: Manuelle Verknüpfung mit Banktransaktion auch in Detailansicht
+- [x] Belege-Detailansicht: KK-Abrechnungen – automatischer Verbuchungsvorschlag wie im Bankbereich
+
+## Bugfix: Debitorenkonto 1100 nicht gefunden (Apr 2026)
+- [x] invoicesRouter.ts: issue-Prozedur – Konto 1100 in DB eingefügt, MWST-Konto Default von 2200 auf 2040 korrigiert
+
+## KK-Sammelbuchung in Beleg-Detailansicht (Apr 2026)
+- [x] DocumentDetail.tsx: KK-Abrechnung Verbuchen-Tab – Sammelbuchung mit allen Einzelpositionen und KI-Aufwandskonten (analog Bankbereich Kreditkartenzahlungen-Button)
+
+## Bugfix: Rechnungs-PDF Format nach Verbuchen (Apr 2026)
+- [x] Nach Verbuchen einer QR-Rechnung: PDF-Button in Rechnungsliste soll dasselbe Briefformat (QrBillGenerator-Template) wie beim direkten PDF-Generieren verwenden
+  - Schema: closingText, greeting, signatory, signatoryTitle zu invoices-Tabelle hinzugefügt (Migration 0032)
+  - Backend: saveFromQrGenerator speichert diese Felder, renderInvoicePdf rendert sie korrekt
+  - Frontend: buildSaveDraftInput() übergibt alle Briefformat-Felder beim Speichern
+
+## Bugfixes + Features (22.04.2026 - Session 4)
+- [x] Bug: Eingangsrechnungen (Belege) zeigt auch Ausgangsrechnungen – URL-Parameter ?type=incoming, Dropdown-Filter "Eingangsrechnungen (alle)" hinzugefügt
+- [x] QR-Rechnung PDF: Logo kleiner (maxW 130pt, maxH 45pt)
+- [x] QR-Rechnung PDF: Währung weiter nach links (curColRight rightEdge-75 statt -55)
+- [x] QR-Rechnung PDF: QR-Code auf Seite 1 entfernt (erscheint auf Seite 2 als SwissQRBill)
+- [x] Admin: Rechnungen einzeln oder mehrfach löschen – adminDelete + adminBulkDelete Prozeduren + Checkboxen in Invoices.tsx
+
+## Bugfix: Debitorenkonto dynamisch aus Kontenplan (später)
+- [ ] invoicesRouter.ts: Debitorenkonto nicht hardcoded 1100, sondern dynamisch aus Kontenplan laden (erstes aktives Konto mit subCategory "Debitoren" oder Kontonummer 1050/1100)
+- [ ] Konto 1100 aus DB entfernen falls es ein Duplikat zu 1050 ist
+
+## Feature: Bulk-Löschen für Belege (22.04.2026)
+- [x] Backend: delete + bulkDelete-Prozeduren in documentsRouter (Admin-only, löscht S3-Dateien + DB-Einträge), storageDelete in storage.ts
+- [x] Frontend: Checkboxen in Documents.tsx (Admin-only), Toolbar mit "X Belege löschen"-Button, Select-All-Header
+- [x] Frontend: AlertDialog-Bestätigungsdialog vor Bulk-Delete
+
+## Refactoring: KK-Abrechnung Buchungslogik (22.04.2026)
+- [x] KK-Abrechnung: Zwei separate Buchungen – neues UI mit approveCcFromBankImport (Buchung 1: 1082/1032 Zahlungsbetrag editierbar; Buchung 2: Div. Aufwandkonten/1082 Sammelbuchung)
+- [x] Tab "Kontierung" für KK-Abrechnungen ausgeblendet (nicht relevant, Konten im Verbuchen-Tab)
+- [x] Tab "Zahlung": Buchungskonten-Abschnitt entfernt
+- [x] Verbuchte Belege: bookDirect setzt direkt status=approved + approveJournalEntry (kein Genehmigungsschritt)
+- [x] Nach Verbuchen: automatisch zurück zu /belege navigieren
+- [ ] Verbuchungsvorschlag auch für Einzelbuchungen automatisch anzeigen (noch offen)
+
+## Best-Practice Optimierungen Priorität 1 (Apr 2026)
+- [ ] Konfidenz-Score bei KK-Buchungsvorschlägen anzeigen (Embedding-Score als %-Badge + "Why?"-Erklärung)
+- [ ] Aging-Buckets in der Rechnungsliste (0-30 / 31-60 / 61-90+ Tage offen, Zusammenfassungskarte rechts)
+- [ ] Sparklines in den KPI-Karten auf dem Dashboard (Mini-Liniendiagramm der letzten 6 Monate)
+
+## Best-Practice Optimierungen Priorität 2 (Apr 2026)
+- [ ] Live-PDF-Preview im QrBillGenerator (Split-Screen: Formular links, PDF-Preview rechts)
+- [ ] KI-Insights in Reports (P&L, Bilanz): 2-3 automatisch generierte Erkenntnisse via LLM
+- [ ] Vollständiger Verbuchungsvorschlag bei Belegöffnung (Konto Soll / Haben vorausgefüllt)
+
+## Best-Practice Optimierungen Priorität 3 (Apr 2026)
+- [ ] KI-Chat-Assistent "Ask KLAX" (Slide-over Panel, Quick-Action-Chips, LLM-Integration)
+- [ ] Cashflow-Forecast (13 Wochen, Base/Best/Worst-Case, Konfidenzband)
+- [ ] Mobile Beleg-Scanner (Kamera-Integration, Live-OCR, Kategorievorschlag)
+
+## Priorität 1: KLAX Best-Practice-Optimierungen (infinity.swiss-Analyse)
+- [x] Priorität 1a: Konfidenz-Score bei KK-Buchungsvorschlägen – farbige %-Badges (grün/gelb/rot) + "📚 Regel" / "🤖 KI" Label + Tooltip mit Erklärung
+- [x] Priorität 1b: Aging-Buckets in Rechnungsliste – 4 klickbare Kacheln (1-30 / 31-60 / 61-90 / 90+ Tage), Farbkodierung, Filter-Integration
+- [x] Priorität 1c: Sparklines im Dashboard – echte Monatsdaten (getMonthlyAggregates), Recharts LineChart, Tooltip mit CHF-Beträgen
+
+## Priorität 2: UX-Verbesserungen (KLAX Best-Practice)
+
+- [x] 2a: Live-PDF-Preview im Rechnungseditor (Split-Screen, Echtzeit-Vorschau mit Firmen-/Kundendaten, Positionen, QR-Platzhalter)
+- [x] 2b: KI-Insights in Berichten (Eigenkapitalquote, Umsatzentwicklung, Gewinnmarge, Liquidität 1. Grades)
+- [x] 2c: Buchungsvorschlag-Banner im Verbuchen-Tab (Quelle: Regel vs. KI, "Vorschlag übernehmen"-Button)
+
+## Priorität 3: KI-Assistent & Forecast (KLAX Best-Practice)
+
+- [x] 3a: KI-Chat-Assistent (CopilotDock mit echtem avatarChat.chat Backend, Gesprächsverlauf, Vorschläge, Reset)
+- [x] 3b: Cashflow-Forecast (13-Wochen-Vorschau, Balkendiagramm, Bestandsverlauf-Tabelle, kritische Wochen)
+- [x] 3c: Mobile Scanner (bereits in DocumentUpload implementiert – Kamera-Button mit capture="environment")
+
+## Schritt 1: POS/EC-Karten Integration
+
+- [ ] Stripe Terminal Webhook-Endpoint `/api/webhooks/stripe` implementieren
+- [ ] Stripe Terminal: automatische Buchungslogik (Zahlung → Journal-Eintrag)
+- [ ] Stripe Terminal: Matching mit offener Rechnung
+- [ ] Stripe Terminal: Konfigurationsseite in Einstellungen (Webhook-Secret)
+- [ ] SumUp Webhook-Endpoint `/api/webhooks/sumup` implementieren
+- [ ] SumUp: automatische Buchungslogik (Zahlung → Journal-Eintrag)
+- [ ] SumUp: Konfigurationsseite in Einstellungen (API-Key, Merchant-Code)
+- [ ] POS-Transaktionen in Banktransaktionen-Liste anzeigen (Quelle: Stripe/SumUp Badge)
+
+## Schritt 2: EBICS 3.0 Anbindung
+
+- [ ] EBICS-Konfigurationsseite in Einstellungen (Bank, Host-ID, User-ID, Partner-ID, URL)
+- [ ] EBICS-Schlüsselverwaltung (INI/HIA-Brief, RSA-Schlüsselgenerierung)
+- [ ] EBICS-Verbindungstest (HPB-Abruf, Bankschlüssel verifizieren)
+- [ ] EBICS-Auftragstypen: C53 (CAMT.053 Kontoauszug), C54 (CAMT.054 Buchungsdetails)
+- [ ] Automatischer CAMT-Abruf via EBICS (täglich/stündlich Scheduler)
+- [ ] EBICS-Transaktionen automatisch in Banktransaktionen importieren
+
+## Session 2026-04-29: Analysebericht-Punkte umgesetzt
+
+- [x] GitHub-Push: Nemotron-Änderungen auf GitHub gepusht (38631fd → 4810b85)
+- [x] Duplikat-Schutz: approveTransaction, approveCollectiveTransaction, bookDirect prüfen ob bereits verbucht (CONFLICT-Error)
+- [x] QR-Referenz-Extraktion: bereits implementiert (qrReference + referenceNumber im JSON-Schema)
+- [x] Dashboard-KPI: "Liquidität" (= Jahresergebnis) durch echten "Bankbestand" (Konto 1000-1099) ersetzt
+- [x] Bankbestand-Prozedur: accounts.getBankBalance in routers.ts hinzugefügt (summiert Konten 1000-1099)
+- [x] Konto 1170 (Vorsteuer) angelegt (ID: 300001)
+- [x] Vorsteuer-Automatik in bookDirect: bei vatAmount > 0 wird automatisch Konto 1170 Debit gebucht
+
+
+## Session 2026-04-29: Analysebericht-Punkte umgesetzt
+
+- [x] GitHub-Push: Nemotron-Änderungen auf GitHub gepusht (38631fd → 4810b85)
+- [x] Duplikat-Schutz: approveTransaction, approveCollectiveTransaction, bookDirect prüfen ob bereits verbucht (CONFLICT-Error)
+- [x] QR-Referenz-Extraktion: bereits implementiert (qrReference + referenceNumber im JSON-Schema)
+- [x] Dashboard-KPI: Liquiditaet (= Jahresergebnis) durch echten Bankbestand (Konto 1000-1099) ersetzt
+- [x] Bankbestand-Prozedur: accounts.getBankBalance in routers.ts hinzugefuegt (summiert Konten 1000-1099)
+- [x] Konto 1170 (Vorsteuer) angelegt (ID: 300001)
+- [x] Vorsteuer-Automatik in bookDirect: bei vatAmount > 0 wird automatisch Konto 1170 Debit gebucht

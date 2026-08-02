@@ -1,0 +1,226 @@
+/* KLAX design tokens — WM Buchhaltung redesign */
+:root {
+  /* --- Typography (default: Geist pairing) --- */
+  --font-sans: "Geist", "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Geist", "Inter", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  /* --- Neutrals: warm, near-paper --- */
+  --paper:        #FBFAF7;   /* app background  */
+  --surface:      #FFFFFF;   /* cards           */
+  --surface-2:    #F5F3EE;   /* subtle fills    */
+  --hair:         #EAE6DE;   /* hairlines       */
+  --hair-strong:  #D8D2C6;
+  --ink:          #1A1917;   /* primary text    */
+  --ink-2:        #3E3B36;   /* secondary text  */
+  --ink-3:        #6B675F;   /* muted text      */
+  --ink-4:        #9A958B;   /* placeholder     */
+
+  /* --- Accent: default = "Klee" (calm moss green) --- */
+  --accent:       #2F4A3A;
+  --accent-ink:   #E9F0EA;
+  --accent-soft:  #E4EAE2;
+  --accent-line:  #C7D2C2;
+
+  /* --- Semantics --- */
+  --pos:          #2E6B3F;   /* positive / approved   */
+  --pos-soft:     #E0ECDF;
+  --warn:         #8A5A10;   /* pending / warning     */
+  --warn-soft:    #F4E9C9;
+  --neg:          #8A2B1F;   /* negative / rejected   */
+  --neg-soft:     #F1DAD3;
+  --info:         #1E4A7A;
+  --info-soft:    #DDE6F0;
+
+  /* --- AI token (purple-ish, but de-saturated) --- */
+  --ai:           #4B3A7A;
+  --ai-soft:      #ECE6F5;
+  --ai-line:      #C8BBE4;
+
+  /* --- Radius / elevation --- */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --shadow-1: 0 1px 0 rgba(23,20,15,.04), 0 1px 2px rgba(23,20,15,.04);
+  --shadow-2: 0 4px 14px -6px rgba(23,20,15,.10), 0 1px 3px rgba(23,20,15,.05);
+  --shadow-3: 0 24px 48px -20px rgba(23,20,15,.18), 0 2px 6px rgba(23,20,15,.06);
+}
+
+/* Theme variants applied via [data-theme] on root */
+[data-theme="klee"] { --accent:#2F4A3A; --accent-ink:#E9F0EA; --accent-soft:#E4EAE2; --accent-line:#C7D2C2; }
+[data-theme="indigo"] { --accent:#2A2E59; --accent-ink:#E8EAF6; --accent-soft:#E5E7F2; --accent-line:#C4C8E0; }
+[data-theme="cobalt"] { --accent:#1F3D8A; --accent-ink:#E6ECFA; --accent-soft:#E1E8F5; --accent-line:#BEC9E6; }
+[data-theme="ember"] { --accent:#7A2E1F; --accent-ink:#FBE8E2; --accent-soft:#F4E3DC; --accent-line:#E5C2B6; }
+[data-theme="graphite"] { --accent:#1A1917; --accent-ink:#F0EFEC; --accent-soft:#EBE8E1; --accent-line:#C8C3B8; }
+
+[data-font="geist"] {
+  --font-sans:"Geist","Inter",system-ui,sans-serif;
+  --font-display:"Geist","Inter",system-ui,sans-serif;
+  --font-mono:"Geist Mono","JetBrains Mono",ui-monospace,monospace;
+}
+[data-font="inter"] {
+  --font-sans:"Inter",system-ui,sans-serif;
+  --font-display:"Inter",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,monospace;
+}
+[data-font="serif-mix"] {
+  --font-sans:"Inter",system-ui,sans-serif;
+  --font-display:"Instrument Serif","Cormorant Garamond",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,monospace;
+}
+[data-font="swiss"] {
+  --font-sans:"Neue Haas Grotesk Display Pro","Inter",system-ui,sans-serif;
+  --font-display:"Neue Haas Grotesk Display Pro","Inter",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,monospace;
+}
+
+/* --- Global resets for the canvas artboards --- */
+.klax {
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--paper);
+  font-feature-settings: "cv11","ss01","ss03";
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.45;
+}
+.klax, .klax * { box-sizing: border-box; }
+.klax .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.klax .display { font-family: var(--font-display); letter-spacing: -0.02em; }
+.klax .num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+
+/* Scrollbars hidden inside artboards for clean screenshots */
+.klax *::-webkit-scrollbar { display:none; }
+.klax * { scrollbar-width: none; }
+
+/* --- Shared atoms --- */
+.klax .hair { border-color: var(--hair) !important; }
+.klax .pill {
+  display:inline-flex; align-items:center; gap:6px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 500;
+  background: var(--surface-2); color: var(--ink-2);
+  border: 1px solid var(--hair);
+}
+.klax .pill--ai   { background: var(--ai-soft); color: var(--ai); border-color: var(--ai-line); }
+.klax .pill--pos  { background: var(--pos-soft); color: var(--pos); border-color: color-mix(in oklab, var(--pos) 20%, transparent); }
+.klax .pill--warn { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in oklab, var(--warn) 20%, transparent); }
+.klax .pill--neg  { background: var(--neg-soft); color: var(--neg); border-color: color-mix(in oklab, var(--neg) 20%, transparent); }
+.klax .pill--info { background: var(--info-soft); color: var(--info); border-color: color-mix(in oklab, var(--info) 20%, transparent); }
+.klax .pill--accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+.klax .btn {
+  display:inline-flex; align-items:center; gap:8px;
+  padding: 8px 14px; border-radius: var(--r-sm);
+  font-size: 13px; font-weight: 500; line-height: 1;
+  border: 1px solid var(--hair); background: var(--surface); color: var(--ink);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+}
+.klax .btn--primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.klax .btn--ghost { background: transparent; border-color: transparent; box-shadow:none; color: var(--ink-2); }
+.klax .btn--sm { padding: 6px 10px; font-size: 12px; border-radius: var(--r-sm); }
+
+.klax .card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}
+.klax .card--soft { background: var(--surface-2); box-shadow: none; }
+
+.klax .kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 5px; border-radius: 4px;
+  border: 1px solid var(--hair);
+  background: var(--surface);
+  color: var(--ink-3);
+}
+
+.klax .label {
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 500;
+}
+
+.klax .divider { height:1px; background: var(--hair); }
+
+/* --- Sidebar --- */
+.klax .sidebar {
+  width: 232px; flex-shrink: 0;
+  background: var(--paper);
+  border-right: 1px solid var(--hair);
+  padding: 18px 12px;
+  display:flex; flex-direction:column; gap: 2px;
+}
+.klax .sb-item {
+  display:flex; align-items:center; gap:10px;
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--ink-2);
+  cursor: pointer;
+}
+.klax .sb-item:hover { background: var(--surface-2); }
+.klax .sb-item--active { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
+.klax .sb-item--active svg { color: var(--accent-ink); }
+.klax .sb-group {
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-4); font-weight: 500;
+  padding: 14px 10px 6px;
+}
+.klax .sb-sub { padding-left: 32px; font-size: 12.5px; color: var(--ink-3); }
+
+/* Tables */
+.klax table.k-table { width:100%; border-collapse: collapse; font-size: 13px; }
+.klax .k-table th {
+  text-align:left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--ink-3); font-weight: 500;
+  padding: 10px 12px; border-bottom: 1px solid var(--hair);
+  background: transparent;
+}
+.klax .k-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--hair);
+  color: var(--ink);
+  vertical-align: middle;
+}
+.klax .k-table tr:last-child td { border-bottom: none; }
+.klax .k-table tr:hover td { background: var(--surface-2); }
+
+/* Confidence bar */
+.klax .conf {
+  display:inline-flex; align-items:center; gap:6px;
+  font-size: 11px; color: var(--ink-3);
+  font-family: var(--font-mono);
+}
+.klax .conf-bar {
+  width: 32px; height: 4px; border-radius: 999px; background: var(--hair);
+  overflow: hidden;
+}
+.klax .conf-bar > i {
+  display:block; height:100%; background: var(--ai);
+}
+
+/* Tile grids */
+.klax .tile {
+  padding: 18px;
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+.klax .tile .val { font-size: 28px; letter-spacing: -0.02em; font-weight: 500; font-family: var(--font-display); }
+.klax .tile .lbl { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+
+/* Amount colors */
+.klax .amt-pos { color: var(--pos); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.klax .amt-neg { color: var(--neg); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.klax .amt     { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+
+/* Placeholder striped */
+.klax .stripe {
+  background-image: repeating-linear-gradient(
+    135deg, var(--surface-2) 0 10px, var(--paper) 10px 20px);
+}
+
+/* Nice focus rings */
+.klax .ring-accent { box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent); }

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Plus, Trash2, Send, CheckCircle2, Loader2, FileDown, Mail } from "lucide-react";
+import { Plus, Trash2, Send, CheckCircle2, Loader2, FileDown, Mail, QrCode, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -127,13 +127,14 @@ export default function InvoiceEditor(props: {
     onSuccess: () => { toast.success("Entwurf aktualisiert"); props.onSaved(); },
     onError: (e) => toast.error(e.message),
   });
+  const [issuingWithPdf, setIssuingWithPdf] = useState(false);
   const issueMut = trpc.invoices.issue.useMutation({
-    onSuccess: (r) => {
+    onSuccess: async (r) => {
       toast.success(`Rechnung ${r.invoiceNumber} verbucht`);
       utils.invoices.list.invalidate();
       utils.invoices.getById.invalidate();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => { setIssuingWithPdf(false); toast.error(e.message); },
   });
   const pdfMut = trpc.invoices.generatePdf.useMutation({
     onSuccess: (r) => {
@@ -143,6 +144,10 @@ export default function InvoiceEditor(props: {
     onError: (e) => toast.error(e.message),
   });
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [showPreview, setShowPreview] = useState(true);
+
+  // Firmen-Einstellungen für Preview
+  const companyQuery = trpc.settings.getCompanySettings.useQuery();
   const emailMut = trpc.invoices.sendEmail.useMutation({
     onSuccess: (r) => {
       toast.success(`Email an ${r.to} versandt`);
@@ -156,6 +161,19 @@ export default function InvoiceEditor(props: {
   const totals = calc(items);
   const isReadOnly = isEdit && existing.data && existing.data.status !== "draft";
   const currentStatus = existing.data?.status;
+
+  // Live-Preview HTML generieren
+  const selectedCustomer = useMemo(() =>
+    (customersQuery.data ?? []).find((c: any) => c.id === customerId),
+    [customersQuery.data, customerId]
+  );
+  const company = companyQuery.data;
+  const dueDate = useMemo(() => {
+    if (!invoiceDate) return '';
+    const d = new Date(invoiceDate);
+    d.setDate(d.getDate() + paymentTermDays);
+    return d.toLocaleDateString('de-CH');
+  }, [invoiceDate, paymentTermDays]);
 
   // Ertragskonten filtern (accountType = revenue)
   const revenueAccounts = (accountsQuery.data ?? []).filter(
@@ -199,6 +217,26 @@ export default function InvoiceEditor(props: {
     issueMut.mutate({ id: props.invoiceId });
   };
 
+  // Verbuchen + sofort QR-PDF öffnen
+  const handleIssueAndPdf = async () => {
+    if (!props.invoiceId) return;
+    setIssuingWithPdf(true);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        issueMut.mutate({ id: props.invoiceId! }, {
+          onSuccess: () => resolve(),
+          onError: (e) => reject(e),
+        });
+      });
+      // Nach Verbuchen sofort PDF generieren
+      pdfMut.mutate({ id: props.invoiceId!, regenerate: true });
+    } catch {
+      // Fehler bereits durch issueMut.onError gemeldet
+    } finally {
+      setIssuingWithPdf(false);
+    }
+  };
+
   const addItem = () => setItems([...items, emptyItem(items.length + 1)]);
   const removeItem = (idx: number) => setItems(items.filter((_, i) => i !== idx));
   const updateItem = (idx: number, patch: Partial<ItemInput>) => {
@@ -207,26 +245,35 @@ export default function InvoiceEditor(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {isEdit ? (
-              <>
-                {existing.data?.invoiceNumber ?? "Entwurf"}
-                {currentStatus && currentStatus !== "draft" && (
-                  <Badge variant="secondary">{currentStatus}</Badge>
-                )}
-              </>
-            ) : "Neue Rechnung"}
-          </DialogTitle>
-          <DialogDescription>
-            {isReadOnly
-              ? "Diese Rechnung ist verbucht und kann nicht mehr bearbeitet werden. Für Änderungen bitte stornieren und neu erstellen."
-              : "Erstelle eine neue Rechnung mit Positionen. Beim «Verbuchen» wird die Rechnungsnummer vergeben und der Journal-Eintrag erstellt."}
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="max-w-7xl max-h-[95vh] overflow-hidden p-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ background: 'var(--surface)' }}>
+          <div>
+            <h2 className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
+              {isEdit ? (existing.data?.invoiceNumber ?? 'Entwurf') : 'Neue Rechnung'}
+              {currentStatus && currentStatus !== 'draft' && (
+                <Badge variant="secondary" className="ml-2">{currentStatus}</Badge>
+              )}
+            </h2>
+            <p className="text-[12px] mt-0.5" style={{ color: 'var(--ink-3)' }}>
+              {isReadOnly
+                ? 'Verbucht – nur lesbar. Stornieren zum Bearbeiten.'
+                : 'Entwurf – Live-Vorschau rechts aktualisiert sich automatisch.'}
+            </p>
+          </div>
+          <Button
+            size="sm" variant="outline"
+            onClick={() => setShowPreview(p => !p)}
+            className="gap-1.5 text-xs"
+          >
+            {showPreview ? <><EyeOff className="h-3.5 w-3.5" /> Vorschau ausblenden</> : <><Eye className="h-3.5 w-3.5" /> Vorschau anzeigen</>}
+          </Button>
+        </div>
 
-        <div className="space-y-4">
+        {/* Split-Layout */}
+        <div className="flex overflow-hidden" style={{ height: 'calc(95vh - 130px)' }}>
+          {/* Formular links */}
+          <div className={`overflow-y-auto p-6 space-y-4 ${showPreview ? 'w-1/2 border-r' : 'w-full'}`} style={{ borderColor: 'var(--hair)' }}>
           {/* Kopfdaten */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
@@ -451,9 +498,98 @@ export default function InvoiceEditor(props: {
               />
             </div>
           </div>
-        </div>
+          </div>{/* Ende Formular-Panel */}
 
-        <DialogFooter className="gap-2">
+          {/* Live-Preview rechts */}
+          {showPreview && (
+            <div className="w-1/2 overflow-y-auto bg-gray-100 p-4">
+              <div className="bg-white shadow-md rounded mx-auto" style={{ maxWidth: 560, fontFamily: 'Arial, sans-serif', fontSize: 11, color: '#222', padding: 32 }}>
+                {/* Firmen-Kopf */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 24 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{company?.companyName ?? 'Meine Firma'}</div>
+                    <div style={{ color: '#555', marginTop: 2 }}>{company?.street ?? ''}</div>
+                    <div style={{ color: '#555' }}>{company?.zipCode ?? ''} {company?.city ?? ''}</div>
+                    {company?.vatNumber && <div style={{ color: '#888', marginTop: 4, fontSize: 10 }}>UID: {company.vatNumber}</div>}
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: '#1a1a1a' }}>RECHNUNG</div>
+                    <div style={{ color: '#555', marginTop: 4 }}>Datum: {invoiceDate ? new Date(invoiceDate).toLocaleDateString('de-CH') : '—'}</div>
+                    <div style={{ color: '#555' }}>Fällig: {dueDate || '—'}</div>
+                  </div>
+                </div>
+
+                {/* Empfänger */}
+                <div style={{ marginBottom: 20, padding: '8px 12px', background: '#f8f8f8', borderRadius: 4 }}>
+                  <div style={{ fontWeight: 600 }}>{selectedCustomer?.company || selectedCustomer?.name || 'Kunde wählen...'}</div>
+                  {selectedCustomer?.street && <div style={{ color: '#555' }}>{selectedCustomer.street}</div>}
+                  {selectedCustomer?.city && <div style={{ color: '#555' }}>{selectedCustomer.zipCode} {selectedCustomer.city}</div>}
+                </div>
+
+                {/* Betreff */}
+                {subject && <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 12 }}>{subject}</div>}
+                {introText && <div style={{ color: '#444', marginBottom: 12, fontSize: 10 }}>{introText}</div>}
+
+                {/* Positionen */}
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #333' }}>
+                      <th style={{ textAlign: 'left', padding: '4px 4px', fontSize: 10, fontWeight: 700 }}>Beschreibung</th>
+                      <th style={{ textAlign: 'right', padding: '4px 4px', fontSize: 10, fontWeight: 700, width: 50 }}>Menge</th>
+                      <th style={{ textAlign: 'right', padding: '4px 4px', fontSize: 10, fontWeight: 700, width: 70 }}>Preis</th>
+                      <th style={{ textAlign: 'right', padding: '4px 4px', fontSize: 10, fontWeight: 700, width: 70 }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((it, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '4px 4px' }}>{it.description || <span style={{ color: '#aaa' }}>Beschreibung...</span>}</td>
+                        <td style={{ textAlign: 'right', padding: '4px 4px' }}>{it.quantity} {it.unit}</td>
+                        <td style={{ textAlign: 'right', padding: '4px 4px', fontFamily: 'monospace' }}>{formatCHF(it.unitPrice, currency)}</td>
+                        <td style={{ textAlign: 'right', padding: '4px 4px', fontFamily: 'monospace' }}>{formatCHF(it.quantity * it.unitPrice, currency)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* Totale */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+                  <table style={{ width: 200 }}>
+                    <tbody>
+                      <tr>
+                        <td style={{ color: '#555', padding: '2px 0' }}>Netto</td>
+                        <td style={{ textAlign: 'right', fontFamily: 'monospace', padding: '2px 0' }}>{formatCHF(totals.subtotal, currency)}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ color: '#555', padding: '2px 0' }}>MWST</td>
+                        <td style={{ textAlign: 'right', fontFamily: 'monospace', padding: '2px 0' }}>{formatCHF(totals.vat, currency)}</td>
+                      </tr>
+                      <tr style={{ borderTop: '2px solid #333' }}>
+                        <td style={{ fontWeight: 700, padding: '4px 0' }}>Total {currency}</td>
+                        <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, fontSize: 13, padding: '4px 0' }}>{formatCHF(totals.total, currency)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Footer */}
+                {footerText && <div style={{ color: '#666', fontSize: 10, marginBottom: 12 }}>{footerText}</div>}
+
+                {/* QR-Platzhalter */}
+                <div style={{ borderTop: '1px solid #ccc', paddingTop: 12, marginTop: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 60, height: 60, border: '2px dashed #ccc', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa', fontSize: 9, textAlign: 'center' }}>QR-Code</div>
+                  <div style={{ fontSize: 9, color: '#888' }}>
+                    <div>IBAN: CH00 0000 0000 0000 0000 0</div>
+                    <div style={{ marginTop: 2 }}>Zahlbar bis: {dueDate || '—'}</div>
+                    <div style={{ marginTop: 2 }}>Betrag: {formatCHF(totals.total, currency)}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>{/* Ende Split-Layout */}
+
+        <DialogFooter className="gap-2 px-6 py-3 border-t" style={{ borderColor: 'var(--hair)', background: 'var(--surface)' }}>
           <Button variant="outline" onClick={() => props.onOpenChange(false)}>
             Schliessen
           </Button>
@@ -470,16 +606,30 @@ export default function InvoiceEditor(props: {
             </Button>
           )}
           {isEdit && currentStatus === "draft" && (
-            <Button
-              onClick={handleIssue}
-              disabled={issueMut.isPending}
-            >
-              {issueMut.isPending ? (
-                <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Verbuchen…</>
-              ) : (
-                <><Send className="h-4 w-4 mr-1" /> Verbuchen &amp; Nummer vergeben</>
-              )}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={handleIssue}
+                disabled={issueMut.isPending || issuingWithPdf}
+              >
+                {issueMut.isPending && !issuingWithPdf ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Verbuchen…</>
+                ) : (
+                  <><Send className="h-4 w-4 mr-1" /> Verbuchen</>
+                )}
+              </Button>
+              <Button
+                onClick={handleIssueAndPdf}
+                disabled={issueMut.isPending || pdfMut.isPending || issuingWithPdf}
+                className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {issuingWithPdf || pdfMut.isPending ? (
+                  <><Loader2 className="h-4 w-4 animate-spin" /> QR-PDF wird erstellt…</>
+                ) : (
+                  <><QrCode className="h-4 w-4" /> Verbuchen &amp; QR-Rechnung PDF</>
+                )}
+              </Button>
+            </>
           )}
           {isEdit && props.invoiceId != null && existing.data && existing.data.status !== "draft" && (
             <>

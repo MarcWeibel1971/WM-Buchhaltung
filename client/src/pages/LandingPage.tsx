@@ -62,7 +62,7 @@ export default function LandingPage() {
 
       {/* Hero Section */}
       <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-slate-50" />
+        <div className="absolute inset-0 bg-[var(--paper)]" />
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-24">
           <div className="text-center max-w-3xl mx-auto">
             <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-700 text-sm font-medium px-4 py-1.5 rounded-full mb-6">

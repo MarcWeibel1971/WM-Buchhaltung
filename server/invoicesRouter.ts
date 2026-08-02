@@ -146,9 +146,24 @@ async function renderInvoicePdf(params: {
   const vatTotal = parseFloat(invoice.vatTotal as string);
   const total = parseFloat(invoice.total as string);
 
+  // ── Logo (falls vorhanden) ──
+  let briefkopfY = 45;
+  if (org.logoUrl) {
+    try {
+      const logoResp = await fetch(org.logoUrl);
+      if (logoResp.ok) {
+        const logoBuffer = Buffer.from(await logoResp.arrayBuffer());
+        const ct = logoResp.headers.get("content-type") ?? "";
+        if (ct.includes("png") || ct.includes("jpg") || ct.includes("jpeg")) {
+          pdfDoc.image(logoBuffer, leftM, 38, { fit: [130, 42] });
+          briefkopfY = 88;
+        }
+      }
+    } catch { /* Logo-Fetch fehlgeschlagen – ignorieren */ }
+  }
   // ── Briefkopf ──
   pdfDoc.fontSize(11).font("Helvetica-Bold");
-  pdfDoc.text(org.companyName, leftM, 45);
+  pdfDoc.text(org.companyName, leftM, briefkopfY);
   pdfDoc.fontSize(8.5).font("Helvetica").fillColor("#444444");
   if (org.street)  pdfDoc.text(org.street);
   if (org.zipCode || org.city) pdfDoc.text(`${org.zipCode ?? ""} ${org.city ?? ""}`.trim());
@@ -252,10 +267,38 @@ async function renderInvoicePdf(params: {
   pdfDoc.text(`Zahlbar innert ${invoice.paymentTermDays} Tagen bis ${dueStr}.`, leftM, yPos, { width: contentW });
   yPos = pdfDoc.y + 16;
 
-  // ── Fusszeile ──
+  // ── Schlusstext (closingText) ──
+  if (invoice.closingText) {
+    pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
+    pdfDoc.text(invoice.closingText, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 16;
+  }
+
+  // ── Fusszeile (footerText) ──
   if (invoice.footerText) {
     pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
     pdfDoc.text(invoice.footerText, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 16;
+  }
+
+  // ── Grussformel + Unterzeichner ──
+  if (invoice.greeting || invoice.signatory) {
+    if (invoice.greeting) {
+      pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
+      pdfDoc.text(invoice.greeting, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 6;
+    }
+    pdfDoc.text(org.companyName, leftM, yPos, { width: contentW });
+    yPos = pdfDoc.y + 16;
+    if (invoice.signatory) {
+      pdfDoc.text(invoice.signatory, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 2;
+    }
+    if (invoice.signatoryTitle) {
+      pdfDoc.fillColor("#666666").fontSize(9);
+      pdfDoc.text(invoice.signatoryTitle, leftM, yPos, { width: contentW });
+      yPos = pdfDoc.y + 8;
+    }
   }
 
   // ── QR-Einzahlungsschein (falls IBAN konfiguriert und CHF/EUR) ──
@@ -385,11 +428,146 @@ export const invoicesRouter = router({
         .where(eq(invoiceItems.invoiceId, input.id))
         .orderBy(asc(invoiceItems.position));
 
-      const [customer] = await db.select().from(customers)
-        .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
-        .limit(1);
-
+       const customer = invoice.customerId
+        ? (await db.select().from(customers)
+          .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
+          .limit(1))[0] ?? null
+        : null;
       return { ...invoice, items, customer };
+    }),
+
+  // ─── SAVE FROM QR GENERATOR (Draft ohne zwingenden Kunden) ─────────────────
+  // Speichert eine Rechnung aus dem QrBillGenerator als Entwurf.
+  // customerId ist optional (kann null sein wenn kein Kunde gewählt).
+  // Wenn eine invoiceId mitgegeben wird, wird der bestehende Entwurf aktualisiert.
+  saveFromQrGenerator: orgProcedure
+    .input(z.object({
+      invoiceId: z.number().optional(), // Wenn gesetzt: Update statt Insert
+      customerId: z.number().optional(),
+      recipientName: z.string(),
+      recipientStreet: z.string(),
+      recipientZip: z.string(),
+      recipientCity: z.string(),
+      invoiceDate: z.string(),
+      paymentTermDays: z.number().int().min(0).default(30),
+      subject: z.string().optional(),
+      introText: z.string().optional(),
+      footerText: z.string().optional(),
+      currency: z.enum(["CHF", "EUR"]).default("CHF"),
+      items: z.array(z.object({
+        description: z.string(),
+        amount: z.number(),
+      })).min(1),
+      vatRate: z.number().min(0).max(100).default(0),
+      notes: z.string().optional(),
+      closingText: z.string().optional(),
+      greeting: z.string().optional(),
+      signatory: z.string().optional(),
+      signatoryTitle: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Totale berechnen
+      let subtotal = 0;
+      for (const it of input.items) {
+        subtotal += round2(it.amount);
+      }
+      subtotal = round2(subtotal);
+      const vatTotal = round2(subtotal * input.vatRate / 100);
+      const total = round2(subtotal + vatTotal);
+
+      const fiscalYear = new Date(input.invoiceDate).getFullYear();
+      const dueDate = new Date(input.invoiceDate);
+      dueDate.setDate(dueDate.getDate() + input.paymentTermDays);
+      const dueDateStr = dueDate.toISOString().slice(0, 10);
+
+      // Notiz mit Empfängeradresse (da kein Kunde-FK)
+      const recipientNote = input.customerId
+        ? undefined
+        : `${input.recipientName}, ${input.recipientStreet}, ${input.recipientZip} ${input.recipientCity}`;
+
+      let invoiceId: number;
+
+      if (input.invoiceId) {
+        // Update bestehenden Entwurf
+        const [existing] = await db.select({ id: invoices.id, status: invoices.status })
+          .from(invoices)
+          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.invoiceId)))
+          .limit(1);
+        if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Rechnung nicht gefunden" });
+        if (existing.status !== "draft") throw new TRPCError({ code: "FORBIDDEN", message: "Nur Entwürfe können aktualisiert werden" });
+
+        await db.update(invoices).set({
+          customerId: input.customerId ?? null,
+          invoiceDate: input.invoiceDate,
+          dueDate: dueDateStr,
+          paymentTermDays: input.paymentTermDays,
+          subject: input.subject ?? null,
+          introText: input.introText ?? null,
+          footerText: input.footerText ?? null,
+          closingText: input.closingText ?? null,
+          greeting: input.greeting ?? null,
+          signatory: input.signatory ?? null,
+          signatoryTitle: input.signatoryTitle ?? null,
+          currency: input.currency,
+          subtotal: subtotal.toFixed(2),
+          vatTotal: vatTotal.toFixed(2),
+          total: total.toFixed(2),
+          fiscalYear,
+          notes: recipientNote ?? input.notes ?? null,
+        }).where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.invoiceId)));
+
+        // Positionen neu schreiben
+        await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, input.invoiceId));
+        invoiceId = input.invoiceId;
+      } else {
+        // Neuen Entwurf erstellen
+        const [result] = await db.insert(invoices).values({
+          organizationId: ctx.organizationId,
+          customerId: input.customerId ?? null,
+          invoiceDate: input.invoiceDate,
+          dueDate: dueDateStr,
+          paymentTermDays: input.paymentTermDays,
+          status: "draft",
+          subject: input.subject ?? null,
+          introText: input.introText ?? null,
+          footerText: input.footerText ?? null,
+          closingText: input.closingText ?? null,
+          greeting: input.greeting ?? null,
+          signatory: input.signatory ?? null,
+          signatoryTitle: input.signatoryTitle ?? null,
+          currency: input.currency,
+          subtotal: subtotal.toFixed(2),
+          vatTotal: vatTotal.toFixed(2),
+          total: total.toFixed(2),
+          fiscalYear,
+          notes: recipientNote ?? input.notes ?? null,
+        });
+        invoiceId = (result as any).insertId as number;
+      }
+
+      // Positionen einfügen
+      for (let i = 0; i < input.items.length; i++) {
+        const it = input.items[i];
+        const lineNet = round2(it.amount);
+        const lineVat = round2(lineNet * input.vatRate / 100);
+        await db.insert(invoiceItems).values({
+          invoiceId,
+          position: i + 1,
+          description: it.description,
+          quantity: "1",
+          unit: "Pauschal",
+          unitPrice: lineNet.toFixed(2),
+          vatRate: input.vatRate.toFixed(2),
+          lineSubtotal: lineNet.toFixed(2),
+          lineVat: lineVat.toFixed(2),
+          lineTotal: (lineNet + lineVat).toFixed(2),
+        });
+      }
+
+      return { id: invoiceId, status: "draft" as const };
     }),
 
   // ─── CREATE (Draft) ───────────────────────────────────────────────────────
@@ -577,7 +755,7 @@ export const invoicesRouter = router({
       debitorAccountNumber: z.string().default("1100"),
       // Fallback für Positionen ohne eigenes Ertragskonto
       defaultRevenueAccountNumber: z.string().default("3000"),
-      vatAccountNumber: z.string().default("2200"),
+      vatAccountNumber: z.string().default("2040"),
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
@@ -834,11 +1012,11 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung hat keine Positionen" });
       }
 
+      if (!invoice.customerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung hat keinen Kunden – bitte zuerst einen Kunden zuweisen" });
       const [customer] = await db.select().from(customers)
         .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
         .limit(1);
       if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
-
       const [org] = await db.select().from(companySettings)
         .where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
       if (!org) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen" });
@@ -920,12 +1098,12 @@ export const invoicesRouter = router({
       }
 
       // Empfänger ermitteln
+      if (!invoice.customerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung hat keinen Kunden – E-Mail-Versand nicht möglich" });
       const [customer] = await db.select().from(customers)
         .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
         .limit(1);
       if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
-
-      const recipient = input.to ?? customer.email;
+      const recipient = input.to ?? customer.email;;
       if (!recipient) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -992,5 +1170,41 @@ ${org.companyName}`;
       }
 
       return { success: true, messageId, to: recipient };
+    }),
+
+  // ─── ADMIN DELETE (alle Status, nur für Entwicklungsphase) ───────────────────────────────
+  adminDelete: orgProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [existing] = await db.select({ id: invoices.id }).from(invoices)
+        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)))
+        .limit(1);
+      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
+      await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, input.id));
+      await db.delete(invoices)
+        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)));
+      return { success: true };
+    }),
+
+  // ─── ADMIN BULK DELETE ───────────────────────────────────────────────────────────────────
+  adminBulkDelete: orgProcedure
+    .input(z.object({ ids: z.array(z.number()).min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      let deleted = 0;
+      for (const id of input.ids) {
+        const [existing] = await db.select({ id: invoices.id }).from(invoices)
+          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)))
+          .limit(1);
+        if (!existing) continue;
+        await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
+        await db.delete(invoices)
+          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)));
+        deleted++;
+      }
+      return { success: true, deleted };
     }),
 });

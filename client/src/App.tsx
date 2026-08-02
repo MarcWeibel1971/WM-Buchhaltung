@@ -2,11 +2,11 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, Redirect, useLocation } from "wouter";
+import { useEffect } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { FiscalYearProvider } from "./contexts/FiscalYearContext";
 import { useAuth } from "./_core/hooks/useAuth";
-import { getLoginUrl } from "./const";
 import { Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
@@ -20,13 +20,10 @@ import LandingPage from "./pages/LandingPage";
 
 // Pages – App (protected)
 import Dashboard from "./pages/Dashboard";
-import Journal from "./pages/Journal";
-import BankImport from "./pages/BankImport";
-import CreditCard from "./pages/CreditCard";
+import Workflow from "./pages/Workflow";
+import Berichte from "./pages/Berichte";
 import Payroll from "./pages/Payroll";
-import Reports from "./pages/Reports";
 import VatPage from "./pages/Vat";
-import Documents from "./pages/Documents";
 import DocumentDetail from "./pages/DocumentDetail";
 import Settings from "./pages/Settings";
 import YearEnd from "./pages/YearEnd";
@@ -36,16 +33,17 @@ import TimeTracking from "./pages/TimeTracking";
 import Onboarding from "./pages/Onboarding";
 import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
-import GlobalRules from "./pages/GlobalRules";
 import Layout from "./components/Layout";
+import AvatarChatWidget from "./components/AvatarChatWidget";
+import AcceptInvitation from "./pages/AcceptInvitation";
+import Admin from "./pages/Admin";
 
 /**
  * AuthGuard: Prüft ob der User eingeloggt ist.
- * Falls nicht → Redirect zur Login-Seite (statt Manus OAuth).
+ * Falls nicht → Redirect zur Login-Seite.
  */
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { loading, isAuthenticated } = useAuth();
-  const [, navigate] = useLocation();
 
   if (loading) {
     return (
@@ -66,9 +64,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Phase 1c OrgGuard: Stellt sicher, dass der eingeloggte User eine aktive
- * Organisation hat. Falls nicht, wird die Onboarding-Seite angezeigt, auf der
- * der User eine neue Firma anlegen kann.
+ * OrgGuard: Stellt sicher, dass der eingeloggte User eine aktive
+ * Organisation hat. Falls nicht, wird die Onboarding-Seite angezeigt.
  */
 function OrgGuard({ children }: { children: React.ReactNode }) {
   const utils = trpc.useUtils();
@@ -95,12 +92,10 @@ function OrgGuard({ children }: { children: React.ReactNode }) {
 
   const orgs = orgsQuery.data ?? [];
 
-  // Kein Mitglied in einer Org → Onboarding
   if (orgs.length === 0) {
     return <Onboarding />;
   }
 
-  // Mitglied, aber keine aktuelle Org → erste verfügbare aktivieren
   const hasCurrent = orgs.some((o) => o.isCurrent);
   if (!hasCurrent) {
     if (!setCurrent.isPending && !setCurrent.isSuccess) {
@@ -119,41 +114,88 @@ function OrgGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Wouter-kompatible In-App-Weiterleitung (behält Query-String, falls erwünscht)
+function RedirectTo({ to }: { to: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation(to, { replace: true } as any);
+  }, [to, setLocation]);
+  return null;
+}
+
 /**
- * Protected app routes – only accessible after login + org selection
+ * Protected app routes – nach Refactoring 5-Bereiche-Navigation:
+ * - /            → Dashboard (mit Aufgaben-Hub aus Ex-Inbox)
+ * - /workflow    → Belege & Bank Split-View (Workflow)
+ * - /rechnungen  → Ausgangsrechnungen
+ * - /berichte    → Berichte
+ * - /abschluss   → Abschluss (MWST + Jahresabschluss)
+ *
+ * Alte Pfade werden auf neue Pfade weitergeleitet.
  */
 function AppRouter() {
   return (
     <Switch>
+      {/* Hauptrouten */}
       <Route path="/" component={Dashboard} />
-      <Route path="/journal" component={Journal} />
-      <Route path="/bank-import" component={BankImport} />
-      <Route path="/credit-card" component={CreditCard} />
-      <Route path="/payroll" component={Payroll} />
-      <Route path="/reports" component={Reports} />
-      <Route path="/accounts">{() => { window.location.replace("/reports"); return null; }}</Route>
-      <Route path="/vat" component={VatPage} />
-      <Route path="/documents/:id" component={DocumentDetail} />
-      <Route path="/documents" component={Documents} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/year-end" component={YearEnd} />
-      <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
-      <Route path="/zahlungen/kreditoren" component={Kreditoren} />
+      <Route path="/dashboard" component={Dashboard} />
+      <Route path="/workflow" component={Workflow} />
       <Route path="/rechnungen" component={Invoices} />
       <Route path="/mahnwesen" component={OpenPositions} />
+      <Route path="/berichte" component={Berichte} />
+      <Route path="/abschluss" component={VatPage} />
+      <Route path="/vat" component={VatPage} />
+      <Route path="/year-end" component={YearEnd} />
+      {/* Einstellungen (persönlich/Workspace) – Tabs via ?tab=… */}
+      <Route path="/einstellungen">{() => <Settings />}</Route>
+      <Route path="/settings">{() => <Settings />}</Route>
+
+      {/* Admin (organisationsweit) – Tabs via ?tab=… */}
+      <Route path="/admin" component={Admin} />
+
+      {/* Detail-Routen */}
+      <Route path="/documents/:id" component={DocumentDetail} />
+      <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
+      <Route path="/rechnungen/neu" component={QrBillGenerator} />
+      <Route path="/zahlungen/kreditoren" component={Kreditoren} />
       <Route path="/time-tracking" component={TimeTracking} />
-      <Route path="/admin/global-rules" component={GlobalRules} />
-      <Route path="/zahlungen">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
-      <Route path="/qr-rechnung">{() => { window.location.replace("/zahlungen/debitoren"); return null; }}</Route>
+      <Route path="/payroll" component={Payroll} />
+
+      {/* Redirects: Alte Pfade → Neue Pfade */}
+      <Route path="/inbox">{() => <RedirectTo to="/" />}</Route>
+      <Route path="/belege">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/bank">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/freigaben">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/documents">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/journal">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/bank-import">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/credit-card">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/reports">{() => <RedirectTo to="/berichte" />}</Route>
+      <Route path="/zahlungen">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>
+      <Route path="/qr-rechnung">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>
+
+      {/* Redirects: alte Admin/Settings-Pfade → neue Tab-URLs */}
+      <Route path="/admin/global-rules">{() => <RedirectTo to="/admin?tab=globalRules" />}</Route>
+      <Route path="/admin/users">{() => <RedirectTo to="/admin?tab=users" />}</Route>
+      <Route path="/admin/benutzer">{() => <RedirectTo to="/admin?tab=users" />}</Route>
+      <Route path="/admin/kontenplan">{() => <RedirectTo to="/admin?tab=chartOfAccounts" />}</Route>
+      <Route path="/admin/buchungsregeln">{() => <RedirectTo to="/admin?tab=rules" />}</Route>
+      <Route path="/admin/audit">{() => <RedirectTo to="/admin?tab=dsg" />}</Route>
+      <Route path="/admin/abonnement">{() => <RedirectTo to="/admin?tab=subscription" />}</Route>
+      <Route path="/accounts">{() => <RedirectTo to="/admin?tab=chartOfAccounts" />}</Route>
+      <Route path="/einstellungen/:tab">
+        {(params: { tab: string }) => <RedirectTo to={`/einstellungen?tab=${params.tab}`} />}
+      </Route>
+      <Route path="/settings/:tab">
+        {(params: { tab: string }) => <RedirectTo to={`/einstellungen?tab=${params.tab}`} />}
+      </Route>
+
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
   );
 }
 
-/**
- * ProtectedApp: Wraps the app routes with AuthGuard + OrgGuard + Layout
- */
 function ProtectedApp() {
   return (
     <AuthGuard>
@@ -162,6 +204,7 @@ function ProtectedApp() {
           <Layout>
             <AppRouter />
           </Layout>
+          <AvatarChatWidget />
         </FiscalYearProvider>
       </OrgGuard>
     </AuthGuard>
@@ -175,15 +218,16 @@ function App() {
         <TooltipProvider>
           <Toaster position="top-right" richColors />
           <Switch>
-            {/* Public routes – no auth required */}
+            {/* Public routes */}
             <Route path="/landing" component={LandingPage} />
             <Route path="/login" component={Login} />
             <Route path="/register" component={Register} />
             <Route path="/forgot-password" component={ForgotPassword} />
             <Route path="/reset-password" component={ResetPassword} />
             <Route path="/verify-email" component={VerifyEmail} />
+            <Route path="/einladung/:token" component={AcceptInvitation} />
 
-            {/* Protected routes – auth + org required */}
+            {/* Protected routes */}
             <Route component={ProtectedApp} />
           </Switch>
         </TooltipProvider>

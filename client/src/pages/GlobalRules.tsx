@@ -206,58 +206,58 @@ export default function GlobalRules() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* ── Header ────────────────────────────────────────────────────────── */}
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
+      {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Brain className="h-6 w-6 text-primary" />
-          Globale KI-Regeln
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Allgemeine Verbuchungsregeln, die als Basis für alle Kunden dienen.
-          Kundenspezifische Regeln haben immer Priorität.
+        <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Globale KI-Regeln</h1>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          Allgemeine Verbuchungsregeln als Basis für alle Kunden. Kundenspezifische Regeln haben Priorität.
         </p>
       </div>
 
-      {/* ── Stats Cards ───────────────────────────────────────────────────── */}
+      {/* 3-Ebenen-Info Card */}
+      <div
+        className="klax-card p-4 flex items-start gap-3"
+        style={{ background: "var(--ai-soft)", borderColor: "var(--ai-line)", color: "var(--ai)" }}
+      >
+        <Sparkles className="h-4 w-4 flex-shrink-0 mt-0.5" />
+        <div className="text-[12.5px]">
+          <span className="font-semibold">Regel-Hierarchie:</span>{" "}
+          <span>Kundenspezifisch</span>
+          <span className="mx-1.5 opacity-60">→</span>
+          <span>Global</span>
+          <span className="mx-1.5 opacity-60">→</span>
+          <span>LLM-Fallback</span>
+        </div>
+      </div>
+
+      {/* 6 Stat Tiles */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <Card>
-            <CardContent className="pt-4 pb-3 px-4">
-              <div className="text-2xl font-bold">{stats.total}</div>
-              <div className="text-xs text-muted-foreground">Regeln gesamt</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-3 px-4">
-              <div className="text-2xl font-bold text-green-600">{stats.active}</div>
-              <div className="text-xs text-muted-foreground">Aktiv</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-3 px-4">
-              <div className="text-2xl font-bold text-gray-400">{stats.inactive}</div>
-              <div className="text-xs text-muted-foreground">Inaktiv</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-3 px-4">
-              <div className="text-2xl font-bold text-blue-600">{stats.manual}</div>
-              <div className="text-xs text-muted-foreground">Manuell</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-3 px-4">
-              <div className="text-2xl font-bold text-purple-600">{stats.ai}</div>
-              <div className="text-xs text-muted-foreground">KI-gelernt</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-3 px-4">
-              <div className="text-2xl font-bold text-amber-600">{stats.totalUsage}</div>
-              <div className="text-xs text-muted-foreground">Anwendungen</div>
-            </CardContent>
-          </Card>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="klax-card p-4">
+            <div className="display mono text-[24px] font-medium" style={{ color: "var(--ink)" }}>{stats.total}</div>
+            <div className="text-[10.5px] uppercase tracking-wider mt-1" style={{ color: "var(--ink-3)" }}>Regeln</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="display mono text-[24px] font-medium" style={{ color: "var(--pos)" }}>{stats.active}</div>
+            <div className="text-[10.5px] uppercase tracking-wider mt-1" style={{ color: "var(--ink-3)" }}>Aktiv</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="display mono text-[24px] font-medium" style={{ color: "var(--ink-4)" }}>{stats.inactive}</div>
+            <div className="text-[10.5px] uppercase tracking-wider mt-1" style={{ color: "var(--ink-3)" }}>Inaktiv</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="display mono text-[24px] font-medium" style={{ color: "var(--info)" }}>{stats.manual}</div>
+            <div className="text-[10.5px] uppercase tracking-wider mt-1" style={{ color: "var(--ink-3)" }}>Manuell</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="display mono text-[24px] font-medium" style={{ color: "var(--ai)" }}>{stats.ai}</div>
+            <div className="text-[10.5px] uppercase tracking-wider mt-1" style={{ color: "var(--ink-3)" }}>KI-gelernt</div>
+          </div>
+          <div className="klax-card p-4">
+            <div className="display mono text-[24px] font-medium" style={{ color: "var(--warn)" }}>{stats.totalUsage}</div>
+            <div className="text-[10.5px] uppercase tracking-wider mt-1" style={{ color: "var(--ink-3)" }}>Anwendungen</div>
+          </div>
         </div>
       )}
 

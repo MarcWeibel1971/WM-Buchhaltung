@@ -86,6 +86,19 @@ export const timeTrackingRouter = router({
       return { success: true };
     }),
 
+  deleteService: orgProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+      await db.update(services).set({ isActive: false })
+        .where(and(
+          eq(services.organizationId, ctx.organizationId),
+          eq(services.id, input.id),
+        ));
+      return { success: true };
+    }),
+
   // ─── Time Entries ───────────────────────────────────────────────────────────
 
   listEntries: orgProcedure

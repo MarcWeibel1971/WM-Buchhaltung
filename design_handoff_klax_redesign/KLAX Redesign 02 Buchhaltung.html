@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<title>KLAX — 02 Buchhaltung</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Instrument+Serif&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/tokens.css" />
+<style>
+  html, body { margin:0; padding:0; background:#f0eee9; font-family: 'Geist', 'Inter', system-ui, sans-serif; }
+  .xnav { position: fixed; top: 14px; left: 14px; z-index: 9999; display: flex; gap: 4px; padding: 4px; background: #1A1917; border-radius: 10px; box-shadow: 0 10px 30px -12px rgba(0,0,0,.35); font-family: 'Geist','Inter',sans-serif; font-size: 12px; }
+  .xnav a { padding: 6px 10px; color: #D9D3C6; text-decoration: none; border-radius: 6px; }
+  .xnav a.on { background: #F4F1EA; color: #1A1917; font-weight: 500; }
+  #tweak-panel { position: fixed; right: 16px; bottom: 16px; z-index: 9999; width: 280px; background: #1A1917; color: #F4F1EA; border-radius: 12px; padding: 14px; box-shadow: 0 20px 50px -20px rgba(0,0,0,.45); font: 12px 'Geist','Inter',sans-serif; display: none; }
+  #tweak-panel.on { display: block; }
+  #tweak-panel h4 { margin: 0 0 10px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #C9C3B5; font-weight: 500; }
+  #tweak-panel .row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  #tweak-panel button { flex: 1; min-width: 0; padding: 6px 8px; font-size: 11px; background: rgba(255,255,255,.06); color: #F4F1EA; border: 1px solid rgba(255,255,255,.08); border-radius: 6px; cursor: pointer; font-family: inherit; }
+  #tweak-panel button.on { background: #F4F1EA; color: #1A1917; border-color: #F4F1EA; }
+</style>
+</head>
+<body>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#FBFAF7"/>
+    <rect x="30" y="30" width="40" height="40" rx="10" fill="#2F4A3A"/>
+    <text x="50" y="58" text-anchor="middle" font-family="Geist, Inter, sans-serif" font-size="24" font-weight="600" fill="#E9F0EA">K</text>
+  </svg>
+</template>
+
+<div class="xnav">
+  <a href="KLAX Redesign.html">01 · Grundlagen</a>
+  <a href="#" class="on">02 · Buchhaltung</a>
+  <a href="KLAX Redesign 03 Abschluss.html">03 · Abschluss</a>
+  <a href="KLAX Redesign 04 Extras.html">04 · Extras</a>
+</div>
+
+<div id="app"></div>
+
+<div id="tweak-panel">
+  <h4>Tweaks</h4>
+  <div style="font-size:10.5px;color:#8F897B;margin-bottom:4px">Akzent</div>
+  <div class="row" data-group="theme">
+    <button data-v="klee" class="on">Klee</button>
+    <button data-v="indigo">Indigo</button>
+    <button data-v="cobalt">Cobalt</button>
+    <button data-v="ember">Ember</button>
+    <button data-v="graphite">Graphite</button>
+  </div>
+  <div style="font-size:10.5px;color:#8F897B;margin-bottom:4px">Schrift</div>
+  <div class="row" data-group="font">
+    <button data-v="geist" class="on">Geist</button>
+    <button data-v="inter">Inter</button>
+    <button data-v="serif-mix">Serif-Mix</button>
+    <button data-v="swiss">Haas Grotesk</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="components/design-canvas.jsx"></script>
+<script type="text/babel" src="components/primitives.jsx"></script>
+<script type="text/babel" src="components/pages-buchhaltung.jsx"></script>
+
+<script type="text/babel">
+const TWEAKS = /*EDITMODE-BEGIN*/{
+  "theme": "klee",
+  "font": "geist"
+}/*EDITMODE-END*/;
+
+function applyTweaks(t) {
+  document.documentElement.setAttribute('data-theme', t.theme);
+  document.documentElement.setAttribute('data-font', t.font);
+  document.querySelectorAll('#tweak-panel [data-group]').forEach(g => {
+    const key = g.getAttribute('data-group');
+    g.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('on', b.getAttribute('data-v') === t[key]);
+    });
+  });
+}
+const CURRENT = { ...TWEAKS };
+applyTweaks(CURRENT);
+
+window.addEventListener('message', (e) => {
+  const d = e.data || {};
+  if (d.type === '__activate_edit_mode') document.getElementById('tweak-panel').classList.add('on');
+  if (d.type === '__deactivate_edit_mode') document.getElementById('tweak-panel').classList.remove('on');
+});
+window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+
+document.querySelectorAll('#tweak-panel [data-group]').forEach(g => {
+  const key = g.getAttribute('data-group');
+  g.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      CURRENT[key] = b.getAttribute('data-v');
+      applyTweaks(CURRENT);
+      window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: CURRENT[key] } }, '*');
+    });
+  });
+});
+
+const { DesignCanvas, DCSection, DCArtboard } = window;
+
+const App = () => (
+  <DesignCanvas>
+    <DCSection id="kreditoren" title="Kreditoren & Zahlungen" subtitle="Eingangsrechnungen zu Zahlungsaufträgen">
+      <DCArtboard id="kreditoren" label="Kreditoren · pain.001 Export" width={1440} height={1100}>
+        <PageKreditoren />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="konten" title="Kontenplan & Kontendetail" subtitle="KMU-Kontenrahmen · Hauptbuch">
+      <DCArtboard id="kontenplan" label="Kontenplan" width={1440} height={1200}>
+        <PageKontenplan />
+      </DCArtboard>
+      <DCArtboard id="kontendetail" label="Kontendetail · 1020 ZKB" width={1440} height={1000}>
+        <PageKontendetail />
+      </DCArtboard>
+    </DCSection>
+
+    <DCSection id="admin" title="Admin" subtitle="Globale KI-Regeln · Einstellungen">
+      <DCArtboard id="rules" label="KI-Regeln · 94 globale Regeln" width={1440} height={1200}>
+        <PageGlobalRules />
+      </DCArtboard>
+      <DCArtboard id="settings" label="Einstellungen · Firma" width={1440} height={1100}>
+        <PageSettings />
+      </DCArtboard>
+    </DCSection>
+  </DesignCanvas>
+);
+
+ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+</script>
+
+</body>
+</html>

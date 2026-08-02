@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
 import {
   FileText, Plus, Search, Eye, Send, CheckCircle2, XCircle,
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -19,6 +21,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import InvoiceEditor from "./InvoicesEditor";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -84,6 +87,13 @@ export default function Invoices() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [paymentDialog, setPaymentDialog] = useState<{ id: number; open: number } | null>(null);
 
+  // Admin-Selektion
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
   const utils = trpc.useUtils();
   const statusFilter: any = tab === "all" ? undefined : tab;
   const listQuery = trpc.invoices.list.useQuery({
@@ -94,6 +104,23 @@ export default function Invoices() {
 
   const deleteMutation = trpc.invoices.delete.useMutation({
     onSuccess: () => { toast.success("Entwurf gelöscht"); utils.invoices.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const adminDeleteMutation = trpc.invoices.adminDelete.useMutation({
+    onSuccess: () => {
+      toast.success("Rechnung gelöscht");
+      utils.invoices.list.invalidate();
+      setSelectedIds(new Set());
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const adminBulkDeleteMutation = trpc.invoices.adminBulkDelete.useMutation({
+    onSuccess: (r) => {
+      toast.success(`${r.deleted} Rechnung(en) gelöscht`);
+      utils.invoices.list.invalidate();
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+    },
     onError: (e) => toast.error(e.message),
   });
   const issueMutation = trpc.invoices.issue.useMutation({
@@ -117,7 +144,7 @@ export default function Invoices() {
     onError: (e) => toast.error(e.message),
   });
 
-  const rows = listQuery.data ?? [];
+  const [agingFilter, setAgingFilter] = useState<number | null>(null); // index into aging buckets
 
   // Kennzahlen über alle (ungefiltert) – für Headerkacheln
   const allQuery = trpc.invoices.list.useQuery({ limit: 500 });
@@ -127,6 +154,13 @@ export default function Invoices() {
     let overdueSum = 0;
     let openCount = 0;
     let overdueCount = 0;
+    // Aging buckets: 1-30, 31-60, 61-90, 90+ days overdue
+    const aging = [
+      { label: '1–30 Tage', min: 1, max: 30, count: 0, sum: 0, color: 'amber' },
+      { label: '31–60 Tage', min: 31, max: 60, count: 0, sum: 0, color: 'orange' },
+      { label: '61–90 Tage', min: 61, max: 90, count: 0, sum: 0, color: 'red' },
+      { label: '90+ Tage', min: 91, max: Infinity, count: 0, sum: 0, color: 'rose' },
+    ];
     for (const r of all) {
       if (r.status === "sent" || r.status === "partially_paid") {
         openSum += r.openAmount;
@@ -134,25 +168,61 @@ export default function Invoices() {
         if (r.isOverdue) {
           overdueSum += r.openAmount;
           overdueCount++;
+          const days = r.daysOverdue ?? 0;
+          for (const bucket of aging) {
+            if (days >= bucket.min && days <= bucket.max) {
+              bucket.count++;
+              bucket.sum += r.openAmount;
+              break;
+            }
+          }
         }
       }
     }
-    return { openSum, overdueSum, openCount, overdueCount, total: all.length };
+    return { openSum, overdueSum, openCount, overdueCount, total: all.length, aging };
   }, [allQuery.data]);
 
-  const handleNew = () => { setEditingId(null); setEditorOpen(true); };
+  const rawRows = listQuery.data ?? [];
+  // Apply aging filter if active (filter by daysOverdue range)
+  const AGING_RANGES = [
+    { min: 1, max: 30 },
+    { min: 31, max: 60 },
+    { min: 61, max: 90 },
+    { min: 91, max: Infinity },
+  ];
+  const rows = useMemo(() => {
+    if (agingFilter === null) return rawRows;
+    const bucket = AGING_RANGES[agingFilter];
+    if (!bucket) return rawRows;
+    return rawRows.filter(r => r.isOverdue && (r.daysOverdue ?? 0) >= bucket.min && (r.daysOverdue ?? 0) <= bucket.max);
+  }, [rawRows, agingFilter]);
+
+  const [, navigate] = useLocation();
+  const handleNew = () => navigate("/rechnungen/neu");
   const handleEdit = (id: number) => { setEditingId(id); setEditorOpen(true); };
 
+  // Selektion-Helpers
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  const toggleAll = useCallback((checked: boolean) => {
+    setSelectedIds(checked ? new Set(rows.map(r => r.id)) : new Set());
+  }, [rows]);
+  const allSelected = rows.length > 0 && selectedIds.size === rows.length;
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <FileText className="h-6 w-6" /> Rechnungen
-          </h2>
-          <p className="text-muted-foreground text-sm mt-1">
-            Ausgangsrechnungen mit QR-Einzahlungsschein, Positionen und Zahlungs­status.
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Rechnungen</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            Ausgangsrechnungen mit QR-Einzahlungsschein, Positionen und Zahlungsstatus.
           </p>
         </div>
         <Button onClick={handleNew} className="gap-2">
@@ -160,30 +230,77 @@ export default function Invoices() {
         </Button>
       </div>
 
-      {/* KPI-Kacheln */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Offene Rechnungen</div>
-            <div className="text-2xl font-bold">{formatCHF(stats.openSum)}</div>
-            <div className="text-xs text-muted-foreground mt-1">{stats.openCount} Rechnungen</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Davon überfällig</div>
-            <div className="text-2xl font-bold text-red-600">{formatCHF(stats.overdueSum)}</div>
-            <div className="text-xs text-muted-foreground mt-1">{stats.overdueCount} Rechnungen</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Alle Rechnungen</div>
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <div className="text-xs text-muted-foreground mt-1">im aktuellen Geschäftsjahr</div>
-          </CardContent>
-        </Card>
+      {/* KPI-Kacheln (KLAX Tiles) */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <div className="klax-card p-5">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Offen</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{formatCHF(stats.openSum)}</div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>{stats.openCount} Rechnungen</div>
+        </div>
+        <div className="klax-card p-5">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Überfällig</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--neg)" }}>{formatCHF(stats.overdueSum)}</div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>{stats.overdueCount} Rechnungen</div>
+        </div>
+        <div className="klax-card p-5">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Alle</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{stats.total}</div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>im aktuellen Geschäftsjahr</div>
+        </div>
+        <div className="klax-card p-5" style={{ background: "var(--klax-accent-soft)", borderColor: "var(--klax-accent-line)" }}>
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--klax-accent)" }}>Bezahlt</div>
+          <div className="display mono text-[26px] font-medium mt-1.5" style={{ color: "var(--klax-accent)" }}>
+            {stats.total - stats.openCount}
+          </div>
+          <div className="text-[11.5px] mt-1" style={{ color: "var(--ink-3)" }}>Rechnungen YTD</div>
+        </div>
       </div>
+
+      {/* Aging-Buckets – nur anzeigen wenn überfällige Rechnungen vorhanden */}
+      {stats.overdueCount > 0 && (
+        <div className="klax-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--ink-3)' }}>Fälligkeitsanalyse (Aging)</div>
+            {agingFilter !== null && (
+              <button
+                onClick={() => setAgingFilter(null)}
+                className="text-[11px] underline"
+                style={{ color: 'var(--klax-accent)' }}
+              >
+                Filter aufheben
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {stats.aging.map((bucket, idx) => {
+              const isActive = agingFilter === idx;
+              const colorMap: Record<string, { bg: string; text: string; border: string }> = {
+                amber: { bg: '#fffbeb', text: '#92400e', border: '#fde68a' },
+                orange: { bg: '#fff7ed', text: '#9a3412', border: '#fed7aa' },
+                red: { bg: '#fef2f2', text: '#991b1b', border: '#fecaca' },
+                rose: { bg: '#fff1f2', text: '#9f1239', border: '#fecdd3' },
+              };
+              const c = colorMap[bucket.color] ?? colorMap.amber;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => { setAgingFilter(isActive ? null : idx); setTab('overdue'); }}
+                  className="rounded-lg p-3 text-left transition-all border-2 hover:opacity-90"
+                  style={{
+                    background: isActive ? c.text : c.bg,
+                    borderColor: isActive ? c.text : c.border,
+                    color: isActive ? '#fff' : c.text,
+                  }}
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80">{bucket.label}</div>
+                  <div className="text-[20px] font-bold mono mt-1">{bucket.count}</div>
+                  <div className="text-[11px] font-medium mt-0.5 opacity-80">{formatCHF(bucket.sum)}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Filter + Search */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -198,7 +315,7 @@ export default function Invoices() {
           </TabsList>
         </Tabs>
         <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: "var(--ink-4)" }} />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -208,11 +325,50 @@ export default function Invoices() {
         </div>
       </div>
 
+      {/* Admin Bulk-Delete Toolbar */}
+      {isAdmin && selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
+          <span className="text-sm font-medium text-destructive">
+            {selectedIds.size} Rechnung(en) ausgewählt
+          </span>
+          <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="destructive" className="gap-1">
+                <Trash2 className="h-4 w-4" /> Alle löschen
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{selectedIds.size} Rechnung(en) löschen?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Diese Aktion ist unwiderruflich. Alle ausgewählten Rechnungen (inkl. verbuchter)
+                  werden permanent gelöscht. Nur für die Entwicklungsphase verwenden.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  onClick={() => adminBulkDeleteMutation.mutate({ ids: Array.from(selectedIds) })}
+                  disabled={adminBulkDeleteMutation.isPending}
+                >
+                  {adminBulkDeleteMutation.isPending ? "Löschen…" : "Endgültig löschen"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+            Auswahl aufheben
+          </Button>
+        </div>
+      )}
+
       {/* Tabelle */}
       <Card>
         <CardHeader className="py-4">
           <CardTitle className="text-base">
             {rows.length} {rows.length === 1 ? "Rechnung" : "Rechnungen"}
+            {isAdmin && <span className="ml-2 text-xs text-muted-foreground font-normal">(Admin: Checkboxen zum Löschen)</span>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -229,6 +385,16 @@ export default function Invoices() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {isAdmin && (
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={allSelected}
+                        onCheckedChange={(c) => toggleAll(!!c)}
+                        aria-label="Alle auswählen"
+                        data-state={someSelected ? "indeterminate" : allSelected ? "checked" : "unchecked"}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Nummer</TableHead>
                   <TableHead>Datum</TableHead>
                   <TableHead>Fällig</TableHead>
@@ -242,30 +408,49 @@ export default function Invoices() {
               </TableHeader>
               <TableBody>
                 {rows.map((inv) => (
-                  <TableRow key={inv.id} className="cursor-pointer" onClick={() => handleEdit(inv.id)}>
-                    <TableCell className="font-mono text-xs whitespace-nowrap">
+                  <TableRow
+                    key={inv.id}
+                    className={`cursor-pointer ${selectedIds.has(inv.id) ? "bg-destructive/5" : ""}`}
+                    onClick={() => isAdmin ? undefined : handleEdit(inv.id)}
+                  >
+                    {isAdmin && (
+                      <TableCell onClick={(e) => { e.stopPropagation(); toggleSelect(inv.id); }}>
+                        <Checkbox
+                          checked={selectedIds.has(inv.id)}
+                          onCheckedChange={() => toggleSelect(inv.id)}
+                          aria-label={`Rechnung ${inv.invoiceNumber ?? inv.id} auswählen`}
+                        />
+                      </TableCell>
+                    )}
+                    <TableCell
+                      className="font-mono text-xs whitespace-nowrap"
+                      onClick={() => handleEdit(inv.id)}
+                    >
                       {inv.invoiceNumber ?? <span className="text-muted-foreground italic">Entwurf</span>}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{formatDate(inv.invoiceDate)}</TableCell>
-                    <TableCell className={`whitespace-nowrap ${inv.isOverdue ? "text-red-600 font-semibold" : ""}`}>
+                    <TableCell className="whitespace-nowrap" onClick={() => handleEdit(inv.id)}>{formatDate(inv.invoiceDate)}</TableCell>
+                    <TableCell
+                      className={`whitespace-nowrap ${inv.isOverdue ? "text-red-600 font-semibold" : ""}`}
+                      onClick={() => handleEdit(inv.id)}
+                    >
                       {formatDate(inv.dueDate)}
                       {inv.isOverdue && <span className="ml-1 text-xs">(+{inv.daysOverdue}T)</span>}
                     </TableCell>
-                    <TableCell className="max-w-[180px] truncate">
-                      {inv.customerCompany ?? inv.customerName}
+                    <TableCell className="max-w-[180px] truncate" onClick={() => handleEdit(inv.id)}>
+                      {inv.customerCompany ?? inv.customerName ?? <span className="text-muted-foreground italic">Kein Kunde</span>}
                     </TableCell>
-                    <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground">
+                    <TableCell className="max-w-[220px] truncate text-sm text-muted-foreground" onClick={() => handleEdit(inv.id)}>
                       {inv.subject ?? "—"}
                     </TableCell>
-                    <TableCell className="text-right font-mono whitespace-nowrap">
+                    <TableCell className="text-right font-mono whitespace-nowrap" onClick={() => handleEdit(inv.id)}>
                       {formatCHF(inv.total, inv.currency)}
                     </TableCell>
-                    <TableCell className="text-right font-mono whitespace-nowrap">
+                    <TableCell className="text-right font-mono whitespace-nowrap" onClick={() => handleEdit(inv.id)}>
                       {(inv.status === "sent" || inv.status === "partially_paid")
                         ? formatCHF(inv.openAmount, inv.currency)
                         : "—"}
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={() => handleEdit(inv.id)}>
                       <StatusBadge status={inv.status} isOverdue={inv.isOverdue} />
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -283,28 +468,60 @@ export default function Invoices() {
                             >
                               <Send className="h-4 w-4" />
                             </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button size="sm" variant="ghost" title="Löschen">
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Entwurf löschen?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Der Entwurf wird unwiderruflich entfernt.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => deleteMutation.mutate({ id: inv.id })}>
-                                    Löschen
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                            {!isAdmin && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button size="sm" variant="ghost" title="Löschen">
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Entwurf löschen?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Der Entwurf wird unwiderruflich entfernt.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => deleteMutation.mutate({ id: inv.id })}>
+                                      Löschen
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
                           </>
+                        )}
+
+                        {/* Admin: Einzellöschen für alle Status */}
+                        {isAdmin && (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button size="sm" variant="ghost" title="Admin: Löschen">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Rechnung löschen?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Rechnung {inv.invoiceNumber ?? `#${inv.id}`} wird permanent gelöscht.
+                                  Nur für die Entwicklungsphase verwenden.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                                <AlertDialogAction
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  onClick={() => adminDeleteMutation.mutate({ id: inv.id })}
+                                  disabled={adminDeleteMutation.isPending}
+                                >
+                                  Löschen
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
                         )}
 
                         {inv.status !== "draft" && (

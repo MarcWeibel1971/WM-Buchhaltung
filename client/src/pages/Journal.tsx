@@ -1,8 +1,8 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet, Clock, CheckCircle, XCircle, BookOpen } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -38,7 +38,27 @@ function SourceBadge({ source }: { source: string }) {
 }
 
 export default function Journal() {
-  const [status, setStatus] = useState<string>("all");
+  // Read filter from URL query params (sidebar sub-items use ?filter=...)
+  const urlFilter = new URLSearchParams(window.location.search).get("filter");
+  const getInitialStatus = () => {
+    if (urlFilter === "warnings") return "pending";
+    if (urlFilter === "manual") return "pending";
+    if (urlFilter === "booked") return "approved";
+    // Default for Freigaben page: show pending
+    if (window.location.pathname === "/freigaben") return "pending";
+    return "all";
+  };
+  const [status, setStatus] = useState<string>(getInitialStatus);
+  
+  // Update status filter when URL changes
+  useEffect(() => {
+    const newFilter = new URLSearchParams(window.location.search).get("filter");
+    if (window.location.pathname === "/freigaben") {
+      if (newFilter === "booked") setStatus("approved");
+      else if (newFilter === "warnings" || newFilter === "manual") setStatus("pending");
+      else setStatus("pending");
+    }
+  }, [urlFilter]);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -64,6 +84,18 @@ export default function Journal() {
 
   const { data, refetch } = trpc.journal.list.useQuery(filters);
   const { data: accounts } = trpc.accounts.list.useQuery();
+
+  // Stats for filter tiles – fetch all statuses
+  const { data: allData } = trpc.journal.list.useQuery({ fiscalYear, limit: 9999 });
+  const journalStats = useMemo(() => {
+    const all = allData?.entries ?? [];
+    return {
+      total: allData?.total ?? 0,
+      pending: all.filter((e: any) => e.status === "pending").length,
+      approved: all.filter((e: any) => e.status === "approved").length,
+      rejected: all.filter((e: any) => e.status === "rejected").length,
+    };
+  }, [allData]);
   const { data: entryDetail } = trpc.journal.getWithLines.useQuery(
     { entryId: expandedId! },
     { enabled: expandedId !== null }
@@ -229,12 +261,14 @@ export default function Journal() {
   });
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="px-6 lg:px-8 py-6 space-y-4 max-w-[1280px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Journal</h2>
-          <p className="text-sm text-muted-foreground">{total} Buchungen</p>
+          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Journal</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            <span className="mono">{total}</span> Buchungen · Audit-Trail OR 957
+          </p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setShowExportDialog(true)}>
@@ -258,29 +292,58 @@ export default function Journal() {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Suchen..."
-            value={search}
-            onChange={e => { setSearch(e.target.value); setOffset(0); }}
-            className="pl-9"
-          />
-        </div>
-        <Select value={status} onValueChange={v => { setStatus(v); setOffset(0); }}>
-          <SelectTrigger className="w-40">
-            <Filter className="h-4 w-4 mr-2" />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle Status</SelectItem>
-            <SelectItem value="pending">Ausstehend</SelectItem>
-            <SelectItem value="approved">Genehmigt</SelectItem>
-            <SelectItem value="rejected">Abgelehnt</SelectItem>
-          </SelectContent>
-        </Select>
+      {/* Underline-Tabs (KLAX) */}
+      <div
+        className="flex items-center gap-5"
+        style={{ borderBottom: "1px solid var(--hair)" }}
+      >
+        {[
+          { key: "all",      label: "Alle",              count: journalStats.total },
+          { key: "pending",  label: "Zu genehmigen",     count: journalStats.pending },
+          { key: "approved", label: "Verbucht",          count: journalStats.approved },
+          { key: "rejected", label: "Abgelehnt",         count: journalStats.rejected },
+        ].map(tile => {
+          const isActive = status === tile.key;
+          return (
+            <button
+              key={tile.key}
+              onClick={() => { setStatus(tile.key); setOffset(0); }}
+              className="relative py-2.5 text-[13px] flex items-center gap-2 transition-colors"
+              style={{
+                color: isActive ? "var(--ink)" : "var(--ink-3)",
+                fontWeight: isActive ? 500 : 400,
+              }}
+            >
+              <span>{tile.label}</span>
+              <span
+                className="text-[11px] mono px-1.5 py-0.5 rounded-full"
+                style={{
+                  background: isActive ? "var(--klax-accent)" : "var(--surface-2)",
+                  color: isActive ? "var(--klax-accent-ink)" : "var(--ink-3)",
+                }}
+              >
+                {tile.count}
+              </span>
+              {isActive && (
+                <span
+                  className="absolute left-0 right-0 -bottom-px h-[2px]"
+                  style={{ background: "var(--klax-accent)" }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Suchen..."
+          value={search}
+          onChange={e => { setSearch(e.target.value); setOffset(0); }}
+          className="pl-9"
+        />
       </div>
 
       {/* Bulk Action Bar */}
@@ -346,9 +409,9 @@ export default function Journal() {
       )}
 
       {/* Table */}
-      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+      <div className="klax-card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="accounting-table">
+          <table className="k-table">
             <thead>
               <tr>
                 <th className="w-10 px-2">

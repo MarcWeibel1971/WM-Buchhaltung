@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, sql, gte, lte, inArray, or, like } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte, lte, lt, inArray, or, like } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, accounts, journalEntries, journalLines,
@@ -455,6 +455,8 @@ export async function updateJournalEntryLines(entryId: number, lines: Array<{
 export async function getBankAccounts(orgId: number) {
   const db = await getDb();
   if (!db) return [];
+  // Note: LEFT JOIN used so bank accounts without a linked account entry still appear.
+  // INNER JOIN would silently drop bank accounts if the linked account was deleted.
   return db.select({
     bankAccount: bankAccounts,
     account: accounts,
@@ -487,14 +489,28 @@ export async function getBankTransactionsByStatus(orgId: number, status: "pendin
   else if (status === "matched") conditions.push(eq(bankTransactions.status, "matched"));
   // "all" = no status filter
   if (bankAccountId) conditions.push(eq(bankTransactions.bankAccountId, bankAccountId));
-  // Filter by fiscal year: only show transactions within the selected year
-  // transactionDate is mode:'string' so compare as strings (YYYY-MM-DD format)
-  if (fiscalYear) {
+  // Filter by fiscal year:
+  // - "matched": only show transactions within the fiscal year
+  // - "all": show ALL pending (regardless of date) + matched/ignored within fiscal year
+  // - "pending": no date filter (always show all pending)
+  if (fiscalYear && status === "matched") {
     const yearStartStr = `${fiscalYear}-01-01`;
     const yearEndStr = `${fiscalYear + 1}-01-01`;
-    const { gte, lt } = await import("drizzle-orm");
     conditions.push(gte(bankTransactions.transactionDate, yearStartStr));
     conditions.push(lt(bankTransactions.transactionDate, yearEndStr));
+  } else if (fiscalYear && status === "all") {
+    // Include ALL pending + matched/ignored within fiscal year
+    const yearStartStr = `${fiscalYear}-01-01`;
+    const yearEndStr = `${fiscalYear + 1}-01-01`;
+    conditions.push(
+      or(
+        eq(bankTransactions.status, "pending"),
+        and(
+          gte(bankTransactions.transactionDate, yearStartStr),
+          lt(bankTransactions.transactionDate, yearEndStr)
+        )!
+      )!
+    );
   }
   return db.select().from(bankTransactions)
     .where(and(...conditions))
@@ -676,6 +692,68 @@ export async function getDashboardStats(orgId: number, fiscalYear: number) {
   };
 }
 
+
+/**
+ * Returns monthly revenue/expense/profit aggregates for the last N months.
+ * Used for sparkline charts on the dashboard.
+ */
+export async function getMonthlyAggregates(orgId: number, months = 6) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Build list of last N months (YYYY-MM format)
+  const result: Array<{ month: string; revenue: number; expenses: number; profit: number }> = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const yearStart = `${monthStr}-01`;
+    const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    const monthEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+
+    // Get all approved journal lines for this month
+    const lines = await db
+      .select({
+        amount: journalLines.amount,
+        side: journalLines.side,
+        accountNumber: accounts.number,
+      })
+      .from(journalLines)
+      .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
+      .innerJoin(accounts, eq(journalLines.accountId, accounts.id))
+      .where(and(
+        eq(journalEntries.organizationId, orgId),
+        eq(journalEntries.status, 'approved'),
+        sql`${journalEntries.bookingDate} >= ${yearStart}`,
+        sql`${journalEntries.bookingDate} < ${monthEnd}`,
+      ));
+
+    let revenue = 0;
+    let expenses = 0;
+    for (const line of lines) {
+      const num = line.accountNumber;
+      const amt = parseFloat(String(line.amount)) || 0;
+      // Revenue accounts: 3xxx (Ertrag)
+      if (num.startsWith('3')) {
+        if (line.side === 'credit') revenue += amt;
+        else revenue -= amt;
+      }
+      // Expense accounts: 4xxx-6xxx (Aufwand)
+      if (num.startsWith('4') || num.startsWith('5') || num.startsWith('6')) {
+        if (line.side === 'debit') expenses += amt;
+        else expenses -= amt;
+      }
+    }
+
+    result.push({
+      month: monthStr,
+      revenue: Math.max(0, revenue),
+      expenses: Math.max(0, expenses),
+      profit: revenue - expenses,
+    });
+  }
+  return result;
+}
 
 // ─── Booking Rules (Gelernte Buchungsregeln) ─────────────────────────────────
 
@@ -866,49 +944,65 @@ export function calculateMatchScore(
 ): number {
   let score = 0;
 
-  // 1. Amount match (40 points)
+  // Helper: normalize company name for comparison
+  // Removes legal suffixes (AG, GmbH, SA, etc.), punctuation, extra spaces
+  function normalizeName(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/\b(ag|gmbh|sa|sarl|ltd|inc|co|kg|llc|cie|und|and|&)\b/g, '')
+      .replace(/[^a-zäöüéèàâ0-9]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // 1. Amount match (45 points)
+  let amountScore = 0;
   if (doc.totalAmount != null) {
     const docAmount = Math.abs(doc.totalAmount);
     const txnAmount = Math.abs(parseFloat(txn.amount));
     if (docAmount > 0 && txnAmount > 0) {
       const diff = Math.abs(docAmount - txnAmount);
       const pctDiff = diff / Math.max(docAmount, txnAmount);
-      if (pctDiff === 0) score += 40;           // exact match
-      else if (pctDiff < 0.001) score += 38;    // rounding diff
-      else if (pctDiff < 0.01) score += 30;     // <1% off
-      else if (pctDiff < 0.05) score += 15;     // <5% off (partial payment?)
+      if (pctDiff === 0) amountScore = 45;           // exact match
+      else if (pctDiff < 0.001) amountScore = 43;    // rounding diff
+      else if (pctDiff < 0.01) amountScore = 35;     // <1% off
+      else if (pctDiff < 0.05) amountScore = 18;     // <5% off (partial payment?)
     }
   }
+  score += amountScore;
 
   // 2. Counterparty match (30 points)
   if (doc.counterparty && txn.counterparty) {
-    const docVendor = doc.counterparty.toLowerCase().replace(/[^a-zäöüéèà0-9]/g, '');
-    const txnVendor = txn.counterparty.toLowerCase().replace(/[^a-zäöüéèà0-9]/g, '');
+    const docVendor = normalizeName(doc.counterparty);
+    const txnVendor = normalizeName(txn.counterparty);
     if (docVendor === txnVendor) {
       score += 30;
     } else if (docVendor.includes(txnVendor) || txnVendor.includes(docVendor)) {
       score += 25;
     } else {
-      // Check if any significant word matches
-      const docWords = docVendor.match(/[a-zäöüéèà]{3,}/g) || [];
-      const txnWords = txnVendor.match(/[a-zäöüéèà]{3,}/g) || [];
+      // Check if any significant word matches (min 4 chars to avoid false positives)
+      const docWords = docVendor.split(' ').filter(w => w.length >= 4);
+      const txnWords = txnVendor.split(' ').filter(w => w.length >= 4);
       const commonWords = docWords.filter(w => txnWords.some(tw => tw.includes(w) || w.includes(tw)));
-      if (commonWords.length > 0) {
-        score += Math.min(20, commonWords.length * 10);
+      if (commonWords.length >= 2) {
+        score += Math.min(25, commonWords.length * 12);
+      } else if (commonWords.length === 1) {
+        score += 12;
       }
     }
   }
 
-  // 3. Date proximity (20 points)
+  // 3. Date proximity (15 points) – extended tolerance for invoices paid later
   if (doc.documentDate && txn.transactionDate) {
     const docDate = new Date(doc.documentDate);
     const txnDate = new Date(txn.transactionDate);
     const daysDiff = Math.abs((docDate.getTime() - txnDate.getTime()) / (1000 * 60 * 60 * 24));
-    if (daysDiff <= 3) score += 20;
-    else if (daysDiff <= 7) score += 15;
-    else if (daysDiff <= 14) score += 10;
-    else if (daysDiff <= 30) score += 5;
-    else if (daysDiff <= 60) score += 2;
+    if (daysDiff <= 3) score += 15;
+    else if (daysDiff <= 7) score += 12;
+    else if (daysDiff <= 14) score += 9;
+    else if (daysDiff <= 30) score += 6;
+    else if (daysDiff <= 60) score += 3;
+    else if (daysDiff <= 120) score += 1;  // invoices often paid 1-4 months later
   }
 
   // 4. Reference/IBAN match (10 points)
@@ -932,7 +1026,7 @@ export function calculateMatchScore(
  * Run auto-matching: find best matches between unmatched documents and pending transactions.
  * Returns array of matches with scores >= threshold.
  */
-export async function autoMatchDocuments(orgId: number, threshold: number = 50): Promise<{
+export async function autoMatchDocuments(orgId: number, threshold: number = 40): Promise<{
   documentId: number;
   transactionId: number;
   score: number;
@@ -1013,8 +1107,41 @@ export async function applyMatches(matches: { documentId: number; transactionId:
   const db = await getDb();
   if (!db || matches.length === 0) return 0;
 
+  // Enforce 1:1 constraint: each transaction can only be matched to ONE document
+  // and each document can only be matched to ONE transaction.
+  // Process matches in order of score (highest first) and skip already-used IDs.
+  const sortedMatches = [...matches].sort((a, b) => b.score - a.score);
+  const usedTransactionIds = new Set<number>();
+  const usedDocumentIds = new Set<number>();
+
+  // Pre-check: skip transactions that are already matched to another document
+  for (const match of sortedMatches) {
+    const [existingTxn] = await db.select({ matchedDocumentId: bankTransactions.matchedDocumentId })
+      .from(bankTransactions)
+      .where(eq(bankTransactions.id, match.transactionId))
+      .limit(1);
+    if (existingTxn?.matchedDocumentId && existingTxn.matchedDocumentId !== match.documentId) {
+      usedTransactionIds.add(match.transactionId);
+    }
+    const [existingDoc] = await db.select({ bankTransactionId: documents.bankTransactionId })
+      .from(documents)
+      .where(eq(documents.id, match.documentId))
+      .limit(1);
+    if (existingDoc?.bankTransactionId && existingDoc.bankTransactionId !== match.transactionId) {
+      usedDocumentIds.add(match.documentId);
+    }
+  }
+
   let applied = 0;
-  for (const match of matches) {
+  for (const match of sortedMatches) {
+    // Skip if transaction or document already used in this batch or pre-existing
+    if (usedTransactionIds.has(match.transactionId)) continue;
+    if (usedDocumentIds.has(match.documentId)) continue;
+
+    // Mark as used
+    usedTransactionIds.add(match.transactionId);
+    usedDocumentIds.add(match.documentId);
+
     // Update document
     await db.update(documents)
       .set({

@@ -34,7 +34,7 @@ export default function VerifyEmail() {
   }, [token]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-slate-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--paper)] px-4">
       <div className="w-full max-w-md">
         <Card className="shadow-lg border-slate-200">
           <CardContent className="pt-8 pb-8 text-center">

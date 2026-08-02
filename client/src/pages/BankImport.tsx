@@ -1,6 +1,7 @@
 import { trpc } from "@/lib/trpc";
+import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, ArrowUpDown, ArrowUp, ArrowDown, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2, AlertTriangle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -12,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { parseStatement } from "../../../shared/bankParser";
+import { parseStatement, extractCAMT053AccountIban } from "../../../shared/bankParser";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 
 function formatCHF(val: string | number) {
@@ -38,9 +39,28 @@ type EditableTx = {
 };
 
 export default function BankImport() {
+  // Read tab from URL query params (sidebar sub-items use ?tab=...)
+  const urlTab = new URLSearchParams(window.location.search).get("tab");
+  const getInitialStatusFilter = (): "pending" | "matched" | "all" => {
+    if (urlTab === "unmatched") return "pending";
+    if (urlTab === "matched") return "matched";
+    return "pending";
+  };
+  
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [pendingFilter, setPendingFilter] = useState<number | undefined>(undefined);
-  const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">("pending");
+  const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">(getInitialStatusFilter);
+  const [showImportSection, setShowImportSection] = useState(urlTab === "import");
+  const [showAccountsSection, setShowAccountsSection] = useState(urlTab === "accounts");
+  
+  // Update filters when URL changes (sidebar navigation)
+  useEffect(() => {
+    const newTab = new URLSearchParams(window.location.search).get("tab");
+    if (newTab === "unmatched") setStatusFilter("pending");
+    else if (newTab === "matched") setStatusFilter("matched");
+    else if (newTab === "import") setShowImportSection(true);
+    else if (newTab === "accounts") setShowAccountsSection(true);
+  }, [urlTab]);
   // showCreditorExport removed – now at /zahlungen/kreditoren
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -102,10 +122,13 @@ export default function BankImport() {
     }
   }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { fiscalYear } = useFiscalYear();
+  const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
+  const { data: importAutomation } = trpc.importAutomation.get.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
+  // Always filter by selected fiscal year (consistent across all views)
+  const txFiscalYear = fiscalYear || undefined;
   const { data: transactions, refetch: refetchTxs } = trpc.bankImport.getTransactionsByStatus.useQuery(
-    { status: statusFilter, bankAccountId: pendingFilter, fiscalYear: fiscalYear || undefined }
+    { status: statusFilter, bankAccountId: pendingFilter, fiscalYear: txFiscalYear }
   );
   const { data: accounts } = trpc.accounts.list.useQuery();
   const { data: allDocs } = trpc.documents.list.useQuery({ limit: 500 });
@@ -115,10 +138,24 @@ export default function BankImport() {
     { bankAccountId: selectedBankAccountId! },
     { enabled: !!selectedBankAccountId }
   );
-  const { data: importHistoryList } = trpc.bankImport.getImportHistory.useQuery(
+  const { data: importHistoryList, refetch: refetchHistory } = trpc.bankImport.getImportHistory.useQuery(
     { bankAccountId: selectedBankAccountId ?? undefined }
   );
   const [showHistory, setShowHistory] = useState(false);
+  const [deleteImportConfirm, setDeleteImportConfirm] = useState<{ batchId: string; filename: string; count: number } | null>(null);
+
+  const deleteImportMutation = trpc.bankImport.deleteImport.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Import rükgängig gemacht: ${data.deleted} Transaktionen gelöscht`);
+      refetchTxs();
+      refetchHistory();
+      setDeleteImportConfirm(null);
+    },
+    onError: (e: any) => {
+      toast.error(e.message);
+      setDeleteImportConfirm(null);
+    },
+  });
 
   const utils = trpc.useUtils();
 
@@ -136,9 +173,31 @@ export default function BankImport() {
       toast.success(`${data.imported} Transaktionen importiert, ${data.duplicates} Duplikate übersprungen`);
       refetchTxs();
       setImporting(false);
-      // Auto-detect transfers after import
       if (data.imported > 0) {
-        detectTransfersMutation.mutate();
+        // Run configured auto-actions sequentially after import
+        const cfg = importAutomation ?? {
+          autoRefreshLearned: true,
+          autoKiCategorize: true,
+          autoGenerateBookingTexts: true,
+          autoDetectTransfers: true,
+          autoMatchDocuments: false,
+        };
+        // 1. Refresh learned rules first (highest confidence)
+        if (cfg.autoRefreshLearned) {
+          refreshMutation.mutate({ bankAccountId: undefined });
+        }
+        // 2. KI categorization for remaining uncategorized
+        if (cfg.autoKiCategorize) {
+          setTimeout(() => categorizeMutation.mutate({ transactionIds: [] }), cfg.autoRefreshLearned ? 2000 : 0);
+        }
+        // 3. Generate booking texts
+        if (cfg.autoGenerateBookingTexts) {
+          setTimeout(() => bookingTextMutation.mutate({ transactionIds: [] }), (cfg.autoRefreshLearned ? 2000 : 0) + (cfg.autoKiCategorize ? 4000 : 0));
+        }
+        // 4. Detect transfers
+        if (cfg.autoDetectTransfers) {
+          setTimeout(() => detectTransfersMutation.mutate(), (cfg.autoRefreshLearned ? 2000 : 0) + (cfg.autoKiCategorize ? 4000 : 0) + (cfg.autoGenerateBookingTexts ? 2000 : 0));
+        }
       }
     },
     onError: (e) => { toast.error(e.message); setImporting(false); },
@@ -309,8 +368,50 @@ export default function BankImport() {
     if (!parsed.length) { toast.error("Keine Transaktionen erkannt. Bitte CAMT.053, MT940 oder CSV hochladen."); setImporting(false); return; }
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "unknown";
     const fileType = ext === "xml" ? "CAMT.053" : ext === "sta" || ext === "mt940" ? "MT940" : ext === "csv" || ext === "txt" ? "CSV" : ext;
+    // IBAN validation for CAMT.053 files
+    if (ext === "xml") {
+      const fileIban = extractCAMT053AccountIban(content);
+      if (fileIban) {
+        // Find the selected bank account's IBAN (bankAccounts has shape {bankAccount, account}[])
+        const selectedAcct = bankAccounts?.find((a: any) => a.bankAccount?.id === selectedBankAccountId);
+        if (selectedAcct?.bankAccount?.iban) {
+          const normalize = (s: string) => s.replace(/\s/g, '').toUpperCase();
+          if (normalize(fileIban) !== normalize(selectedAcct.bankAccount.iban)) {
+            toast.error(
+              `IBAN-Konflikt: Die Datei gehört zu Konto ${fileIban}, aber ausgewählt ist ${normalize(selectedAcct.bankAccount.iban)}. Bitte das richtige Bankkonto auswählen.`,
+              { duration: 8000 }
+            );
+            setImporting(false);
+            return;
+          }
+        }
+      }
+    }
+    // Check fiscal year from first transaction date
+    const firstDate = parsed[0]?.transactionDate;
+    if (firstDate) {
+      const txYear = parseInt(String(firstDate).substring(0, 4), 10);
+      if (!isNaN(txYear)) {
+        const yearInfo = fiscalYearInfos.find(fy => fy.year === txYear);
+        if (!yearInfo) {
+          toast.error(`Kein Geschäftsjahr ${txYear} vorhanden. Bitte zuerst unter Abschluss → Jahresabschluss das Geschäftsjahr ${txYear} eröffnen.`);
+          setImporting(false);
+          return;
+        }
+        if (yearInfo.isClosed) {
+          toast.error(`Das Geschäftsjahr ${txYear} ist geschlossen. Import nicht möglich.`);
+          setImporting(false);
+          return;
+        }
+        // Switch to the correct fiscal year
+        if (txYear !== fiscalYear) {
+          setFiscalYear(txYear);
+          toast.info(`Geschäftsjahr auf ${txYear} gewechselt`);
+        }
+      }
+    }
     importMutation.mutate({ bankAccountId: selectedBankAccountId, transactions: parsed, filename: file.name, fileType });
-  }, [selectedBankAccountId, importMutation]);
+  }, [selectedBankAccountId, importMutation, fiscalYear, fiscalYearInfos, setFiscalYear]);
 
   const handlePdfUpload = useCallback(async (file: File) => {
     if (!selectedBankAccountId) { toast.error("Bitte zuerst ein Bankkonto auswählen"); return; }
@@ -323,6 +424,26 @@ export default function BankImport() {
       if (!resp.ok) throw new Error(result.error ?? "PDF-Verarbeitung fehlgeschlagen");
       if (!result.transactions?.length) { toast.error("Keine Transaktionen im PDF erkannt"); return; }
       toast.info(`${result.totalExtracted} Transaktionen aus PDF extrahiert. Importiere...`);
+      // Check fiscal year from first transaction date in PDF
+      const firstPdfDate = result.transactions[0]?.transactionDate;
+      if (firstPdfDate) {
+        const txYear = parseInt(String(firstPdfDate).substring(0, 4), 10);
+        if (!isNaN(txYear)) {
+          const yearInfo = fiscalYearInfos.find(fy => fy.year === txYear);
+          if (!yearInfo) {
+            toast.error(`Kein Geschäftsjahr ${txYear} vorhanden. Bitte zuerst unter Abschluss → Jahresabschluss das Geschäftsjahr ${txYear} eröffnen.`);
+            return;
+          }
+          if (yearInfo.isClosed) {
+            toast.error(`Das Geschäftsjahr ${txYear} ist geschlossen. Import nicht möglich.`);
+            return;
+          }
+          if (txYear !== fiscalYear) {
+            setFiscalYear(txYear);
+            toast.info(`Geschäftsjahr auf ${txYear} gewechselt`);
+          }
+        }
+      }
       importMutation.mutate({
         bankAccountId: selectedBankAccountId,
         transactions: result.transactions,
@@ -480,34 +601,97 @@ export default function BankImport() {
   const isPending = statusFilter === "pending";
   const isMatched = statusFilter === "matched";
 
+  // Stats for filter tiles
+  const { data: allTransactions } = trpc.bankImport.getTransactionsByStatus.useQuery(
+    { status: "all", bankAccountId: undefined, fiscalYear: fiscalYear || undefined }
+  );
+  const txStats = {
+    total: (allTransactions ?? []).length,
+    pending: (allTransactions ?? []).filter(tx => tx.status === "pending").length,
+    matched: (allTransactions ?? []).filter(tx => tx.status === "matched").length,
+    ignored: (allTransactions ?? []).filter(tx => tx.status === "ignored").length,
+  };
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1200px] mx-auto">
       <div>
-        <h2 className="text-xl font-bold">Bankimport</h2>
-        <p className="text-sm text-muted-foreground">CAMT.053, MT940, CSV oder PDF importieren</p>
+        <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Bankimport</h2>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          CAMT.053, MT940, CSV oder PDF importieren
+        </p>
+      </div>
+
+      {/* Warnung: Geschäftsjahr geschlossen */}
+      {!isCurrentYearOpen && (
+        <div
+          className="flex items-center gap-3 rounded-md px-4 py-3 text-[13px]"
+          style={{ background: "var(--warn-soft)", border: "1px solid color-mix(in oklab, var(--warn) 20%, transparent)", color: "var(--warn)" }}
+        >
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          <span>Das Geschäftsjahr <strong>{fiscalYear}</strong> ist geschlossen. Ausstehende Transaktionen werden nicht angezeigt und neue Buchungen sind nicht möglich.</span>
+        </div>
+      )}
+
+      {/* Filter-Kacheln (KLAX) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { key: "all",     label: "Alle Transaktionen", count: txStats.total,   icon: <ArrowLeftRight className="w-4 h-4" /> },
+          { key: "pending", label: "Ausstehend",          count: txStats.pending, icon: <Clock className="w-4 h-4" /> },
+          { key: "matched", label: "Verbucht",             count: txStats.matched, icon: <CheckCircle className="w-4 h-4" /> },
+          { key: "ignored", label: "Ignoriert",            count: txStats.ignored, icon: <EyeOff className="w-4 h-4" /> },
+        ].map(tile => {
+          const isActive = statusFilter === tile.key;
+          return (
+            <button
+              key={tile.key}
+              onClick={() => { setStatusFilter(tile.key as any); setSelectedTxIds(new Set()); }}
+              className="text-left p-4 rounded-[14px] transition-all"
+              style={{
+                background: isActive ? "var(--klax-accent)" : "var(--surface)",
+                color: isActive ? "var(--klax-accent-ink)" : "var(--ink)",
+                border: `1px solid ${isActive ? "var(--klax-accent)" : "var(--hair)"}`,
+                boxShadow: isActive ? "var(--shadow-2)" : "var(--shadow-1)",
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2" style={{ color: isActive ? "var(--klax-accent-ink)" : "var(--ink-3)" }}>
+                {tile.icon}
+                <span className="text-[10.5px] uppercase tracking-wider font-medium">{tile.label}</span>
+              </div>
+              <div className="display mono text-[26px] font-medium leading-none">{tile.count}</div>
+            </button>
+          );
+        })}
       </div>
 
       {/* Import section */}
-      <div className="bg-card rounded-xl border border-border p-5 shadow-sm">
-        <h3 className="font-semibold mb-4">Kontoauszug importieren</h3>
+      <div className="klax-card p-5">
+        <h3 className="text-[14px] font-semibold mb-4" style={{ color: "var(--ink)" }}>Kontoauszug importieren</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Bankkonto</label>
             <Select value={String(selectedBankAccountId ?? "")} onValueChange={v => setSelectedBankAccountId(parseInt(v))}>
               <SelectTrigger><SelectValue placeholder="Konto auswählen..." /></SelectTrigger>
               <SelectContent>
+                {bankAccounts?.length === 0 && (
+                  <div className="px-3 py-4 text-sm text-center">
+                    <p className="text-muted-foreground mb-2">Noch keine Bankkonten erfasst.</p>
+                    <Link href="/einstellungen/bankkonten" className="text-blue-600 underline font-medium">
+                      → Einstellungen → Bankkonten
+                    </Link>
+                  </div>
+                )}
                 {bankAccounts?.map(ba => (
                   <SelectItem key={ba.bankAccount.id} value={String(ba.bankAccount.id)}>
-                    {ba.bankAccount.name} ({ba.account?.number ?? "?"}){ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
+                    {ba.bankAccount.name}{ba.account ? ` (${ba.account.number})` : ""}{ba.bankAccount.iban ? ` – ${ba.bankAccount.iban}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {(!bankAccounts || bankAccounts.length === 0) && (
-              <p className="text-xs text-blue-600 mt-1">
-                <Link href="/settings" className="underline hover:text-blue-800">
-                  Bitte zuerst ein Bankkonto unter Einstellungen &rarr; Bankkonten erfassen.
-                </Link>
+            {bankAccounts?.length === 0 && (
+              <p className="text-xs text-amber-600 mt-1.5">
+                Bitte zuerst ein Bankkonto unter{" "}
+                <Link href="/einstellungen/bankkonten" className="underline font-medium">Einstellungen → Bankkonten</Link>{" "}
+                erfassen.
               </p>
             )}
           </div>
@@ -535,6 +719,24 @@ export default function BankImport() {
         <p className="text-xs text-muted-foreground">
           Unterstützte Formate: CAMT.053 (XML), MT940 (.sta), CSV (Semikolon-getrennt), PDF (KI-Extraktion)
         </p>
+
+        {/* Import progress indicators */}
+        {(importing || importingPdf || categorizeMutation.isPending || bookingTextMutation.isPending || refreshMutation.isPending || bulkApproveMutation.isPending) && (
+          <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
+            <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-primary">
+                {importing && "Datei wird importiert..."}
+                {importingPdf && "KI liest PDF-Kontoauszug..."}
+                {categorizeMutation.isPending && "KI kategorisiert Transaktionen..."}
+                {bookingTextMutation.isPending && "Buchungstexte werden generiert..."}
+                {refreshMutation.isPending && "Buchungsregeln werden angewendet..."}
+                {bulkApproveMutation.isPending && "Transaktionen werden verbucht..."}
+              </p>
+              <p className="text-xs text-muted-foreground">Bitte warten, dies kann einige Sekunden dauern.</p>
+            </div>
+          </div>
+        )}
 
         {/* Last import info */}
         {selectedBankAccountId && lastImport && (
@@ -585,6 +787,7 @@ export default function BankImport() {
                       <th className="text-right py-1 font-medium">Duplikate</th>
                       <th className="text-left py-1 font-medium">Zeitraum</th>
                       <th className="text-center py-1 font-medium">PDF</th>
+                      <th className="text-center py-1 font-medium">Aktion</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -609,6 +812,21 @@ export default function BankImport() {
                           ) : (
                             <span className="text-muted-foreground">–</span>
                           )}
+                        </td>
+                        <td className="py-1.5 text-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            title="Import rükgängig machen"
+                            onClick={() => setDeleteImportConfirm({
+                              batchId: h.importBatchId,
+                              filename: h.filename,
+                              count: h.transactionsImported,
+                            })}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -960,7 +1178,7 @@ export default function BankImport() {
             // Find the bank account for this transaction
             const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
             const bankAccountLabel = txBankAccount ? `${txBankAccount.account?.number ?? "?"} ${txBankAccount.account?.name ?? txBankAccount.bankAccount.name}` : "Bankkonto";
-            const bankAccountId = txBankAccount?.account?.id;
+            const bankAccountId = txBankAccount?.account?.id ?? txBankAccount?.bankAccount.accountId;
 
             const handleCollectiveApprove = () => {
               if (!editTx || !bankAccountId) return;
@@ -1294,7 +1512,7 @@ export default function BankImport() {
                   const txAmount = Math.abs(parseFloat(editTx.amount));
                   const isIncoming = parseFloat(editTx.amount) > 0;
                   const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
-                  const bankAccountId = txBankAccount?.account?.id;
+                  const bankAccountId = txBankAccount?.account?.id ?? txBankAccount?.bankAccount.accountId;
                   if (!bankAccountId) { toast.error("Bankkonto nicht gefunden"); return; }
                   const collectiveSum = collectiveLines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
                   if (Math.abs(txAmount - collectiveSum) >= 0.005) { toast.error("Differenz muss 0 sein"); return; }
@@ -1561,6 +1779,34 @@ export default function BankImport() {
               </a>
             )}
               <Button variant="outline" onClick={() => setPreviewDoc(null)}>Schliessen</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Import Confirmation Dialog */}
+      <Dialog open={!!deleteImportConfirm} onOpenChange={(open) => { if (!open) setDeleteImportConfirm(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Import rükgängig machen?</DialogTitle>
+            <DialogDescription>
+              Alle <strong>{deleteImportConfirm?.count ?? 0} Transaktionen</strong> aus dem Import
+              <br /><span className="font-medium text-foreground">{deleteImportConfirm?.filename}</span><br />
+              werden unwiderruflich gelöscht. Bereits verbuchte Transaktionen können nicht gelöscht werden.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteImportConfirm(null)}>Abbrechen</Button>
+            <Button
+              variant="destructive"
+              disabled={deleteImportMutation.isPending}
+              onClick={() => {
+                if (deleteImportConfirm) {
+                  deleteImportMutation.mutate({ importBatchId: deleteImportConfirm.batchId });
+                }
+              }}
+            >
+              {deleteImportMutation.isPending ? "Lösche..." : "Import löschen"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

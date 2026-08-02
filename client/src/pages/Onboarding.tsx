@@ -30,6 +30,7 @@ export default function Onboarding() {
     uid: "",
     vatNumber: "",
     vatMethod: "effective" as "effective" | "saldo" | "pauschal",
+    vatSaldoRate: "",
     vatPeriod: "quarterly" as "quarterly" | "semi-annual",
     email: "",
     phone: "",
@@ -134,6 +135,7 @@ export default function Onboarding() {
       uid: form.uid || undefined,
       vatNumber: form.vatNumber || undefined,
       vatMethod: form.vatMethod,
+      vatSaldoRate: form.vatMethod === "saldo" && form.vatSaldoRate ? form.vatSaldoRate : undefined,
       vatPeriod: form.vatPeriod,
       fiscalYearStartMonth: 1,
       email: form.email || undefined,
@@ -145,31 +147,97 @@ export default function Onboarding() {
     });
   };
 
+  // KLAX-Onboarding Stepper (visuell)
+  const STEPS = [
+    { key: "company", label: "Firma" },
+    { key: "chart",   label: "Kontenplan" },
+    { key: "bank",    label: "Bank" },
+    { key: "docs",    label: "Belege" },
+    { key: "done",    label: "Fertig" },
+  ];
+  const activeStepIndex = 0; // diese Seite ist Schritt 1 (Firma)
+
   return (
-    <div className="min-h-screen bg-background flex items-start justify-center py-12 px-4">
-      <div className="w-full max-w-2xl">
-        {/* Top bar with back to landing + logout */}
+    <div
+      className="min-h-screen flex items-start justify-center py-10 px-4"
+      style={{ background: "var(--paper)", color: "var(--ink)" }}
+    >
+      <div className="w-full max-w-[720px]">
+        {/* Top bar */}
         <div className="flex items-center justify-between mb-6">
-          <a href="/landing" className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <ArrowLeft className="h-4 w-4" />
-            Zur Startseite
+          <a
+            href="/landing"
+            className="flex items-center gap-1.5 text-[12.5px] hover:underline"
+            style={{ color: "var(--ink-3)" }}
+          >
+            <ArrowLeft className="h-4 w-4" /> Zur Startseite
           </a>
+          <div className="flex items-center gap-2.5">
+            <div
+              className="w-8 h-8 rounded-md flex items-center justify-center"
+              style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
+            >
+              <span className="font-semibold text-[13px]">K</span>
+            </div>
+            <span className="display text-[15px] font-medium">KLAX</span>
+          </div>
           <button
             onClick={() => logout()}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            className="flex items-center gap-1.5 text-[12.5px] hover:underline"
+            style={{ color: "var(--ink-3)" }}
           >
-            <LogOut className="h-4 w-4" />
-            Abmelden
+            <LogOut className="h-4 w-4" /> Abmelden
           </button>
         </div>
 
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Building2 className="w-8 h-8 text-primary" />
+        {/* Stepper (visuell) */}
+        <div className="klax-card p-4 mb-6">
+          <div className="flex items-center justify-between">
+            {STEPS.map((s, i) => {
+              const done = i < activeStepIndex;
+              const active = i === activeStepIndex;
+              return (
+                <div key={s.key} className="flex items-center flex-1">
+                  <div className="flex items-center gap-2 flex-1">
+                    <span
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-medium"
+                      style={{
+                        background: done ? "var(--pos)" : active ? "var(--klax-accent)" : "var(--surface-2)",
+                        color: done || active ? "#fff" : "var(--ink-3)",
+                      }}
+                    >
+                      {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : i + 1}
+                    </span>
+                    <span
+                      className="text-[12px] hidden sm:inline"
+                      style={{ color: active ? "var(--ink)" : "var(--ink-3)", fontWeight: active ? 500 : 400 }}
+                    >
+                      {s.label}
+                    </span>
+                  </div>
+                  {i < STEPS.length - 1 && (
+                    <div className="mx-2 h-px flex-1" style={{ background: "var(--hair)" }} />
+                  )}
+                </div>
+              );
+            })}
           </div>
-          <h1 className="text-2xl font-bold text-foreground mb-2">Willkommen!</h1>
-          <p className="text-muted-foreground text-sm">
-            Legen Sie jetzt Ihre Firma an, um mit der Buchhaltung zu starten.
+        </div>
+
+        {/* Editorial */}
+        <div className="text-center mb-8">
+          <div
+            className="w-14 h-14 rounded-[14px] flex items-center justify-center mx-auto mb-4"
+            style={{ background: "var(--klax-accent-soft)", color: "var(--klax-accent)" }}
+          >
+            <Building2 className="w-7 h-7" />
+          </div>
+          <h1 className="display text-[26px] font-medium mb-1.5" style={{ color: "var(--ink)" }}>
+            Willkommen bei KLAX
+          </h1>
+          <p className="text-[13.5px]" style={{ color: "var(--ink-3)" }}>
+            Legen Sie jetzt Ihre Firma an. Danach richtet KLAX Kontenplan, Bank
+            und Belege für Sie ein.
           </p>
         </div>
 
@@ -356,6 +424,34 @@ export default function Onboarding() {
                     </Select>
                   </div>
                 </div>
+                {form.vatMethod === "saldo" && (
+                  <div>
+                    <Label htmlFor="vatSaldoRate">Saldosteuersatz (ESTV)</Label>
+                    <Select
+                      value={form.vatSaldoRate}
+                      onValueChange={(v) => setForm({ ...form, vatSaldoRate: v })}
+                    >
+                      <SelectTrigger id="vatSaldoRate">
+                        <SelectValue placeholder="Satz wählen" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="0.1">0.1%</SelectItem>
+                        <SelectItem value="0.6">0.6%</SelectItem>
+                        <SelectItem value="1.3">1.3%</SelectItem>
+                        <SelectItem value="2.1">2.1%</SelectItem>
+                        <SelectItem value="3.0">3.0%</SelectItem>
+                        <SelectItem value="3.7">3.7%</SelectItem>
+                        <SelectItem value="4.5">4.5%</SelectItem>
+                        <SelectItem value="5.3">5.3%</SelectItem>
+                        <SelectItem value="6.2">6.2%</SelectItem>
+                        <SelectItem value="6.8">6.8%</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Gemäss ESTV-Verordnung über die Saldosteuersätze nach Branchen (ab 1.1.2024)
+                    </p>
+                  </div>
+                )}
                 <div>
                   <Label htmlFor="vatPeriod">Abrechnungsperiode</Label>
                   <Select

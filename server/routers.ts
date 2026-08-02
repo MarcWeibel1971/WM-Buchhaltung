@@ -4708,7 +4708,7 @@ const locateAnythingRouter = router({
    */
   enhanceExtraction: orgProcedure
     .input(z.object({
-      nemotronResult: z.record(z.unknown()).nullable(),
+      nemotronResult: z.record(z.string(), z.unknown()).nullable(),
       imageBase64: z.string(),
       documentType: z.enum(["invoice", "lohnausweis", "bank_statement", "generic"]).optional(),
     }))

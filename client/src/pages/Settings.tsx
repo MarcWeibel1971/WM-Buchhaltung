@@ -38,6 +38,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
+import { readSpreadsheetObjects, readSpreadsheetRows } from "@/lib/readSpreadsheet";
 import { useMemo, useState as useReactState, useCallback } from "react";
 import { toast } from "sonner";
 import UsersTab from "./UsersTab";
@@ -1837,7 +1838,7 @@ export function OpeningBalancesTab() {
                       <FileText className="h-4 w-4 mr-2" /> PDF / Bild hochladen (KI)
                     </Button>
                   </div>
-                  <input ref={importFileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+                  <input ref={importFileRef} type="file" accept=".csv,.xlsx" className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
                   <input ref={importPdfFileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
@@ -3019,17 +3020,13 @@ export function ChartOfAccountsTab() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".xlsx,.csv"
                 className="hidden"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
                   try {
-                    const XLSX = await import("xlsx");
-                    const data = await file.arrayBuffer();
-                    const wb = XLSX.read(data);
-                    const ws = wb.Sheets[wb.SheetNames[0]];
-                    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+                    const rows = await readSpreadsheetObjects(file) as Record<string, any>[];
                     // Helper: find column value by trying multiple header variants (with/without *)
                     const getCol = (r: Record<string, any>, ...keys: string[]) => {
                       for (const k of keys) {
@@ -3937,11 +3934,7 @@ export function SuppliersTab() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const XLSX = await import("xlsx");
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data);
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
+      const rows = await readSpreadsheetObjects(file) as Record<string, any>[];
       const parsed = rows.map((r: Record<string, any>) => {
         const name = String(r["Name"] ?? r["Firma"] ?? r["Lieferant"] ?? r["name"] ?? r["company"] ?? "").trim();
         const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
@@ -4199,7 +4192,7 @@ export function SuppliersTab() {
             <div className="flex gap-2">
               <input
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".xlsx,.csv"
                 className="hidden"
                 id="supplier-import-file"
                 onChange={handleImportFile}
@@ -4399,26 +4392,8 @@ export function CustomersTab() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const XLSX = await import("xlsx");
-      const data = await file.arrayBuffer();
-      // For CSV files: try UTF-8 first, then Latin-1 as fallback (handles umlauts from Excel exports)
-      const isCSV = file.name.toLowerCase().endsWith('.csv');
-      let wb;
-      if (isCSV) {
-        try {
-          const text = new TextDecoder('utf-8').decode(data);
-          wb = XLSX.read(text, { type: 'string' });
-        } catch {
-          const text = new TextDecoder('iso-8859-1').decode(data);
-          wb = XLSX.read(text, { type: 'string' });
-        }
-      } else {
-        wb = XLSX.read(data);
-      }
-      const ws = wb.Sheets[wb.SheetNames[0]];
-
-      // Read as raw array rows (header:1) to handle both standard headers and positional formats
-      const rawRows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: '' });
+      // Liest .xlsx (ExcelJS) und .csv (UTF-8/Latin-1-Fallback) als Roh-Matrix
+      const rawRows = await readSpreadsheetRows(file) as any[];
 
       // Detect if file has standard headers (Name/Firma/etc.) in first non-empty row
       const headerRowIdx = rawRows.findIndex(r => r.some((c: any) => {
@@ -4435,7 +4410,7 @@ export function CustomersTab() {
         parsed = dataRows.map((r: any[]) => {
           const get = (...keys: string[]) => {
             for (const k of keys) {
-              const idx = headers.findIndex(h => h.toLowerCase() === k.toLowerCase());
+              const idx = headers.findIndex((h: any) => h.toLowerCase() === k.toLowerCase());
               if (idx >= 0 && r[idx] != null && String(r[idx]).trim()) return String(r[idx]).trim();
             }
             return '';
@@ -4781,7 +4756,7 @@ export function CustomersTab() {
             <div className="flex gap-2">
               <input
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".xlsx,.csv"
                 className="hidden"
                 ref={customerImportFileRef}
                 onChange={handleImportFile}

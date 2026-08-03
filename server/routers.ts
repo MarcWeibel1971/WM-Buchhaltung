@@ -402,17 +402,27 @@ const journalRouter = router({
       await deleteJournalEntry(input.entryId);
       return { success: true };
     }),
-  // Revert an approved journal entry back to pending.
-  // NOTE (Phase 1 GeBüV): Strictly speaking this violates journal-immutability
-  // (Art. 957d OR). Kept as a convenience until Phase 1 introduces proper
-  // Stornobuchungen. Must be removed or restricted to admin + audit-logged
-  // before marketing to external customers.
+  // Revert zurück auf pending. GeBüV (Art. 957d OR): Verbuchte (approved)
+  // Einträge sind unveränderbar – Korrekturen nur per Stornobuchung.
   revert: orgProcedure
     .input(z.object({ entryId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [existing] = await db.select({ status: journalEntries.status })
+        .from(journalEntries)
+        .where(eq(journalEntries.id, input.entryId))
+        .limit(1);
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
+      }
+      if (existing.status !== "pending") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Verbuchte Einträge können nicht zurückgesetzt werden (GeBüV-Immutabilität). Erstellen Sie eine Stornobuchung.",
+        });
+      }
       await db.update(journalEntries)
         .set({ status: "pending", approvedBy: null, approvedAt: null })
         .where(eq(journalEntries.id, input.entryId));
@@ -485,7 +495,9 @@ const journalRouter = router({
       let skipped = 0;
       for (const id of input.entryIds) {
         const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
-        if (!entry || entry.status !== "approved") { skipped++; continue; }
+        // GeBüV (Art. 957d OR): approved Einträge sind unveränderbar – nur
+        // Stornobuchung. Pending-Einträge zurückzusetzen ist eine No-Op.
+        if (!entry || entry.status === "approved") { skipped++; continue; }
         await db.update(journalEntries)
           .set({ status: "pending", approvedBy: null, approvedAt: null })
           .where(eq(journalEntries.id, id));
@@ -992,6 +1004,7 @@ const bankImportRouter = router({
                   documentDate: meta.documentDate,
                   counterpartyIban: meta.counterpartyIban,
                   referenceNumber: meta.referenceNumber,
+                  documentType: meta.documentType,
                 },
                 {
                   amount: txn.amount,
@@ -999,7 +1012,8 @@ const bankImportRouter = router({
                   transactionDate: txn.transactionDate,
                   counterpartyIban: txn.counterpartyIban,
                   reference: txn.reference,
-                }
+                },
+                { requireIdentity: true }
               );
 
               // Higher threshold for auto-matching (60+)
@@ -3591,21 +3605,26 @@ const vatRouter = router({
       return { periodId: (result as any).insertId };
     }),
 
-  detail: publicProcedure
+  detail: orgProcedure
     .input(z.object({ vatPeriodId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Get the VAT period
-      const [vp] = await db.select().from(vatPeriods).where(eq(vatPeriods.id, input.vatPeriodId));
+      // Get the VAT period (mandantenbezogen!)
+      const [vp] = await db.select().from(vatPeriods).where(and(
+        eq(vatPeriods.id, input.vatPeriodId),
+        eq(vatPeriods.organizationId, ctx.organizationId),
+      ));
       if (!vp) throw new TRPCError({ code: "NOT_FOUND", message: "MWST-Periode nicht gefunden" });
 
       const startDate = vp.startDate;
       const endDate = vp.endDate;
 
       // Get company settings for VAT method
-      const [settings] = await db.select().from(companySettings).limit(1);
+      const [settings] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
       const vatMethod = settings?.vatMethod ?? "effective";
       const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
 
@@ -3618,6 +3637,7 @@ const vatRouter = router({
         source: journalEntries.source,
       }).from(journalEntries)
         .where(and(
+          eq(journalEntries.organizationId, ctx.organizationId),
           eq(journalEntries.status, "approved"),
           gte(journalEntries.bookingDate, startDate),
           lte(journalEntries.bookingDate, endDate),
@@ -3651,7 +3671,8 @@ const vatRouter = router({
         accountType: accounts.accountType,
         isVatRelevant: accounts.isVatRelevant,
         defaultVatRate: accounts.defaultVatRate,
-      }).from(accounts);
+      }).from(accounts)
+        .where(eq(accounts.organizationId, ctx.organizationId));
 
       const accountMap = new Map(allAccounts.map(a => [a.id, a]));
 

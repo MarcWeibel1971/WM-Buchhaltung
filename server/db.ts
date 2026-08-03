@@ -268,7 +268,14 @@ export async function createJournalEntry(data: {
     throw new Error(`Double-Entry-Fehler: Soll (${debitTotal.toFixed(2)}) ≠ Haben (${creditTotal.toFixed(2)})`);
   }
 
-  const year = data.fiscalYear ?? new Date().getFullYear();
+  // Geschäftsjahr konsistent aus dem Buchungsdatum ableiten (niemals still
+  // das Kalenderjahr annehmen) und Periodensperre durchsetzen (GeBüV).
+  const derivedYear = new Date(data.bookingDate).getFullYear();
+  if (data.fiscalYear != null && data.fiscalYear !== derivedYear) {
+    throw new Error(`Buchungsdatum (${data.bookingDate}) liegt nicht im Geschäftsjahr ${data.fiscalYear}.`);
+  }
+  const year = derivedYear;
+  await assertFiscalYearOpen(data.organizationId, year, data.bookingDate);
 
   // Belegnummer wird erst bei approve vergeben (GeBüV: lückenlos, siehe
   // approveJournalEntry). Drafts bleiben ohne entryNumber.
@@ -300,6 +307,29 @@ export async function createJournalEntry(data: {
   }
 
   return entryId;
+}
+
+/**
+ * GeBüV-Periodensperre: Buchungen sind nur in ein eröffnetes, noch nicht
+ * abgeschlossenes Geschäftsjahr zulässig. Wirft einen Fehler, wenn das
+ * Geschäftsjahr fehlt, abgeschlossen ist oder das Buchungsdatum ausserhalb
+ * der Periode liegt.
+ */
+export async function assertFiscalYearOpen(orgId: number, year: number, bookingDate?: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [fy] = await db.select().from(fiscalYears)
+    .where(and(eq(fiscalYears.organizationId, orgId), eq(fiscalYears.year, year)))
+    .limit(1);
+  if (!fy) {
+    throw new Error(`Geschäftsjahr ${year} ist für diese Organisation nicht eröffnet. Bitte zuerst in den Einstellungen eröffnen.`);
+  }
+  if (fy.isClosed || fy.status === "closed") {
+    throw new Error(`Geschäftsjahr ${year} ist abgeschlossen – Buchungen sind gesperrt (GeBüV). Korrekturen bitte als Stornobuchung im aktuellen Geschäftsjahr erfassen.`);
+  }
+  if (bookingDate && (bookingDate < fy.startDate || bookingDate > fy.endDate)) {
+    throw new Error(`Buchungsdatum ${bookingDate} liegt ausserhalb der Periode des Geschäftsjahrs ${year} (${fy.startDate} bis ${fy.endDate}).`);
+  }
 }
 
 /**
@@ -383,6 +413,10 @@ export async function approveJournalEntry(entryId: number, userId: number) {
   if (existing.organizationId == null) {
     throw new Error(`Journal-Eintrag #${entryId} hat keine organizationId`);
   }
+
+  // GeBüV-Periodensperre: kein Approval in ein abgeschlossenes Geschäftsjahr
+  const fyYear = existing.fiscalYear ?? new Date(existing.bookingDate).getFullYear();
+  await assertFiscalYearOpen(existing.organizationId, fyYear);
 
   const updateSet: Record<string, unknown> = {
     status: "approved",
@@ -939,10 +973,26 @@ export async function incrementRuleUsage(ruleId: number): Promise<void> {
  * - Reference/IBAN match: 10 points
  */
 export function calculateMatchScore(
-  doc: { totalAmount?: number; counterparty?: string; documentDate?: string; counterpartyIban?: string; referenceNumber?: string },
-  txn: { amount: string; counterparty: string | null; transactionDate: string; counterpartyIban: string | null; reference: string | null }
+  doc: { totalAmount?: number; counterparty?: string; documentDate?: string; counterpartyIban?: string; referenceNumber?: string; documentType?: string },
+  txn: { amount: string; counterparty: string | null; transactionDate: string; counterpartyIban: string | null; reference: string | null },
+  opts?: { requireIdentity?: boolean }
 ): number {
   let score = 0;
+
+  // 0. Richtungs-Check: Kreditoren-Belege/Quittungen/KK-Abrechnungen matchen
+  // nur Ausgaben (Betrag < 0), Ausgangsrechnungen nur Zahlungseingänge (> 0).
+  // Ohne Richtungsprüfung matchen sich gleich hohe Ein-/Ausgänge gegenseitig.
+  const rawAmount = parseFloat(txn.amount);
+  if (doc.documentType === "invoice_in" || doc.documentType === "receipt" || doc.documentType === "credit_card_statement") {
+    if (rawAmount >= 0) return 0;
+  } else if (doc.documentType === "invoice_out") {
+    if (rawAmount <= 0) return 0;
+  }
+
+  // Identitätssignal: Punkte aus Gegenpartei, IBAN oder Referenz. Ein
+  // identischer Betrag ALLEIN darf nie zum Auto-Match führen (Miete, Abos,
+  // Löhne haben oft identische Beträge).
+  let identityPoints = 0;
 
   // Helper: normalize company name for comparison
   // Removes legal suffixes (AG, GmbH, SA, etc.), punctuation, extra spaces
@@ -976,18 +1026,19 @@ export function calculateMatchScore(
     const docVendor = normalizeName(doc.counterparty);
     const txnVendor = normalizeName(txn.counterparty);
     if (docVendor === txnVendor) {
-      score += 30;
+      score += 30; identityPoints += 30;
     } else if (docVendor.includes(txnVendor) || txnVendor.includes(docVendor)) {
-      score += 25;
+      score += 25; identityPoints += 25;
     } else {
       // Check if any significant word matches (min 4 chars to avoid false positives)
       const docWords = docVendor.split(' ').filter(w => w.length >= 4);
       const txnWords = txnVendor.split(' ').filter(w => w.length >= 4);
       const commonWords = docWords.filter(w => txnWords.some(tw => tw.includes(w) || w.includes(tw)));
       if (commonWords.length >= 2) {
-        score += Math.min(25, commonWords.length * 12);
+        const pts = Math.min(25, commonWords.length * 12);
+        score += pts; identityPoints += pts;
       } else if (commonWords.length === 1) {
-        score += 12;
+        score += 12; identityPoints += 12;
       }
     }
   }
@@ -1009,15 +1060,21 @@ export function calculateMatchScore(
   if (doc.counterpartyIban && txn.counterpartyIban) {
     const docIban = doc.counterpartyIban.replace(/\s/g, '').toUpperCase();
     const txnIban = txn.counterpartyIban.replace(/\s/g, '').toUpperCase();
-    if (docIban === txnIban) score += 10;
+    if (docIban === txnIban) { score += 10; identityPoints += 10; }
   }
   if (doc.referenceNumber && txn.reference) {
     const docRef = doc.referenceNumber.replace(/\s/g, '');
     const txnRef = txn.reference.replace(/\s/g, '');
     if (docRef === txnRef || docRef.includes(txnRef) || txnRef.includes(docRef)) {
-      score += 10;
+      score += 10; identityPoints += 10;
     }
   }
+
+  // Regel «Betrag allein reicht nie» – nur für Auto-Match (requireIdentity):
+  // ohne Identitätssignal (Gegenpartei, IBAN oder Referenz) bleibt der Score
+  // unter dem Auto-Match-Schwellenwert. Für die Score-ANZEIGE (manuelles
+  // Matching) bleibt der volle Score erhalten.
+  if (opts?.requireIdentity && identityPoints === 0) return Math.min(score, 39);
 
   return Math.min(100, score);
 }
@@ -1026,7 +1083,7 @@ export function calculateMatchScore(
  * Run auto-matching: find best matches between unmatched documents and pending transactions.
  * Returns array of matches with scores >= threshold.
  */
-export async function autoMatchDocuments(orgId: number, threshold: number = 40): Promise<{
+export async function autoMatchDocuments(orgId: number, threshold: number = 50): Promise<{
   documentId: number;
   transactionId: number;
   score: number;
@@ -1071,6 +1128,7 @@ export async function autoMatchDocuments(orgId: number, threshold: number = 40):
           documentDate: meta.documentDate,
           counterpartyIban: meta.counterpartyIban,
           referenceNumber: meta.referenceNumber,
+          documentType: meta.documentType,
         },
         {
           amount: txn.amount,
@@ -1078,7 +1136,8 @@ export async function autoMatchDocuments(orgId: number, threshold: number = 40):
           transactionDate: txn.transactionDate,
           counterpartyIban: txn.counterpartyIban,
           reference: txn.reference,
-        }
+        },
+        { requireIdentity: true }
       );
 
       if (score >= threshold && (!bestMatch || score > bestMatch.score)) {

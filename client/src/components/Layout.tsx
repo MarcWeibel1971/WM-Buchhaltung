@@ -4,7 +4,8 @@ import {
   LayoutDashboard, BarChart3, LogOut,
   Menu, X, Bell, Settings, CalendarCheck,
   Receipt, Plus, ChevronDown, Upload, Building2,
-  Sparkles, Wallet, ShieldCheck,
+  Sparkles, Wallet, ShieldCheck, BookCheck, AlarmClock,
+  Landmark, Clock, Users, CalendarClock,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
@@ -65,13 +66,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("mousedown", onClick);
   }, [newOpen]);
 
-  // 5-Bereiche-Navigation: Dashboard / Belege & Bank (Workflow) / Rechnungen / Berichte / Abschluss
+  // Navigation: Dashboard / Belege & Bank / Buchungen / Rechnungen / Mahnwesen /
+  // Kreditoren / Zeiterfassung / Lohn / Berichte / MWST / Jahresabschluss
   const NAV_ITEMS: NavItem[] = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard", badge: totalInbox > 0 ? totalInbox : undefined },
     { href: "/workflow", icon: Wallet, label: "Belege & Bank", badge: workflowBadge > 0 ? workflowBadge : undefined },
+    { href: "/journal", icon: BookCheck, label: "Buchungen", badge: pendingEntries > 0 ? pendingEntries : undefined },
     { href: "/rechnungen", icon: Receipt, label: "Rechnungen" },
+    { href: "/mahnwesen", icon: AlarmClock, label: "Mahnwesen" },
+    { href: "/zahlungen/kreditoren", icon: Landmark, label: "Kreditoren" },
+    { href: "/time-tracking", icon: Clock, label: "Zeiterfassung" },
+    { href: "/payroll", icon: Users, label: "Lohn" },
     { href: "/berichte", icon: BarChart3, label: "Berichte" },
-    { href: "/abschluss", icon: CalendarCheck, label: "Abschluss" },
+    { href: "/abschluss", icon: CalendarCheck, label: "MWST" },
+    { href: "/year-end", icon: CalendarClock, label: "Jahresabschluss" },
   ];
 
   // Admin-Bereich konsolidiert: ein einziger Eintrag /admin mit internen Tabs.
@@ -85,24 +93,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       return location.startsWith("/workflow") ||
         location.startsWith("/belege") ||
         location.startsWith("/bank") ||
-        location.startsWith("/freigaben") ||
         location.startsWith("/documents") ||
-        location.startsWith("/journal") ||
         location.startsWith("/bank-import") ||
         location.startsWith("/credit-card");
     }
     if (item.href === "/rechnungen") {
       return location.startsWith("/rechnungen") ||
-        location.startsWith("/mahnwesen") ||
-        location.startsWith("/zahlungen");
+        location.startsWith("/zahlungen/debitoren") ||
+        location.startsWith("/qr-rechnung");
+    }
+    if (item.href === "/journal") {
+      return location.startsWith("/journal") || location.startsWith("/freigaben");
+    }
+    if (item.href === "/zahlungen/kreditoren") {
+      return location.startsWith("/zahlungen/kreditoren");
     }
     if (item.href === "/berichte") {
       return location.startsWith("/berichte") || location.startsWith("/reports");
     }
     if (item.href === "/abschluss") {
-      return location.startsWith("/abschluss") ||
-        location.startsWith("/vat") ||
-        location.startsWith("/year-end");
+      return location.startsWith("/abschluss") || location.startsWith("/vat");
     }
     return location === item.href || location.startsWith(item.href + "/");
   };
@@ -135,14 +145,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (location.startsWith("/workflow") ||
       location.startsWith("/belege") ||
       location.startsWith("/bank") ||
-      location.startsWith("/freigaben") ||
-      location.startsWith("/journal") ||
       location.startsWith("/bank-import") ||
       location.startsWith("/credit-card") ||
       location.startsWith("/documents")) return "Belege & Bank";
-    if (location.startsWith("/rechnungen") || location.startsWith("/mahnwesen") || location.startsWith("/zahlungen")) return "Rechnungen";
+    if (location.startsWith("/journal") || location.startsWith("/freigaben")) return "Buchungen";
+    if (location.startsWith("/rechnungen") || location.startsWith("/zahlungen/debitoren") || location.startsWith("/qr-rechnung")) return "Rechnungen";
+    if (location.startsWith("/mahnwesen")) return "Mahnwesen";
+    if (location.startsWith("/zahlungen/kreditoren")) return "Kreditoren";
+    if (location.startsWith("/time-tracking")) return "Zeiterfassung";
+    if (location.startsWith("/payroll")) return "Lohn";
     if (location.startsWith("/berichte") || location.startsWith("/reports")) return "Berichte";
-    if (location.startsWith("/abschluss") || location.startsWith("/vat") || location.startsWith("/year-end")) return "Abschluss";
+    if (location.startsWith("/year-end")) return "Jahresabschluss";
+    if (location.startsWith("/abschluss") || location.startsWith("/vat")) return "MWST";
     if (location.startsWith("/settings") || location.startsWith("/einstellungen")) return "Einstellungen";
     if (location.startsWith("/admin")) return "Admin";
     return "KLAX";

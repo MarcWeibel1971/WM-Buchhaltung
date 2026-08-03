@@ -57,7 +57,7 @@ export default function Dashboard() {
   // Aufgaben-Hub: konsolidierte Tabs (ehemalige Tiles + Filter-Rail)
   const tasks: { key: TaskKey; icon: any; label: string; count: number; href: string; description: string }[] = [
     { key: "newDocs", icon: FileText, label: "Neue Belege", count: newDocs, href: "/workflow?tab=docs&filter=new", description: "Warten auf KI-Analyse" },
-    { key: "pendingEntries", icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/workflow?tab=approvals", description: "Buchungsvorschläge bereit" },
+    { key: "pendingEntries", icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/journal", description: "Buchungsvorschläge bereit" },
     { key: "unmatchedBankTx", icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/workflow?tab=bank&filter=unmatched", description: "Ohne zugeordneten Beleg" },
     { key: "openInvoices", icon: Receipt, label: "Offene Rechnungen", count: openInvoices, href: "/rechnungen?tab=open", description: "Fällige Zahlungen" },
   ];
@@ -351,7 +351,7 @@ export default function Dashboard() {
         <div className="klax-card p-5 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h3 className="k-label">Aktivität</h3>
-            <Link href="/workflow?tab=approvals">
+            <Link href="/journal">
               <span className="text-[12px] cursor-pointer" style={{ color: "var(--klax-accent)" }}>
                 Alle anzeigen →
               </span>

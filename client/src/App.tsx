@@ -37,6 +37,8 @@ import Layout from "./components/Layout";
 import AvatarChatWidget from "./components/AvatarChatWidget";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import Admin from "./pages/Admin";
+import Journal from "./pages/Journal";
+import BankImport from "./pages/BankImport";
 
 /**
  * AuthGuard: Prüft ob der User eingeloggt ist.
@@ -165,11 +167,11 @@ function AppRouter() {
       <Route path="/inbox">{() => <RedirectTo to="/" />}</Route>
       <Route path="/belege">{() => <RedirectTo to="/workflow" />}</Route>
       <Route path="/bank">{() => <RedirectTo to="/workflow" />}</Route>
-      <Route path="/freigaben">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/freigaben">{() => <RedirectTo to="/journal" />}</Route>
       <Route path="/documents">{() => <RedirectTo to="/workflow" />}</Route>
-      <Route path="/journal">{() => <RedirectTo to="/workflow" />}</Route>
-      <Route path="/bank-import">{() => <RedirectTo to="/workflow" />}</Route>
-      <Route path="/credit-card">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/journal" component={Journal} />
+      <Route path="/bank-import" component={BankImport} />
+      <Route path="/credit-card">{() => <RedirectTo to="/bank-import" />}</Route>
       <Route path="/reports">{() => <RedirectTo to="/berichte" />}</Route>
       <Route path="/zahlungen">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>
       <Route path="/qr-rechnung">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>

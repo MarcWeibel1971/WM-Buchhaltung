@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 
-describe('ElevenLabs API Key Validation', () => {
+// Externer Smoke-Test: nur ausführen, wenn ein API-Key konfiguriert ist
+// (lokal via .env, in CI via Secret). Ohne Key wird die Suite übersprungen.
+const hasKey = !!process.env.ELEVENLABS_API_KEY;
+
+describe.skipIf(!hasKey)('ElevenLabs API Key Validation', () => {
   it('should have a valid ELEVENLABS_API_KEY and be able to list voices', async () => {
     const apiKey = process.env.ELEVENLABS_API_KEY;
     expect(apiKey, 'ELEVENLABS_API_KEY must be set').toBeTruthy();

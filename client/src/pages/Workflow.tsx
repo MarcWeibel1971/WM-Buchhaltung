@@ -84,7 +84,7 @@ export default function Workflow() {
   // ?action=ai-match → Auto-Match direkt anstossen
   useEffect(() => {
     if (initialAction === "ai-match" && !autoMatchMut.isPending) {
-      autoMatchMut.mutate({ threshold: 40 });
+      autoMatchMut.mutate({ threshold: 50 });
       // Action aus URL entfernen, damit es nicht beim Re-Render erneut feuert
       setLocation("/workflow", { replace: true } as any);
     }
@@ -94,6 +94,12 @@ export default function Workflow() {
   // ?action=upload → Upload-Dialog öffnen
   useEffect(() => {
     if (initialAction === "upload") setShowUpload(true);
+  }, [initialAction]);
+
+  // ?action=bank-import → zur Bank-Import-Seite (CAMT/MT940/CSV/PDF)
+  useEffect(() => {
+    if (initialAction === "bank-import") setLocation("/bank-import");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialAction]);
 
   const docs: DocItem[] = (docsQuery.data ?? []) as any;
@@ -147,7 +153,7 @@ export default function Workflow() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => autoMatchMut.mutate({ threshold: 40 })}
+            onClick={() => autoMatchMut.mutate({ threshold: 50 })}
             disabled={autoMatchMut.isPending}
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-medium disabled:opacity-50"
             style={{

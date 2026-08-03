@@ -5,6 +5,7 @@ import {
   isValidQRR,
   isValidISO11649,
   normalizeQRReference,
+  validateManualReference,
   formatQRReference,
 } from "../shared/qrReference";
 
@@ -91,5 +92,47 @@ describe("QR-Referenz (shared/qrReference)", () => {
       const base = "260000" + String(5).padStart(20, "0");
       expect(base + mod10RecursiveCheckDigit(base)).toBe(generateQRReference(5, 2026));
     });
+  });
+});
+
+describe("validateManualReference (manuelle Referenz-Eingabe)", () => {
+  it("akzeptiert Freitext-Referenzen ohne Prüfziffer-Validierung", () => {
+    expect(validateManualReference("Rechnung März 2026")).toEqual({ valid: true, canonical: null });
+    expect(validateManualReference("12345")).toEqual({ valid: true, canonical: null });
+  });
+
+  it("akzeptiert leere Eingabe", () => {
+    expect(validateManualReference("")).toEqual({ valid: true, canonical: null });
+    expect(validateManualReference("   ")).toEqual({ valid: true, canonical: null });
+  });
+
+  it("normalisiert gültige QRR (mit Leerzeichen) in kanonische Form", () => {
+    const raw = "21 00000 00003 13947 14300 09017";
+    const check = validateManualReference(raw);
+    expect(check.valid).toBe(true);
+    expect(check.canonical).toBe("210000000003139471430009017");
+  });
+
+  it("weist QRR mit falscher Prüfziffer zurück", () => {
+    const check = validateManualReference("21000000003139471430009018");
+    expect(check.valid).toBe(false);
+    expect(check.reason).toContain("Modulo 10");
+  });
+
+  it("weist QRR-ähnliche Ziffernfolgen mit falscher Prüfziffer auch mit Leerzeichen zurück", () => {
+    const check = validateManualReference("21 00000 00003 13947 14300 09018");
+    expect(check.valid).toBe(false);
+  });
+
+  it("akzeptiert gültige SCOR-Referenz", () => {
+    const check = validateManualReference("RF18539007547034");
+    expect(check.valid).toBe(true);
+    expect(check.canonical).toBe("RF18539007547034");
+  });
+
+  it("weist SCOR mit falscher Prüfziffer zurück", () => {
+    const check = validateManualReference("RF99539007547034");
+    expect(check.valid).toBe(false);
+    expect(check.reason).toContain("Modulo 97");
   });
 });

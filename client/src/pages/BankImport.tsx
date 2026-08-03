@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { parseStatement, extractCAMT053AccountIban } from "../../../shared/bankParser";
+import { validateManualReference } from "@shared/qrReference";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 
 function formatCHF(val: string | number) {
@@ -1267,6 +1268,20 @@ export default function BankImport() {
                   <div>
                     <Label className="text-xs">Referenz</Label>
                     <Input value={editForm.reference} onChange={e => setEditForm(f => ({ ...f, reference: e.target.value }))} />
+                    {editForm.reference.trim() && (() => {
+                      const check = validateManualReference(editForm.reference);
+                      if (!check.valid) {
+                        return <p className="text-xs text-red-600 mt-1">✗ {check.reason}</p>;
+                      }
+                      if (check.canonical) {
+                        return (
+                          <p className="text-xs text-green-600 mt-1">
+                            ✓ Gültige {check.canonical.startsWith("RF") ? "SCOR" : "QR"}-Referenz – automatischer Zahlungsabgleich möglich
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>

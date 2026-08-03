@@ -21,6 +21,10 @@
  *
  * @see https://huggingface.co/nvidia/LocateAnything-3B
  */
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("locateAnything");
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -159,7 +163,7 @@ export async function locateAnything(opts: LocateAnythingOptions): Promise<Locat
 
   let resp = await fetch(HF_API_PRIMARY, { method: "POST", headers, body: JSON.stringify(payload) });
   if (!resp.ok && resp.status !== 429) {
-    console.warn(`[LocateAnything] Primary failed (${resp.status}), trying fallback...`);
+    logger.warn(`[LocateAnything] Primary failed (${resp.status}), trying fallback...`);
     resp = await fetch(HF_API_FALLBACK, { method: "POST", headers, body: JSON.stringify(payload) });
   }
 
@@ -365,7 +369,7 @@ export async function enhanceExtractionWithLocateAnything(
         extractionResult = await detectDocumentStructure(imageBase64);
     }
   } catch (err: unknown) {
-    console.error("[LocateAnything] Extraktion fehlgeschlagen:", (err as Error).message);
+    logger.error("[LocateAnything] Extraktion fehlgeschlagen:", (err as Error).message);
     return {
       enhanced: nemotronResult ?? {},
       locateAnythingUsed: false,

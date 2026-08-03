@@ -18,6 +18,9 @@ import {
   type InsertJournalEntry,
 } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("posWebhook");
 
 export const posWebhookRouter = express.Router();
 
@@ -56,7 +59,7 @@ posWebhookRouter.post(
     }
 
     if (!event || !matchedConfig) {
-      console.warn("[POS Webhook] Stripe: Keine passende Konfiguration gefunden");
+      logger.warn("[POS Webhook] Stripe: Keine passende Konfiguration gefunden");
       return res.status(400).json({ error: "Invalid signature" });
     }
 
@@ -74,7 +77,7 @@ posWebhookRouter.post(
       }
       res.json({ received: true });
     } catch (err: any) {
-      console.error("[POS Webhook] Stripe Verarbeitungsfehler:", err);
+      logger.error("[POS Webhook] Stripe Verarbeitungsfehler:", err);
       res.status(500).json({ error: "Processing failed" });
     }
   }
@@ -121,7 +124,7 @@ posWebhookRouter.post(
       }
       res.json({ received: true });
     } catch (err: any) {
-      console.error("[POS Webhook] SumUp Verarbeitungsfehler:", err);
+      logger.error("[POS Webhook] SumUp Verarbeitungsfehler:", err);
       res.status(500).json({ error: "Processing failed" });
     }
   }
@@ -192,7 +195,7 @@ async function handleStripePayment(
     await createPosJournalEntry(db, cfg, amountChf, paidAt, `Stripe Terminal ${pi.id}`);
   }
 
-  console.log(`[POS Webhook] Stripe Terminal Zahlung verarbeitet: ${pi.id} CHF ${amountChf}`);
+  logger.info(`[POS Webhook] Stripe Terminal Zahlung verarbeitet: ${pi.id} CHF ${amountChf}`);
 }
 
 // ─── SumUp Zahlung verarbeiten ────────────────────────────────────────────────
@@ -263,7 +266,7 @@ async function handleSumUpPayment(
     await createPosJournalEntry(db, cfg, amount, paidAt, `SumUp ${txId}`);
   }
 
-  console.log(`[POS Webhook] SumUp Zahlung verarbeitet: ${txId} ${currency} ${amount}`);
+  logger.info(`[POS Webhook] SumUp Zahlung verarbeitet: ${txId} ${currency} ${amount}`);
 }
 
 // ─── Journal-Eintrag für POS-Zahlung erstellen ───────────────────────────────

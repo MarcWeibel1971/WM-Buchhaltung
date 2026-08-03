@@ -48,6 +48,7 @@ import { invitationsRouter } from "./invitationsRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
+import { isSupportedBookingCurrency, unsupportedBookingCurrencyMessage } from "../shared/currency";
 
 /**
  * Converts a date string or Date object to 'YYYY-MM-DD' string for Drizzle date() columns.
@@ -1227,6 +1228,10 @@ Regeln:
 
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+      // ── Fremdwährungs-Guard (Phase 2.5): keine unumgerechneten Beträge buchen ──
+      if (!isSupportedBookingCurrency(tx.currency)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(tx.currency) });
+      }
       // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
       if (tx.status === "matched" && tx.journalEntryId) {
         throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
@@ -1297,6 +1302,10 @@ Regeln:
 
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
+      // ── Fremdwährungs-Guard (Phase 2.5): keine unumgerechneten Beträge buchen ──
+      if (!isSupportedBookingCurrency(tx.currency)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(tx.currency) });
+      }
       // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
       if (tx.status === "matched" && tx.journalEntryId) {
         throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
@@ -2089,6 +2098,10 @@ const creditCardRouter = router({
 
       const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
       if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
+      // ── Fremdwährungs-Guard (Phase 2.5) ──
+      if (!isSupportedBookingCurrency(stmt.currency)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(stmt.currency) });
+      }
 
       const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
       if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Mahnwesen/Konten)" });
@@ -4462,6 +4475,12 @@ Antworte NUR mit dem JSON-Objekt.`,
       // Verify document exists
       const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      // ── Fremdwährungs-Guard (Phase 2.5): Währung aus den KI-Metadaten ──
+      let docCurrency: string | null = null;
+      try { docCurrency = JSON.parse(doc.aiMetadata || "{}")?.currency ?? null; } catch { /* Metadaten nicht parsbar → CHF annehmen */ }
+      if (!isSupportedBookingCurrency(docCurrency)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(docCurrency) });
+      }
       // ── Duplikat-Schutz: Bereits verbuchtes Dokument ──
       if (doc.journalEntryId) {
         throw new TRPCError({ code: "CONFLICT", message: `Dieser Beleg wurde bereits verbucht (Journal-Eintrag #${doc.journalEntryId}). Doppelbuchung verhindert.` });

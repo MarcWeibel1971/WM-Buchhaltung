@@ -405,6 +405,8 @@ export const bankTransactions = mysqlTable("bank_transactions", {
   aiReasoning: text("aiReasoning"),
   // Matched document ID (if a document/invoice was matched)
   matchedDocumentId: int("matchedDocumentId"),
+  // Matched debitoren invoice (via QR-Referenz aus CAMT-Import)
+  matchedInvoiceId: int("matchedInvoiceId"),
   // Match confidence score (0-100)
   matchScore: int("matchScore"),
   // Suggested booking text (from AI or matched document)

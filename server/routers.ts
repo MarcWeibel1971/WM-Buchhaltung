@@ -26,8 +26,10 @@ import {
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
+  findOpenInvoiceByQRReference, applyInvoicePayment,
 } from "./db";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings, organizations } from "../drizzle/schema";
+import { normalizeQRReference } from "../shared/qrReference";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings, organizations, invoices } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { globalRulesRouter } from "./globalRulesRouter";
 import { yearEndRouter } from "./yearEndRouter";
@@ -850,11 +852,27 @@ const bankImportRouter = router({
     .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional(), fiscalYear: z.number().optional() }))
     .query(async ({ input, ctx }) => {
       const txs = await getBankTransactionsByStatus(ctx.organizationId, input.status, input.bankAccountId, input.fiscalYear);
-      // For transfer transactions, enrich with partner bank account name and accounting account IDs
       const db = await getDb();
       if (!db) return txs;
+
+      // QR-Match-Anreicherung (Phase 2.1): Rechnungsnummer der via QR-Referenz
+      // zugeordneten Debitoren-Rechnung für die Anzeige im Client
+      const invoiceIds = Array.from(new Set(txs.map(t => t.matchedInvoiceId).filter((id): id is number => !!id)));
+      const invMap = new Map<number, string | null>();
+      if (invoiceIds.length > 0) {
+        const invRows = await db.select({ id: invoices.id, invoiceNumber: invoices.invoiceNumber })
+          .from(invoices).where(inArray(invoices.id, invoiceIds));
+        for (const r of invRows) invMap.set(r.id, r.invoiceNumber);
+      }
+      const withInvoice = <T extends Record<string, unknown>>(t: T, extra: Record<string, unknown> = {}) => ({
+        ...t,
+        matchedInvoiceNumber: (t as any).matchedInvoiceId ? invMap.get((t as any).matchedInvoiceId) ?? null : null,
+        ...extra,
+      });
+
+      // For transfer transactions, enrich with partner bank account name and accounting account IDs
       const transferTxs = txs.filter(t => t.transferPartnerId);
-      if (transferTxs.length === 0) return txs;
+      if (transferTxs.length === 0) return txs.map(t => withInvoice(t));
       const partnerIds = transferTxs.map(t => t.transferPartnerId!);
       const partners = await db.select({ id: bankTransactions.id, bankAccountId: bankTransactions.bankAccountId })
         .from(bankTransactions).where(inArray(bankTransactions.id, partnerIds));
@@ -868,20 +886,19 @@ const bankImportRouter = router({
       const partnerMap = new Map(partners.map(p => [p.id, bas.find(b => b.id === p.bankAccountId)]));
       const ownBaMap = new Map(bas.map(b => [b.id, b]));
       return txs.map(t => {
-        if (!t.isTransfer || !t.transferPartnerId) return { ...t, transferPartnerBankName: null };
+        if (!t.isTransfer || !t.transferPartnerId) return withInvoice(t, { transferPartnerBankName: null });
         const partnerBa = partnerMap.get(t.transferPartnerId);
         const ownBa = ownBaMap.get(t.bankAccountId);
         const amtA = parseFloat(t.amount as string);
         // Determine debit/credit based on sign
         const debitAccountId = amtA >= 0 ? ownBa?.accountId : partnerBa?.accountId;
         const creditAccountId = amtA < 0 ? ownBa?.accountId : partnerBa?.accountId;
-        return {
-          ...t,
+        return withInvoice(t, {
           transferPartnerBankName: partnerBa?.name ?? null,
           // Override suggested accounts for transfers
           suggestedDebitAccountId: debitAccountId ?? t.suggestedDebitAccountId,
           suggestedCreditAccountId: creditAccountId ?? t.suggestedCreditAccountId,
-        };
+        });
       });
     }),
 
@@ -1046,7 +1063,51 @@ const bankImportRouter = router({
         }
       }
 
-      return { imported, duplicates, skipped, batchId, autoMatched };
+      // ─── Debitoren-Abgleich via QR-Referenz (Phase 2.1) ───────────────────
+      // Zahlungseingänge mit gültiger QR-Referenz werden direkt der offenen
+      // Debitoren-Rechnung zugeordnet und erhalten einen fertigen
+      // Buchungsvorschlag (Bank an Debitoren). Gebucht wird erst nach
+      // manueller Freigabe durch den User (approveTransaction).
+      let invoiceMatched = 0;
+      if (db && imported > 0) {
+        try {
+          const creditTxns = (await db.select().from(bankTransactions)
+            .where(and(
+              eq(bankTransactions.importBatchId, batchId),
+              eq(bankTransactions.status, 'pending'),
+            ))).filter(t => parseFloat(t.amount as string) > 0 && !!t.reference);
+
+          if (creditTxns.length > 0) {
+            const [bankAcc] = await db.select().from(bankAccounts)
+              .where(eq(bankAccounts.id, input.bankAccountId)).limit(1);
+            const debitorenAcc = await getAccountByNumber(ctx.organizationId, "1100");
+
+            for (const txn of creditTxns) {
+              const ref = normalizeQRReference(txn.reference);
+              if (!ref) continue;
+              const inv = await findOpenInvoiceByQRReference(ctx.organizationId, ref);
+              if (!inv) continue;
+
+              const txnAmount = parseFloat(txn.amount as string);
+              const openAmount = Math.round((parseFloat(inv.total as string) - parseFloat(inv.paidAmount as string)) * 100) / 100;
+              const isFullPayment = Math.abs(txnAmount - openAmount) <= 0.01;
+
+              await db.update(bankTransactions).set({
+                matchedInvoiceId: inv.id,
+                matchScore: isFullPayment ? 100 : 90,
+                suggestedDebitAccountId: bankAcc?.accountId ?? txn.suggestedDebitAccountId,
+                suggestedCreditAccountId: debitorenAcc?.id ?? txn.suggestedCreditAccountId,
+                suggestedBookingText: `Zahlungseingang ${inv.invoiceNumber ?? `Rechnung #${inv.id}`}${isFullPayment ? "" : ` (Rechnung offen: CHF ${openAmount.toFixed(2)})`}`,
+              }).where(eq(bankTransactions.id, txn.id));
+              invoiceMatched++;
+            }
+          }
+        } catch (e) {
+          console.error("QR-Referenz-Abgleich nach Import fehlgeschlagen:", e);
+        }
+      }
+
+      return { imported, duplicates, skipped, batchId, autoMatched, invoiceMatched };
     }),
 
   getImportHistory: orgProcedure
@@ -1253,6 +1314,29 @@ Regeln:
       await approveBankTransaction(input.transactionId, entryId);
       await approveJournalEntry(entryId, ctx.user.id);
 
+      // ── Debitoren-Abgleich (Phase 2.1): Zahlungseingang auf der verknüpften
+      // Rechnung verbuchen (paidAmount/Status/paidDate). Schlägt das fehl (z. B.
+      // Rechnung zwischenzeitlich storniert), wird nur gewarnt – die Buchung
+      // selbst ist bereits erfolgt und bleibt gültig.
+      let invoicePayment: { status: string; openAmount: number } | null = null;
+      if (tx.matchedInvoiceId) {
+        try {
+          const result = await applyInvoicePayment(
+            ctx.organizationId,
+            tx.matchedInvoiceId,
+            amount,
+            toDateStr(tx.transactionDate as string) as string,
+          );
+          if (result) {
+            invoicePayment = { status: result.status, openAmount: result.openAmount };
+          } else {
+            console.warn(`Invoice payment skipped: invoice ${tx.matchedInvoiceId} not in payable status`);
+          }
+        } catch (e) {
+          console.error("applyInvoicePayment failed:", e);
+        }
+      }
+
       // ── Learn booking rule from this approval ──
       if (tx.counterparty) {
         try {
@@ -1274,7 +1358,7 @@ Regeln:
         }
       }
 
-      return { success: true, entryId };
+      return { success: true, entryId, invoicePayment };
     }),
 
   // ── Approve as Sammelbuchung (compound entry) ──

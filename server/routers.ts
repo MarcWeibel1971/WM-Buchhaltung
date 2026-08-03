@@ -2738,6 +2738,14 @@ const payrollRouter = router({
       // AHV/IV/EO/ALV rates (stored as e.g. 6.4000 meaning 6.4%)
       const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
       const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
+
+      // AHV-Fallback-Warnung: Ohne hinterlegten Satz wird stillschweigend 6.4%
+      // angenommen. Das ist ein Sollwert, kein Ersatz für die echten Satzdaten –
+      // der Aufrufer muss die Warnung an den User durchreichen.
+      const fallbackWarnings: string[] = [];
+      if (!ahvSetting) {
+        fallbackWarnings.push("Kein AHV/IV/EO-Satz in den Versicherungseinstellungen hinterlegt – Fallback 6.4% verwendet. Bitte den aktuellen Satz unter Einstellungen → Versicherungen erfassen.");
+      }
       // BVG: fixed monthly CHF amounts
       const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
       const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
@@ -2993,7 +3001,7 @@ const payrollRouter = router({
         }
       }
 
-      return { created, updated, skipped, total: grouped.size };
+      return { created, updated, skipped, total: grouped.size, warnings: fallbackWarnings };
     }),
 
   // Recalculate all payroll entries with current insurance settings
@@ -3012,6 +3020,14 @@ const payrollRouter = router({
 
       const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
       const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
+
+      // AHV-Fallback-Warnung: Ohne hinterlegten Satz wird stillschweigend 6.4%
+      // angenommen. Das ist ein Sollwert, kein Ersatz für die echten Satzdaten –
+      // der Aufrufer muss die Warnung an den User durchreichen.
+      const fallbackWarnings: string[] = [];
+      if (!ahvSetting) {
+        fallbackWarnings.push("Kein AHV/IV/EO-Satz in den Versicherungseinstellungen hinterlegt – Fallback 6.4% verwendet. Bitte den aktuellen Satz unter Einstellungen → Versicherungen erfassen.");
+      }
       const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
       const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
       const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate as string ?? '0') / 100 : 0;
@@ -3054,7 +3070,7 @@ const payrollRouter = router({
         }
       }
 
-      return { recalculated, total: entries.length };
+      return { recalculated, total: entries.length, warnings: fallbackWarnings };
     }),
 
   approve: orgProcedure

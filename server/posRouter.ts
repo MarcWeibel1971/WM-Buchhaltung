@@ -7,16 +7,23 @@ import { router, orgProcedure } from "./_core/trpc";
 import { getDb } from "./db";
 import { posConfig, posTransactions, bankAccounts, accounts } from "../drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
+import { maskSecret, prepareSecretForWrite } from "./secrets";
 
 export const posRouter = router({
   // ─── Konfiguration ──────────────────────────────────────────────────────
   getConfig: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) return [];
-    return db
+    const rows = await db
       .select()
       .from(posConfig)
       .where(eq(posConfig.organizationId, ctx.organizationId));
+    // Secrets niemals im Klartext an den Client (Phase 2.2) – nur maskiert
+    return rows.map(r => ({
+      ...r,
+      apiKey: maskSecret(r.apiKey),
+      webhookSecret: maskSecret(r.webhookSecret),
+    }));
   }),
 
   saveConfig: orgProcedure
@@ -37,17 +44,23 @@ export const posRouter = router({
       if (!db) throw new Error("DB not available");
 
       if (input.id) {
+        // Secrets nur schreiben, wenn ein neuer Wert geliefert wird –
+        // Masken-Platzhalter ("••••…") aus dem Formular bedeuten "behalten"
+        const updateSet: Record<string, unknown> = {
+          provider: input.provider,
+          merchantCode: input.merchantCode,
+          bankAccountId: input.bankAccountId,
+          revenueAccountId: input.revenueAccountId,
+          isActive: input.isActive,
+        };
+        const encApiKey = prepareSecretForWrite(input.apiKey);
+        const encWebhookSecret = prepareSecretForWrite(input.webhookSecret);
+        if (encApiKey !== undefined) updateSet.apiKey = encApiKey === "" ? null : encApiKey;
+        if (encWebhookSecret !== undefined) updateSet.webhookSecret = encWebhookSecret === "" ? null : encWebhookSecret;
+
         await db
           .update(posConfig)
-          .set({
-            provider: input.provider,
-            apiKey: input.apiKey,
-            merchantCode: input.merchantCode,
-            webhookSecret: input.webhookSecret,
-            bankAccountId: input.bankAccountId,
-            revenueAccountId: input.revenueAccountId,
-            isActive: input.isActive,
-          })
+          .set(updateSet)
           .where(
             and(
               eq(posConfig.id, input.id),
@@ -61,9 +74,9 @@ export const posRouter = router({
           .values({
             organizationId: ctx.organizationId,
             provider: input.provider,
-            apiKey: input.apiKey,
+            apiKey: prepareSecretForWrite(input.apiKey) ?? null,
             merchantCode: input.merchantCode,
-            webhookSecret: input.webhookSecret,
+            webhookSecret: prepareSecretForWrite(input.webhookSecret) ?? null,
             bankAccountId: input.bankAccountId,
             revenueAccountId: input.revenueAccountId,
             isActive: input.isActive,

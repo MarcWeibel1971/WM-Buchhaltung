@@ -18,6 +18,7 @@ import {
   type InsertJournalEntry,
 } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
+import { decryptSecret } from "./secrets";
 
 export const posWebhookRouter = express.Router();
 
@@ -46,8 +47,12 @@ posWebhookRouter.post(
     for (const cfg of configs) {
       if (!cfg.webhookSecret) continue;
       try {
-        const stripe = new Stripe(cfg.apiKey ?? "", { apiVersion: "2026-03-25.dahlia" });
-        event = stripe.webhooks.constructEvent(req.body, sig, cfg.webhookSecret);
+        // Secrets sind at-rest verschlüsselt (Phase 2.2) – Legacy-Klartext
+        // wird von decryptSecret transparent durchgereicht
+        const apiKey = cfg.apiKey ? decryptSecret(cfg.apiKey) : "";
+        const webhookSecret = decryptSecret(cfg.webhookSecret);
+        const stripe = new Stripe(apiKey, { apiVersion: "2026-03-25.dahlia" });
+        event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
         matchedConfig = cfg;
         break;
       } catch {
@@ -106,7 +111,7 @@ posWebhookRouter.post(
     let matchedConfig = configs[0];
     if (signature && matchedConfig.webhookSecret) {
       const expected = crypto
-        .createHmac("sha256", matchedConfig.webhookSecret)
+        .createHmac("sha256", decryptSecret(matchedConfig.webhookSecret))
         .update(JSON.stringify(body))
         .digest("hex");
       if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {

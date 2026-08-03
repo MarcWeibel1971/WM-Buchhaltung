@@ -18,6 +18,7 @@ import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
   getJournalEntries, getJournalEntryWithLines, createJournalEntry,
   approveJournalEntry, rejectJournalEntry, updateJournalEntryLines,
+  isFourEyesRequired, isSelfApprovalBlocked, buildReversalLines,
   getBankAccounts, getPendingBankTransactions, getBankTransactionsByStatus, saveBankTransaction, approveBankTransaction, updateBankTransaction, getBankTransactionsByIds,
   getEmployees, getPayrollEntries,
   getBalanceSheet, getIncomeStatement,
@@ -300,6 +301,7 @@ const journalRouter = router({
         source: input.source,
         fiscalYear: year,
         status: "pending",
+        createdBy: ctx.user.id,
         lines: input.lines,
       });
       return { entryId };
@@ -317,10 +319,32 @@ const journalRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [entry] = await db.select()
+        .from(journalEntries)
+        .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, input.entryId)))
+        .limit(1);
+      if (!entry) throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
+      // Vier-Augen-Prinzip: Ersteller darf nicht selbst freigeben.
+      const fourEyes = await isFourEyesRequired(ctx.organizationId);
+      if (isSelfApprovalBlocked(fourEyes, entry.createdBy, ctx.user.id)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Vier-Augen-Prinzip: Die Freigabe muss durch eine zweite Person erfolgen (Ersteller ≠ Prüfer).",
+        });
+      }
       if (input.lines) {
         await updateJournalEntryLines(input.entryId, input.lines);
       }
       await approveJournalEntry(input.entryId, ctx.user.id);
+      // Storno-Verknüpfung schliessen: Wenn ein Storno-Eintrag freigegeben
+      // wird, markiere den Originaleintrag als storniert.
+      if (entry.reversalOfEntryId) {
+        await db.update(journalEntries)
+          .set({ reversedByEntryId: entry.id })
+          .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, entry.reversalOfEntryId)));
+      }
       return { success: true };
     }),
 
@@ -437,6 +461,79 @@ const journalRouter = router({
         .set({ journalEntryId: null, matchStatus: "unmatched" })
         .where(eq(documents.journalEntryId, input.entryId));
       return { success: true };
+    }),
+
+  // Stornobuchung (GeBüV Art. 957d OR): Ein verbuchter Eintrag wird durch
+  // einen Gegen-Eintrag mit invertierten Zeilen (Soll ↔ Haben) neutralisiert.
+  // Beide Einträge bleiben unveränderlich und sind bilateral verknüpft.
+  storno: orgProcedure
+    .input(z.object({
+      entryId: z.number(),
+      reason: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const result = await getJournalEntryWithLines(ctx.organizationId, input.entryId);
+      if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
+      const { entry: orig, lines: origLines } = result;
+
+      if (orig.status !== "approved") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Nur freigegebene (verbuchte) Einträge können storniert werden." });
+      }
+      if (orig.reversalOfEntryId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Ein Storno-Eintrag kann nicht erneut storniert werden." });
+      }
+      if (orig.reversedByEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Dieser Eintrag wurde bereits storniert (Storno #${orig.reversedByEntryId}).` });
+      }
+      // Offenen (noch nicht freigegebenen) Storno abfangen
+      const [pendingStorno] = await db.select({ id: journalEntries.id })
+        .from(journalEntries)
+        .where(and(
+          eq(journalEntries.organizationId, ctx.organizationId),
+          eq(journalEntries.reversalOfEntryId, orig.id),
+          eq(journalEntries.status, "pending"),
+        ))
+        .limit(1);
+      if (pendingStorno) {
+        throw new TRPCError({ code: "CONFLICT", message: `Es existiert bereits ein offener Storno (#${pendingStorno.id}) für diesen Eintrag.` });
+      }
+
+      const reversalLines = buildReversalLines(origLines.map(({ line }) => ({
+        accountId: line.accountId,
+        side: line.side,
+        amount: line.amount,
+        description: line.description ?? undefined,
+        vatAmount: line.vatAmount ?? undefined,
+        vatRate: line.vatRate ?? undefined,
+      })));
+
+      const stornoId = await createJournalEntry({
+        organizationId: ctx.organizationId,
+        bookingDate: new Date().toISOString().slice(0, 10),
+        description: `Storno ${orig.entryNumber ?? orig.id}: ${orig.description}${input.reason ? ` — Grund: ${input.reason}` : ""}`,
+        source: orig.source,
+        sourceRef: `storno-of-${orig.id}`,
+        status: "pending",
+        createdBy: ctx.user.id,
+        reversalOfEntryId: orig.id,
+        lines: reversalLines,
+      });
+
+      // Vier-Augen-Prinzip: Wenn aktiv, bleibt der Storno zur Freigabe durch
+      // eine zweite Person offen; sonst sofort freigeben und verknüpfen.
+      const fourEyes = await isFourEyesRequired(ctx.organizationId);
+      if (fourEyes) {
+        return { stornoId, pendingApproval: true };
+      }
+      await approveJournalEntry(stornoId, ctx.user.id);
+      await db.update(journalEntries)
+        .set({ reversedByEntryId: stornoId })
+        .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, orig.id)));
+      return { stornoId, pendingApproval: false };
     }),
 
   // Bulk approve multiple journal entries. Uses approveJournalEntry() so that
@@ -4625,17 +4722,18 @@ Antworte NUR mit dem JSON-Objekt.`,
         }
       }
       
+      const fourEyes = await isFourEyesRequired(ctx.organizationId);
       const entryId = await createJournalEntry({
         organizationId: ctx.organizationId,
         bookingDate: input.bookingDate,
         description: input.description || `Beleg: ${doc.filename}`,
         source: "manual",
         fiscalYear: year,
-        status: "approved",
+        status: fourEyes ? "pending" : "approved",
+        createdBy: ctx.user.id,
         lines,
       });
-      await approveJournalEntry(entryId, ctx.user.id);
-      
+
       // Link document to journal entry
       await db.update(docs)
         .set({
@@ -4643,8 +4741,13 @@ Antworte NUR mit dem JSON-Objekt.`,
           matchStatus: 'manual',
         })
         .where(eqOp(docs.id, input.documentId));
-      
-      return { entryId };
+
+      if (fourEyes) {
+        // Vier-Augen-Prinzip: Eintrag bleibt offen, Freigabe durch zweite Person.
+        return { entryId, pendingApproval: true };
+      }
+      await approveJournalEntry(entryId, ctx.user.id);
+      return { entryId, pendingApproval: false };
     }),
 
   // Delete a single document (admin)

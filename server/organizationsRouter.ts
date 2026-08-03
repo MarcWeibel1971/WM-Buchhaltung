@@ -296,6 +296,8 @@ export const organizationsRouter = router({
       defaultBankAccountId: z.number().int().positive().nullable().optional(),
       creditCardClearingAccountId: z.number().int().positive().nullable().optional(),
       defaultSalaryExpenseAccountId: z.number().int().positive().nullable().optional(),
+      // Phase 2.3: Prozesskontrolle Vier-Augen-Prinzip (Freigabe Ersteller ≠ Prüfer).
+      requireFourEyesApproval: z.boolean().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();

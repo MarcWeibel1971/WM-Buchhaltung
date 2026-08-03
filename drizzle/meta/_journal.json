@@ -260,6 +260,13 @@
       "when": 1777271422734,
       "tag": "0036_qr_invoice_matching",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "5",
+      "when": 1785755387611,
+      "tag": "0037_approval_controls",
+      "breakpoints": true
     }
   ]
 }

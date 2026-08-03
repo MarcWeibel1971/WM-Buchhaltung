@@ -6,7 +6,7 @@ import {
   invoiceSequences,
   bankAccounts, bankTransactions, employees, payrollEntries,
   vatPeriods, openingBalances, fiscalYears, creditCardStatements,
-  bookingRules, documents, invoices,
+  bookingRules, documents, invoices, organizations,
   type Account, type JournalEntry, type JournalLine, type BankTransaction,
   type Employee, type PayrollEntry, type BookingRule, type Document,
 } from "../drizzle/schema";
@@ -252,6 +252,8 @@ export async function createJournalEntry(data: {
   fiscalYear?: number;
   aiConfidence?: number;
   aiReasoning?: string;
+  createdBy?: number;
+  reversalOfEntryId?: number;
   lines: Array<{
     accountId: number;
     side: "debit" | "credit";
@@ -293,6 +295,8 @@ export async function createJournalEntry(data: {
     fiscalYear: year,
     aiConfidence: data.aiConfidence,
     aiReasoning: data.aiReasoning,
+    createdBy: data.createdBy,
+    reversalOfEntryId: data.reversalOfEntryId,
   });
 
   const entryId = (result as any).insertId;
@@ -661,6 +665,57 @@ export async function applyInvoicePayment(
   }).where(and(eq(invoices.organizationId, orgId), eq(invoices.id, invoiceId)));
 
   return { status: result.status, openAmount: result.openAmount, paidAmount: result.paidAmount };
+}
+
+// ─── Prozesskontrollen: Vier-Augen-Prinzip & Storno ─────────────────────────
+
+/**
+ * Liest die Org-Einstellung, ob das Vier-Augen-Prinzip für Freigaben
+ * erzwungen wird (Ersteller ≠ Prüfer).
+ */
+export async function isFourEyesRequired(orgId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [org] = await db
+    .select({ requireFourEyesApproval: organizations.requireFourEyesApproval })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  return org?.requireFourEyesApproval ?? false;
+}
+
+/**
+ * Reine Prüflogik Vier-Augen-Prinzip: Die Freigabe ist blockiert, wenn die
+ * Einstellung aktiv ist und Ersteller = Prüfer. Ausgelagert für testbare
+ * Einheit (kein DB-Zugriff). Legacy-Einträge ohne createdBy werden nicht
+ * blockiert (kein Ersteller bekannt).
+ */
+export function isSelfApprovalBlocked(
+  requireFourEyes: boolean,
+  createdBy: number | null | undefined,
+  approverId: number,
+): boolean {
+  return requireFourEyes && createdBy != null && createdBy === approverId;
+}
+
+export type ReversalLine = {
+  accountId: number;
+  side: "debit" | "credit";
+  amount: string;
+  description?: string;
+  vatAmount?: string;
+  vatRate?: string;
+};
+
+/**
+ * Baut die Zeilen eines Storno-Eintrags: identische Konten und Beträge,
+ * aber invertierte Seite (Soll ↔ Haben). Reine Funktion für Tests.
+ */
+export function buildReversalLines(lines: ReversalLine[]): ReversalLine[] {
+  return lines.map((l) => ({
+    ...l,
+    side: l.side === "debit" ? "credit" : "debit",
+  }));
 }
 
 export async function updateBankTransaction(txId: number, data: {

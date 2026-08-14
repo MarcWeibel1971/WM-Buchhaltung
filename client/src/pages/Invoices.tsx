@@ -20,7 +20,6 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import InvoiceEditor from "./InvoicesEditor";
 import { useAuth } from "@/_core/hooks/useAuth";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -83,8 +82,6 @@ type TabFilter = "all" | "draft" | "open" | "overdue" | "paid" | "cancelled";
 export default function Invoices() {
   const [tab, setTab] = useState<TabFilter>("all");
   const [search, setSearch] = useState("");
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
   const [paymentDialog, setPaymentDialog] = useState<{ id: number; open: number } | null>(null);
 
   // Admin-Selektion
@@ -199,7 +196,7 @@ export default function Invoices() {
 
   const [, navigate] = useLocation();
   const handleNew = () => navigate("/rechnungen/neu");
-  const handleEdit = (id: number) => { setEditingId(id); setEditorOpen(true); };
+  const handleEdit = (id: number) => navigate(`/rechnungen/neu?id=${id}`);
 
   // Selektion-Helpers
   const toggleSelect = useCallback((id: number) => {
@@ -589,18 +586,6 @@ export default function Invoices() {
         />
       )}
 
-      {/* Editor-Dialog */}
-      {editorOpen && (
-        <InvoiceEditor
-          invoiceId={editingId}
-          open={editorOpen}
-          onOpenChange={setEditorOpen}
-          onSaved={() => {
-            utils.invoices.list.invalidate();
-            setEditorOpen(false);
-          }}
-        />
-      )}
     </div>
   );
 }

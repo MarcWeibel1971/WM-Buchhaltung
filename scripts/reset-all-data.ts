@@ -7,6 +7,19 @@ import { getDb } from "../server/db";
 import { sql } from "drizzle-orm";
 
 async function main() {
+  // ── Sicherheits-Guard: Dieses Skript löscht ALLE Geschäftsdaten. ──
+  // Es darf niemals versehentlich (z. B. durch einen falschen Deploy- oder
+  // CI-Schritt) gegen eine produktive Datenbank laufen.
+  if ((process.env.NODE_ENV ?? "").toLowerCase() === "production") {
+    console.error("ABGEBROCHEN: NODE_ENV=production – ein vollständiger Daten-Reset ist in Produktion nicht zulässig.");
+    process.exit(1);
+  }
+  if (process.env.ALLOW_DATA_RESET !== "1") {
+    console.error("ABGEBROCHEN: Destruktiver Voll-Reset erfordert die explizite Freigabe via ALLOW_DATA_RESET=1.");
+    console.error("Beispiel: ALLOW_DATA_RESET=1 pnpm tsx scripts/reset-all-data.ts");
+    process.exit(1);
+  }
+
   const db = await getDb();
 
   console.log("=== FULL DATA RESET ===\n");

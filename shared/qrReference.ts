@@ -105,3 +105,43 @@ export function isValidISO11649(reference: string): boolean {
   }
   return remainder === 1;
 }
+
+/**
+ * Validierung für manuell eingegebene Referenzen (z. B. im BankImport-Edit-Dialog).
+ * Freitext ist erlaubt; was wie eine strukturierte Referenz aussieht
+ * (QRR: 26–27 Ziffern, SCOR: RF + 2 Prüfziffern), muss eine gültige
+ * Prüfziffer haben.
+ *
+ * Rückgabe:
+ * - valid=true, canonical gesetzt → strukturierte Referenz, kanonische Form
+ * - valid=true, canonical null    → Freitext (keine Prüfziffer-Validierung)
+ * - valid=false                   → sieht strukturiert aus, Prüfziffer falsch
+ */
+export function validateManualReference(raw: string): {
+  valid: boolean;
+  canonical: string | null;
+  reason?: string;
+} {
+  const trimmed = raw.trim();
+  if (!trimmed) return { valid: true, canonical: null };
+
+  const normalized = normalizeQRReference(trimmed);
+  if (normalized) return { valid: true, canonical: normalized };
+
+  const compact = trimmed.replace(/\s+/g, "");
+  if (/^\d{26,27}$/.test(compact)) {
+    return {
+      valid: false,
+      canonical: null,
+      reason: "Ungültige QR-Referenz: Die Prüfziffer (Modulo 10 rekursiv) stimmt nicht.",
+    };
+  }
+  if (/^RF/i.test(compact)) {
+    return {
+      valid: false,
+      canonical: null,
+      reason: "Ungültige SCOR-Referenz: Die Prüfziffer (ISO 11649 / Modulo 97) stimmt nicht.",
+    };
+  }
+  return { valid: true, canonical: null };
+}

@@ -28,7 +28,7 @@ import {
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
   findOpenInvoiceByQRReference, applyInvoicePayment,
 } from "./db";
-import { normalizeQRReference } from "../shared/qrReference";
+import { normalizeQRReference, validateManualReference } from "../shared/qrReference";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings, organizations, invoices } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { globalRulesRouter } from "./globalRulesRouter";
@@ -1461,6 +1461,16 @@ Regeln:
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const { transactionId, ...data } = input;
+      // Manuelle Referenz validieren: strukturierte Referenzen (QRR/SCOR)
+      // brauchen eine gültige Prüfziffer; gültige werden kanonisch
+      // (ohne Leerzeichen) gespeichert, damit der Auto-Abgleich greift.
+      if (data.reference !== undefined) {
+        const refCheck = validateManualReference(data.reference);
+        if (!refCheck.valid) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: refCheck.reason });
+        }
+        if (refCheck.canonical) data.reference = refCheck.canonical;
+      }
       // Mark as manually edited so refresh won't overwrite
       await updateBankTransaction(transactionId, { ...data, manuallyEdited: true });
 

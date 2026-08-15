@@ -49,6 +49,9 @@ import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
 import { isSupportedBookingCurrency, unsupportedBookingCurrencyMessage } from "../shared/currency";
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("routers");
 
 /**
  * Converts a date string or Date object to 'YYYY-MM-DD' string for Drizzle date() columns.
@@ -961,7 +964,7 @@ const bankImportRouter = router({
             importedBy: ctx.user.openId,
           });
         } catch (e) {
-          console.error("Failed to save import history:", e);
+          logger.error("Failed to save import history:", e);
         }
       }
 
@@ -1043,7 +1046,7 @@ const bankImportRouter = router({
             }
           }
         } catch (e) {
-          console.error("Auto-match after import failed:", e);
+          logger.error("Auto-match after import failed:", e);
         }
       }
 
@@ -1206,7 +1209,7 @@ Regeln:
             }
           }
         } catch (e) {
-          console.error(`AI categorization failed for tx ${tx.id}:`, e);
+          logger.error(`AI categorization failed for tx ${tx.id}:`, e);
           results.push({ txId: tx.id, success: false });
         }
       }
@@ -1275,7 +1278,7 @@ Regeln:
           if (!bankAccountIds.includes(input.creditAccountId)) ruleData.creditAccountId = input.creditAccountId;
           await upsertBookingRule(ruleData);
         } catch (e) {
-          console.error("Failed to learn booking rule:", e);
+          logger.error("Failed to learn booking rule:", e);
         }
       }
 
@@ -1407,7 +1410,7 @@ Regeln:
               await upsertBookingRule(ruleData);
             }
           } catch (e) {
-            console.error("Failed to learn booking rule from edit:", e);
+            logger.error("Failed to learn booking rule from edit:", e);
           }
         }
       }
@@ -1474,7 +1477,7 @@ Regeln:
               if (!bankAccountIds.includes(item.creditAccountId)) ruleData.creditAccountId = item.creditAccountId;
               await upsertBookingRule(ruleData);
             } catch (e) {
-              console.error("Failed to learn booking rule:", e);
+              logger.error("Failed to learn booking rule:", e);
             }
           }
         } catch (e: any) {
@@ -2300,7 +2303,7 @@ Antwort NUR als JSON-Array, keine Erklärung:
       try {
         images = await pdfUrlToImages(input.documentUrl, 3);
       } catch (err) {
-        console.error("PDF-zu-Bild-Konvertierung fehlgeschlagen:", err);
+        logger.error("PDF-zu-Bild-Konvertierung fehlgeschlagen:", err);
         // Fallback auf Text-only Parsing
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF konnte nicht verarbeitet werden" });
       }
@@ -2751,6 +2754,14 @@ const payrollRouter = router({
       // AHV/IV/EO/ALV rates (stored as e.g. 6.4000 meaning 6.4%)
       const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
       const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
+
+      // AHV-Fallback-Warnung: Ohne hinterlegten Satz wird stillschweigend 6.4%
+      // angenommen. Das ist ein Sollwert, kein Ersatz für die echten Satzdaten –
+      // der Aufrufer muss die Warnung an den User durchreichen.
+      const fallbackWarnings: string[] = [];
+      if (!ahvSetting) {
+        fallbackWarnings.push("Kein AHV/IV/EO-Satz in den Versicherungseinstellungen hinterlegt – Fallback 6.4% verwendet. Bitte den aktuellen Satz unter Einstellungen → Versicherungen erfassen.");
+      }
       // BVG: fixed monthly CHF amounts
       const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
       const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
@@ -3006,7 +3017,7 @@ const payrollRouter = router({
         }
       }
 
-      return { created, updated, skipped, total: grouped.size };
+      return { created, updated, skipped, total: grouped.size, warnings: fallbackWarnings };
     }),
 
   // Recalculate all payroll entries with current insurance settings
@@ -3025,6 +3036,14 @@ const payrollRouter = router({
 
       const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
       const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
+
+      // AHV-Fallback-Warnung: Ohne hinterlegten Satz wird stillschweigend 6.4%
+      // angenommen. Das ist ein Sollwert, kein Ersatz für die echten Satzdaten –
+      // der Aufrufer muss die Warnung an den User durchreichen.
+      const fallbackWarnings: string[] = [];
+      if (!ahvSetting) {
+        fallbackWarnings.push("Kein AHV/IV/EO-Satz in den Versicherungseinstellungen hinterlegt – Fallback 6.4% verwendet. Bitte den aktuellen Satz unter Einstellungen → Versicherungen erfassen.");
+      }
       const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
       const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
       const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate as string ?? '0') / 100 : 0;
@@ -3067,7 +3086,7 @@ const payrollRouter = router({
         }
       }
 
-      return { recalculated, total: entries.length };
+      return { recalculated, total: entries.length, warnings: fallbackWarnings };
     }),
 
   approve: orgProcedure
@@ -4832,7 +4851,7 @@ ${recentDocs.map(d => {
 }).join('\n')}
 `;
       } catch (e) {
-        console.error('Avatar chat context error:', e);
+        logger.error('Avatar chat context error:', e);
       }
 
       const systemPrompt = `Du bist ${cfgAvatarName}, der Buchhaltungsberater der WM Weibel Mueller AG. Antworte IMMER extrem kurz und direkt – maximal ${cfgMaxSentences} Sätze. Keine Einleitungen, kein Smalltalk, kein "Gerne", kein "Natürlich". Nur die Antwort.${cfgCustomPrompt ? '\n' + cfgCustomPrompt : ''}
@@ -4860,7 +4879,7 @@ ${contextText}`;
           reply = nemotronResult.content || 'Entschuldigung, ich konnte keine Antwort generieren.';
           reasoning = nemotronResult.reasoning;
         } catch (e) {
-          console.error('Nemotron Chat Fehler, Fallback auf LLM:', e);
+          logger.error('Nemotron Chat Fehler, Fallback auf LLM:', e);
           const llmResponse = await invokeLLM({ messages });
           const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
           reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
@@ -4898,10 +4917,10 @@ ${contextText}`;
             audioUrl = `data:audio/mpeg;base64,${base64}`;
           } else {
             const errText = await ttsRes.text().catch(() => '');
-            console.error('ElevenLabs TTS error:', ttsRes.status, errText);
+            logger.error('ElevenLabs TTS error:', ttsRes.status, errText);
           }
         } catch (e) {
-          console.error('ElevenLabs TTS error:', e);
+          logger.error('ElevenLabs TTS error:', e);
         }
       }
       return { reply, audioUrl };
@@ -4954,10 +4973,10 @@ ${contextText}`;
             const buf = await ttsRes.arrayBuffer();
             audioUrl = `data:audio/mpeg;base64,${Buffer.from(buf).toString('base64')}`;
           } else {
-            console.error('ElevenLabs TTS greeting error:', ttsRes.status);
+            logger.error('ElevenLabs TTS greeting error:', ttsRes.status);
           }
         } catch (e) {
-          console.error('ElevenLabs TTS greeting error:', e);
+          logger.error('ElevenLabs TTS greeting error:', e);
         }
       }
       return { audioUrl };
@@ -5091,7 +5110,7 @@ export const appRouter = router({
           const results = await searchCompanies(input.name, 10);
           return results;
         } catch (e) {
-          console.error("UID search error:", e);
+          logger.error("UID search error:", e);
           return [];
         }
       }),

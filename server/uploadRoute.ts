@@ -8,6 +8,9 @@ import { sdk } from "./_core/sdk";
 import { eq } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 import { findOrCreateSupplierFromMetadata } from "./suppliersRouter";
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("uploadRoute");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -151,7 +154,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
         }
       }
     } catch (llmErr) {
-      console.warn("[Document] LLM extraction failed:", llmErr);
+      logger.warn("[Document] LLM extraction failed:", llmErr);
     }
 
     // Determine document type: use explicit form value, or AI-detected type, or fallback to "other"
@@ -203,11 +206,11 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
           const supplierResult = await findOrCreateSupplierFromMetadata(orgId, parsed, tempDb);
           if (supplierResult) {
             autoSupplierId = supplierResult.supplierId;
-            console.log(`[Upload] ${supplierResult.created ? 'Created' : 'Linked'} supplier #${supplierResult.supplierId} for invoice from ${parsed.counterparty}`);
+            logger.info(`[Upload] ${supplierResult.created ? 'Created' : 'Linked'} supplier #${supplierResult.supplierId} for invoice from ${parsed.counterparty}`);
           }
         }
       } catch (supplierErr) {
-        console.warn("[Upload] Auto-supplier creation failed:", supplierErr);
+        logger.warn("[Upload] Auto-supplier creation failed:", supplierErr);
       }
     }
 
@@ -238,7 +241,7 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
     const [saved] = await db.select().from(documents).where(eq(documents.id, docId));
     return res.json({ success: true, document: saved });
   } catch (err: any) {
-    console.error("[Upload] Error:", err);
+    logger.error("[Upload] Error:", err);
     return res.status(500).json({ error: err.message ?? "Upload fehlgeschlagen" });
   }
 });
@@ -383,7 +386,7 @@ Antworte NUR mit JSON: { "transactions": [...], "accountNumber": "IBAN", "statem
       fileUrl,
     });
   } catch (err: any) {
-    console.error("[PDF Bank Import] Error:", err);
+    logger.error("[PDF Bank Import] Error:", err);
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
   }
 });
@@ -503,7 +506,7 @@ Antworte NUR mit JSON: { "accounts": [...], "totalFound": number, "documentTitle
       documentTitle: parsed.documentTitle ?? null,
     });
   } catch (err: any) {
-    console.error("[PDF Chart Import] Error:", err);
+    logger.error("[PDF Chart Import] Error:", err);
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
   }
 });
@@ -623,7 +626,7 @@ Antworte NUR mit JSON: { "balances": [...], "totalAssets": number, "totalLiabili
       fiscalYear: parsed.fiscalYear ?? null,
     });
   } catch (err: any) {
-    console.error("[PDF Opening Balance Import] Error:", err);
+    logger.error("[PDF Opening Balance Import] Error:", err);
     return res.status(500).json({ error: err.message ?? "PDF-Verarbeitung fehlgeschlagen" });
   }
 });
@@ -654,7 +657,7 @@ uploadRouter.post("/voice", audioUpload.single("audio"), async (req, res) => {
     const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
     return res.json({ url, key });
   } catch (err: any) {
-    console.error("[Voice Upload] Error:", err);
+    logger.error("[Voice Upload] Error:", err);
     return res.status(500).json({ error: err.message ?? "Audio-Upload fehlgeschlagen" });
   }
 });
@@ -687,7 +690,7 @@ uploadRouter.post("/transcribe", audioUpload.single("audio"), async (req, res) =
     const baseUrl = ENV.forgeApiUrl.endsWith("/") ? ENV.forgeApiUrl : `${ENV.forgeApiUrl}/`;
     const whisperUrl = new URL("v1/audio/transcriptions", baseUrl).toString();
 
-    console.log("[Transcribe] Sending audio to Whisper:", whisperUrl, "size:", req.file.size);
+    logger.info("[Transcribe] Sending audio to Whisper:", whisperUrl, "size:", req.file.size);
 
     const response = await fetch(whisperUrl, {
       method: "POST",
@@ -700,15 +703,15 @@ uploadRouter.post("/transcribe", audioUpload.single("audio"), async (req, res) =
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
-      console.error("[Transcribe] Whisper error:", response.status, errorText);
+      logger.error("[Transcribe] Whisper error:", response.status, errorText);
       return res.status(500).json({ error: `Transkription fehlgeschlagen: ${response.status} ${errorText}` });
     }
 
     const result = await response.json() as { text: string };
-    console.log("[Transcribe] Result:", result.text?.substring(0, 100));
+    logger.info("[Transcribe] Result:", result.text?.substring(0, 100));
     return res.json({ text: result.text ?? "" });
   } catch (err: any) {
-    console.error("[Transcribe] Error:", err);
+    logger.error("[Transcribe] Error:", err);
     return res.status(500).json({ error: err.message ?? "Transkription fehlgeschlagen" });
   }
 });

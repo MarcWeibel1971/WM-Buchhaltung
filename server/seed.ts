@@ -7,6 +7,9 @@ import mysql from "mysql2/promise";
 import { eq } from "drizzle-orm";
 import { accounts, employees, bankAccounts, fiscalYears, openingBalances } from "../drizzle/schema";
 import dotenv from "dotenv";
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("seed");
 dotenv.config();
 
 
@@ -170,7 +173,7 @@ const SEED_ORG_ID = 1;
 async function seed() {
   const connection = await mysql.createConnection(process.env.DATABASE_URL!);
   const db = drizzle(connection);
-  console.log("Seeding Kontenplan...");
+  logger.info("Seeding Kontenplan...");
   for (const acc of ACCOUNTS) {
     await db.insert(accounts).values({
       organizationId: SEED_ORG_ID,
@@ -186,7 +189,7 @@ async function seed() {
       sortOrder: acc.sortOrder,
     }).onDuplicateKeyUpdate({ set: { name: acc.name, category: acc.category, subCategory: acc.subCategory, sortOrder: acc.sortOrder } });
   }
-  console.log(`✓ ${ACCOUNTS.length} Konten geseedet`);
+  logger.info(`✓ ${ACCOUNTS.length} Konten geseedet`);
 
   // Fiscal years
   await db.insert(fiscalYears).values(
@@ -201,7 +204,7 @@ async function seed() {
   await db.insert(fiscalYears).values(
     { organizationId: SEED_ORG_ID, year: 2026, startDate: "2026-01-01", endDate: "2026-12-31", isClosed: false }
   ).onDuplicateKeyUpdate({ set: { isClosed: false } });
-  console.log("✓ Geschäftsjahre geseedet");
+  logger.info("✓ Geschäftsjahre geseedet");
 
   // Opening balances 2026 (scoped to seed org)
   const allAccounts = await db.select().from(accounts).where(eq(accounts.organizationId, SEED_ORG_ID));
@@ -218,7 +221,7 @@ async function seed() {
       }).onDuplicateKeyUpdate({ set: { balance } });
     }
   }
-  console.log("✓ Eröffnungssalden 2026 geseedet");
+  logger.info("✓ Eröffnungssalden 2026 geseedet");
 
   // Employees
   const mwGrossId = accountMap.get("4000");
@@ -244,7 +247,7 @@ async function seed() {
       salaryAccountId: jmKkId,
     },
   ]).onDuplicateKeyUpdate({ set: { isActive: true } });
-  console.log("✓ Mitarbeiter geseedet (mw, jm)");
+  logger.info("✓ Mitarbeiter geseedet (mw, jm)");
 
   // Bank accounts
   const lukbWmId = accountMap.get("1031");
@@ -257,11 +260,11 @@ async function seed() {
       { organizationId: SEED_ORG_ID, accountId: lukbMwId!, name: "LUKB mw ...3555 8320 9", bank: "LUKB", currency: "CHF", owner: "mw" },
       { organizationId: SEED_ORG_ID, accountId: lukbJmId!, name: "LUKB jm ...3555 8310 0", bank: "LUKB", currency: "CHF", owner: "jm" },
     ]).onDuplicateKeyUpdate({ set: { isActive: true } });
-    console.log("✓ Bankkonten geseedet");
+    logger.info("✓ Bankkonten geseedet");
   }
 
-  console.log("\n✅ Seeding abgeschlossen!");
+  logger.info("\n✅ Seeding abgeschlossen!");
   await connection.end();
 }
 
-seed().catch(e => { console.error(e); process.exit(1); });
+seed().catch(e => { logger.error(e); process.exit(1); });

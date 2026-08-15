@@ -566,6 +566,7 @@ export default function Payroll() {
   const syncMutation = trpc.payroll.syncFromJournal.useMutation({
     onSuccess: (res) => {
       toast.success(`Synchronisiert: ${res.created} neue, ${res.updated} aktualisierte, ${res.skipped} übersprungene Einträge`);
+      if (res.warnings?.length) res.warnings.forEach((w) => toast.warning(w, { duration: 10000 }));
       refetch();
       utils.payroll.annualSummary.invalidate();
     },
@@ -575,6 +576,7 @@ export default function Payroll() {
   const recalcMutation = trpc.payroll.recalculate.useMutation({
     onSuccess: (res) => {
       toast.success(`${res.recalculated} von ${res.total} Einträgen neu berechnet (Brutto/Abzüge)`);
+      if (res.warnings?.length) res.warnings.forEach((w) => toast.warning(w, { duration: 10000 }));
       refetch();
       utils.payroll.annualSummary.invalidate();
     },

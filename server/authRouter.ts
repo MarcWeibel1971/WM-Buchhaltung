@@ -24,6 +24,9 @@ import { ENV } from "./_core/env";
 import { getDb } from "./db";
 import { users } from "../drizzle/schema";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./emailService";
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("authRouter");
 
 const BCRYPT_ROUNDS = 12;
 const VERIFY_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -111,7 +114,7 @@ export const authRouter = router({
         try {
           await sendVerificationEmail(normalizedEmail, verifyToken, input.origin, input.name);
         } catch (e) {
-          console.error("[Auth] Failed to send verification email:", e);
+          logger.error("[Auth] Failed to send verification email:", e);
         }
 
         return {
@@ -142,7 +145,7 @@ export const authRouter = router({
       try {
         await sendVerificationEmail(normalizedEmail, verifyToken, input.origin, input.name);
       } catch (e) {
-        console.error("[Auth] Failed to send verification email:", e);
+        logger.error("[Auth] Failed to send verification email:", e);
       }
 
       return {
@@ -314,7 +317,7 @@ export const authRouter = router({
       try {
         await sendPasswordResetEmail(normalizedEmail, resetToken, input.origin, user.name || undefined);
       } catch (e) {
-        console.error("[Auth] Failed to send password reset email:", e);
+        logger.error("[Auth] Failed to send password reset email:", e);
       }
 
       return {
@@ -425,7 +428,7 @@ export const authRouter = router({
       try {
         await sendVerificationEmail(normalizedEmail, verifyToken, input.origin, user.name || undefined);
       } catch (e) {
-        console.error("[Auth] Failed to resend verification email:", e);
+        logger.error("[Auth] Failed to resend verification email:", e);
       }
 
       return {

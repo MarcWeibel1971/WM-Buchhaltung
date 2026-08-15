@@ -37,6 +37,9 @@ import {
   createJournalEntry,
   approveJournalEntry,
 } from "./db";
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("invoicesRouter");
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1065,7 +1068,7 @@ export const invoicesRouter = router({
         });
       } catch (e) {
         // Dokumenten-Eintrag ist nicht kritisch – PDF wurde erfolgreich erstellt.
-        console.warn("[invoices.generatePdf] document insert failed:", e);
+        logger.warn("[invoices.generatePdf] document insert failed:", e);
       }
 
       return { url, s3Key, cached: false, filename };

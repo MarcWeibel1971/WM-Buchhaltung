@@ -23,6 +23,9 @@ import PDFDocument from "pdfkit";
 import { storagePut } from "./storage";
 import { sendEmail } from "./emailService";
 import { getDb } from "./db";
+import { createLogger } from "./_core/logger";
+
+const logger = createLogger("remindersRouter");
 
 function formatCHF(n: number): string {
   const [int, dec] = n.toFixed(2).split(".");
@@ -691,7 +694,7 @@ export const remindersRouter = router({
           notes: `Auto-generiert: ${levelTag} für Rechnung ${invoice.invoiceNumber ?? `#${invoice.id}`}`,
         });
       } catch (e) {
-        console.warn("[reminders.generatePdf] document insert failed:", e);
+        logger.warn("[reminders.generatePdf] document insert failed:", e);
       }
 
       return { url, s3Key, cached: false, filename };
@@ -774,7 +777,7 @@ export const remindersRouter = router({
             });
           }
         } catch (e) {
-          console.warn("[reminders.sendEmail] invoice PDF fetch failed:", e);
+          logger.warn("[reminders.sendEmail] invoice PDF fetch failed:", e);
         }
       }
 

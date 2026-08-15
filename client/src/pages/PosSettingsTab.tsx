@@ -403,6 +403,11 @@ export default function PosSettingsTab() {
                 value={form.apiKey}
                 onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
               />
+              {form.apiKey.startsWith("••••") && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Gespeicherter Schlüssel (verschlüsselt). Unverändert lassen, um ihn zu behalten — oder neuen Schlüssel eingeben.
+                </p>
+              )}
             </div>
 
             {/* Merchant Code (nur SumUp) */}

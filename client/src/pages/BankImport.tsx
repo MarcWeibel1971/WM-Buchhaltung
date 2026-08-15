@@ -1037,6 +1037,12 @@ export default function BankImport() {
                     </td>
                     <td className={`text-sm text-right font-mono tabular-nums whitespace-nowrap ${amount >= 0 ? "text-green-700" : "text-red-600"}`}>
                       {amount >= 0 ? "" : "-"}{formatCHF(Math.abs(amount))}
+                      {tx.currency && tx.currency !== "CHF" && (
+                        <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                          title="Fremdwährung: Buchung derzeit nur in CHF möglich (keine Kursumrechnung)">
+                          {tx.currency}
+                        </span>
+                      )}
                     </td>
                     <td className="text-right text-xs">
                       {txIsPending && (

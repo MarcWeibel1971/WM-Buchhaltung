@@ -120,7 +120,8 @@ export function parseCAMT054(xmlContent: string): Camt054Notification {
         const creditorNameMatch = entry.match(/<Cdtr>[\s\S]*?<Nm>(.*?)<\/Nm>/);
         const creditorIbanMatch = entry.match(/<CdtrAcct>[\s\S]*?<IBAN>(.*?)<\/IBAN>/);
         const ustrdMatch = entry.match(/<Ustrd>(.*?)<\/Ustrd>/);
-        
+        const strdRefMatch = entry.match(/<CdtrRefInf>[\s\S]*?<Ref>(.*?)<\/Ref>/);
+
         txDetails.push({
           amount,
           currency,
@@ -132,6 +133,7 @@ export function parseCAMT054(xmlContent: string): Camt054Notification {
           creditorName: creditorNameMatch?.[1]?.trim(),
           creditorIban: creditorIbanMatch?.[1]?.trim(),
           remittanceInfo: ustrdMatch?.[1]?.trim(),
+          reference: strdRefMatch?.[1]?.trim(),
         });
       }
       

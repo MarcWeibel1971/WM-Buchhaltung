@@ -170,6 +170,9 @@ export default function BankImport() {
   const importMutation = trpc.bankImport.importTransactions.useMutation({
     onSuccess: (data) => {
       toast.success(`${data.imported} Transaktionen importiert, ${data.duplicates} Duplikate übersprungen`);
+      if ((data as any).invoiceMatched > 0) {
+        toast.success(`${(data as any).invoiceMatched} Zahlungseingang/Zahlungseingänge via QR-Referenz einer Rechnung zugeordnet`, { duration: 6000 });
+      }
       refetchTxs();
       setImporting(false);
       if (data.imported > 0) {
@@ -1004,6 +1007,11 @@ export default function BankImport() {
                     </td>
                     <td className="text-sm max-w-xs">
                       <div className="truncate font-medium" title={tx.description ?? ""}>{tx.description ?? "–"}</div>
+                      {(tx as any).matchedInvoiceNumber && (
+                        <div className="text-xs text-green-700 font-medium mt-0.5" title="Zahlungseingang automatisch einer QR-Rechnung zugeordnet">
+                          QR-Match: {(tx as any).matchedInvoiceNumber}
+                        </div>
+                      )}
                     </td>
                     <td className="text-sm max-w-40">
                       <div className="truncate" title={tx.counterparty ?? ""}>

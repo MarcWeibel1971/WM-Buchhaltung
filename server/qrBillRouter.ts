@@ -13,6 +13,7 @@ import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { SwissQRBill } from "swissqrbill/pdf";
 import type { Data } from "swissqrbill/types";
+import { generateQRReference, formatQRReference as formatQRRef } from "../shared/qrReference";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,32 +24,7 @@ function formatCHF(n: number): string {
   return `${formatted}.${dec}`;
 }
 
-/** Generate a QR-Referenz (26 digits + 1 check digit) from an invoice/entry ID */
-function generateQRReference(id: number, year: number): string {
-  // Format: YYMMDD + 20-digit zero-padded ID = 26 digits
-  const base = String(year).slice(-2) + "0000" + String(id).padStart(20, "0");
-  // Modulo 10 recursive check digit (ISO 11649)
-  const table = [0, 9, 4, 6, 8, 2, 7, 1, 3, 5];
-  let carry = 0;
-  for (const ch of base) {
-    carry = table[(carry + parseInt(ch)) % 10];
-  }
-  const check = (10 - carry) % 10;
-  return base + String(check);
-}
 
-/** Format QR reference with spaces: "00 00000 00000 00000 00000 00001 7" */
-function formatQRRef(ref: string): string {
-  // Right-align in groups of 5, first group may be shorter
-  const parts: string[] = [];
-  let i = ref.length;
-  while (i > 0) {
-    const start = Math.max(0, i - 5);
-    parts.unshift(ref.slice(start, i));
-    i = start;
-  }
-  return parts.join(" ");
-}
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 

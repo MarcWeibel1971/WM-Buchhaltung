@@ -10,7 +10,7 @@ import {
   companySettings,
   fiscalYears,
 } from "../drizzle/schema";
-import { eq, and, asc, inArray } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 
 /**
  * Helper: turns a company name into a URL-friendly slug.
@@ -150,6 +150,8 @@ export const organizationsRouter = router({
       vatNumber: z.string().max(30).optional(),
       vatMethod: z.enum(["effective", "saldo", "pauschal"]).optional().default("effective"),
       vatSaldoRate: z.string().optional(),
+      vatPauschalRate: z.string().optional(),
+      vatPauschalActivity: z.string().max(100).optional(),
       vatPeriod: z.enum(["quarterly", "semi-annual"]).optional().default("quarterly"),
       fiscalYearStartMonth: z.number().int().min(1).max(12).optional().default(1),
       phone: z.string().max(30).optional(),
@@ -180,6 +182,8 @@ export const organizationsRouter = router({
         vatNumber: input.vatNumber,
         vatMethod: input.vatMethod,
         vatSaldoRate: input.vatSaldoRate,
+        vatPauschalRate: input.vatPauschalRate,
+        vatPauschalActivity: input.vatPauschalActivity,
         vatPeriod: input.vatPeriod,
         fiscalYearStartMonth: input.fiscalYearStartMonth,
         phone: input.phone,
@@ -212,6 +216,8 @@ export const organizationsRouter = router({
         vatNumber: input.vatNumber,
         vatMethod: input.vatMethod,
         vatSaldoRate: input.vatSaldoRate,
+        vatPauschalRate: input.vatPauschalRate,
+        vatPauschalActivity: input.vatPauschalActivity,
         vatPeriod: input.vatPeriod,
         fiscalYearStartMonth: input.fiscalYearStartMonth,
         phone: input.phone,
@@ -286,16 +292,14 @@ export const organizationsRouter = router({
       vatNumber: z.string().max(30).optional(),
       vatMethod: z.enum(["effective", "saldo", "pauschal"]).optional(),
       vatSaldoRate: z.string().optional(),
+      vatPauschalRate: z.string().optional(),
+      vatPauschalActivity: z.string().max(100).optional(),
       vatPeriod: z.enum(["quarterly", "semi-annual"]).optional(),
       fiscalYearStartMonth: z.number().int().min(1).max(12).optional(),
+      requiresDualApproval: z.boolean().optional(),
       phone: z.string().max(30).optional(),
       email: z.string().max(200).optional(),
       website: z.string().max(200).optional(),
-      // Phase 3c: Konto-Mappings (Bank, Kreditkarten-Durchlauf, Brutto-Lohn).
-      // Null explizit erlaubt, um die Zuordnung wieder zu entfernen.
-      defaultBankAccountId: z.number().int().positive().nullable().optional(),
-      creditCardClearingAccountId: z.number().int().positive().nullable().optional(),
-      defaultSalaryExpenseAccountId: z.number().int().positive().nullable().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
@@ -312,26 +316,6 @@ export const organizationsRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "Nur Owner/Admin kann die Organisation bearbeiten." });
       }
 
-      // Sicherheits-Check: referenzierte Konten müssen zur aktiven Org gehören.
-      const accountIds = [
-        input.defaultBankAccountId,
-        input.creditCardClearingAccountId,
-        input.defaultSalaryExpenseAccountId,
-      ].filter((id): id is number => typeof id === "number");
-      if (accountIds.length > 0) {
-        const found = await db.select({ id: accounts.id }).from(accounts)
-          .where(and(
-            eq(accounts.organizationId, ctx.organizationId),
-            inArray(accounts.id, accountIds),
-          ));
-        if (found.length !== accountIds.length) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "Mindestens ein zugewiesenes Konto gehört nicht zu dieser Organisation.",
-          });
-        }
-      }
-
       const updateData: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(input)) {
         if (v !== undefined) updateData[k] = v;
@@ -343,7 +327,7 @@ export const organizationsRouter = router({
       // Legacy-Sync: companySettings mitziehen (falls vorhanden)
       const legacyUpdate: Record<string, unknown> = {};
       if (input.name !== undefined) legacyUpdate.companyName = input.name;
-      for (const k of ["legalForm", "street", "zipCode", "city", "canton", "country", "uid", "vatNumber", "vatMethod", "vatSaldoRate", "vatPeriod", "fiscalYearStartMonth", "phone", "email", "website"] as const) {
+      for (const k of ["legalForm", "street", "zipCode", "city", "canton", "country", "uid", "vatNumber", "vatMethod", "vatSaldoRate", "vatPauschalRate", "vatPauschalActivity", "vatPeriod", "fiscalYearStartMonth", "phone", "email", "website"] as const) {
         if ((input as any)[k] !== undefined) legacyUpdate[k] = (input as any)[k];
       }
       if (Object.keys(legacyUpdate).length > 0) {

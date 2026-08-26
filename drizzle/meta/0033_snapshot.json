@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "84cf37db-8ed7-476a-abec-c5bbd5d15cc5",
-  "prevId": "a21b3f43-dd87-4939-9cf6-d7239f61f3ab",
+  "id": "7e1b7646-5fa4-44cf-acd5-8b9a4840f5cb",
+  "prevId": "957b0169-5d24-4a59-bdaa-615d65b5840f",
   "tables": {
     "accounts": {
       "name": "accounts",
@@ -1570,169 +1570,6 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "ebics_config": {
-      "name": "ebics_config",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "organizationId": {
-          "name": "organizationId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "bankName": {
-          "name": "bankName",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "hostId": {
-          "name": "hostId",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "bankUrl": {
-          "name": "bankUrl",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "partnerId": {
-          "name": "partnerId",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "userId": {
-          "name": "userId",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "enum('2.5','3.0')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'3.0'"
-        },
-        "initStatus": {
-          "name": "initStatus",
-          "type": "enum('not_initialized','ini_sent','hia_sent','active')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'not_initialized'"
-        },
-        "signatureKeyPem": {
-          "name": "signatureKeyPem",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "authKeyPem": {
-          "name": "authKeyPem",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "encKeyPem": {
-          "name": "encKeyPem",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bankSignatureKeyHash": {
-          "name": "bankSignatureKeyHash",
-          "type": "varchar(128)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bankAuthKeyHash": {
-          "name": "bankAuthKeyHash",
-          "type": "varchar(128)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bankEncKeyHash": {
-          "name": "bankEncKeyHash",
-          "type": "varchar(128)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bankAccountId": {
-          "name": "bankAccountId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "isActive": {
-          "name": "isActive",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "lastSyncAt": {
-          "name": "lastSyncAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updatedAt": {
-          "name": "updatedAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "onUpdate": true,
-          "default": "(now())"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "ebics_config_id": {
-          "name": "ebics_config_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
     "employees": {
       "name": "employees",
       "columns": {
@@ -2858,34 +2695,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "closingText": {
-          "name": "closingText",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "greeting": {
-          "name": "greeting",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "signatory": {
-          "name": "signatory",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "signatoryTitle": {
-          "name": "signatoryTitle",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "subtotal": {
           "name": "subtotal",
           "type": "decimal(15,2)",
@@ -3127,6 +2936,13 @@
         "approvedAt": {
           "name": "approvedAt",
           "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "createdBy": {
+          "name": "createdBy",
+          "type": "int",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -3479,6 +3295,21 @@
           "notNull": false,
           "autoincrement": false,
           "default": 1
+        },
+        "requiresDualApproval": {
+          "name": "requiresDualApproval",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "reminderPolicy": {
+          "name": "reminderPolicy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "phone": {
           "name": "phone",
@@ -3921,250 +3752,6 @@
         }
       },
       "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "pos_config": {
-      "name": "pos_config",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "organizationId": {
-          "name": "organizationId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider": {
-          "name": "provider",
-          "type": "enum('stripe_terminal','sumup')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "apiKey": {
-          "name": "apiKey",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "merchantCode": {
-          "name": "merchantCode",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "webhookSecret": {
-          "name": "webhookSecret",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bankAccountId": {
-          "name": "bankAccountId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revenueAccountId": {
-          "name": "revenueAccountId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "isActive": {
-          "name": "isActive",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updatedAt": {
-          "name": "updatedAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "onUpdate": true,
-          "default": "(now())"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "pos_config_id": {
-          "name": "pos_config_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "pos_transactions": {
-      "name": "pos_transactions",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "organizationId": {
-          "name": "organizationId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider": {
-          "name": "provider",
-          "type": "enum('stripe_terminal','sumup')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "externalId": {
-          "name": "externalId",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "amount": {
-          "name": "amount",
-          "type": "decimal(15,2)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "varchar(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'CHF'"
-        },
-        "paymentMethod": {
-          "name": "paymentMethod",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "cardBrand": {
-          "name": "cardBrand",
-          "type": "varchar(50)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "cardLast4": {
-          "name": "cardLast4",
-          "type": "varchar(4)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "description": {
-          "name": "description",
-          "type": "varchar(500)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum('pending','completed','refunded','failed')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'completed'"
-        },
-        "paidAt": {
-          "name": "paidAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "invoiceId": {
-          "name": "invoiceId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "journalEntryId": {
-          "name": "journalEntryId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "bankTransactionId": {
-          "name": "bankTransactionId",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "rawPayload": {
-          "name": "rawPayload",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "createdAt": {
-          "name": "createdAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "pos_transactions_id": {
-          "name": "pos_transactions_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {
-        "pos_transactions_externalId_unique": {
-          "name": "pos_transactions_externalId_unique",
-          "columns": [
-            "externalId"
-          ]
-        }
-      },
       "checkConstraint": {}
     },
     "qr_settings": {

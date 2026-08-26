@@ -1,0 +1,10 @@
+import { formatCHF } from "@/lib/formatters";
+
+type CollectiveLine = { accountId: string; amount: string; description: string; vatRate: string };
+type Account = { id: number; number: string; name: string };
+
+export function BankImportCollectiveBookingPreview({ lines, accounts, bankAccountLabel, description, isIncoming, txAmount }: { lines: CollectiveLine[]; accounts: Account[] | undefined; bankAccountLabel: string; description: string; isIncoming: boolean; txAmount: number }) {
+  const populatedLines = lines.filter((line) => line.accountId && line.amount);
+  if (!populatedLines.length) return null;
+  return <div className="border rounded-lg overflow-hidden"><table className="w-full text-xs"><thead className="bg-muted/50"><tr><th className="text-left p-2 font-medium">Konto</th><th className="text-left p-2 font-medium">Text</th><th className="text-right p-2 font-medium">Soll</th><th className="text-right p-2 font-medium">Haben</th><th className="text-right p-2 font-medium">Steuer</th></tr></thead><tbody><tr className="border-t"><td className="p-2 font-medium">{bankAccountLabel}</td><td className="p-2 text-muted-foreground">{description || "–"}</td><td className="p-2 text-right font-mono">{isIncoming ? formatCHF(txAmount) : ""}</td><td className="p-2 text-right font-mono">{!isIncoming ? formatCHF(txAmount) : ""}</td><td className="p-2 text-right"></td></tr>{populatedLines.map((line, index) => { const account = accounts?.find((candidate) => candidate.id === parseInt(line.accountId)); const vatAmount = line.vatRate ? parseFloat(line.amount) * parseFloat(line.vatRate) / 100 : 0; return <tr key={index} className="border-t"><td className="p-2">{account ? `${account.number} ${account.name}` : line.accountId}</td><td className="p-2 text-muted-foreground">{line.description || "–"}</td><td className="p-2 text-right font-mono">{!isIncoming ? formatCHF(parseFloat(line.amount)) : ""}</td><td className="p-2 text-right font-mono">{isIncoming ? formatCHF(parseFloat(line.amount)) : ""}</td><td className="p-2 text-right font-mono text-muted-foreground">{vatAmount > 0 ? formatCHF(vatAmount) : ""}</td></tr>; })}</tbody></table></div>;
+}

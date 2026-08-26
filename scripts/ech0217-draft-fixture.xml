@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<VATDeclaration xmlns="http://www.ech.ch/xmlns/eCH-0217/2" xmlns:eCH-0058="http://www.ech.ch/xmlns/eCH-0058/5">
+  <generalInformation>
+    <uid>CHE123456789</uid>
+    <organisationName>WM AG</organisationName>
+    <generationTime>2026-03-31T12:00:00Z</generationTime>
+    <reportingPeriodFrom>2026-01-01</reportingPeriodFrom>
+    <reportingPeriodTill>2026-03-31</reportingPeriodTill>
+    <typeOfSubmission>1</typeOfSubmission>
+    <formOfReporting>1</formOfReporting>
+    <businessReferenceId>VAT-2026-Q1</businessReferenceId>
+    <sendingApplication>
+      <eCH-0058:manufacturer>WM Weibel Mueller AG</eCH-0058:manufacturer>
+      <eCH-0058:product>WM Buchhaltung</eCH-0058:product>
+      <eCH-0058:productVersion>1.0</eCH-0058:productVersion>
+    </sendingApplication>
+  </generalInformation>
+  <turnoverComputation><totalConsideration>1000.00</totalConsideration></turnoverComputation>
+  <effectiveReportingMethod>
+    <grossOrNet>1</grossOrNet>
+    <suppliesPerTaxRate><taxRate>8.1</taxRate><turnover>1000.00</turnover></suppliesPerTaxRate>
+    <inputTaxMaterialAndServices>10.00</inputTaxMaterialAndServices>
+  </effectiveReportingMethod>
+  <payableTax>71.00</payableTax>
+</VATDeclaration>

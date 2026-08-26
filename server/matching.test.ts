@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculateMatchScore, improveBookingSuggestionFromDocument } from "./db";
+import { calculateMatchScore, improveBookingSuggestionFromDocument, isSafeAutoMatch } from "./db";
 
 describe("Document-Transaction Matching", () => {
   describe("calculateMatchScore", () => {
@@ -87,6 +87,27 @@ describe("Document-Transaction Matching", () => {
         { amount: "-100.00", counterparty: null, transactionDate: "2026-05-01", counterpartyIban: null, reference: null }
       );
       expect(closeDate).toBeGreaterThan(farDate);
+    });
+
+    it("must never allow an automatic match on the amount alone", () => {
+      expect(isSafeAutoMatch(
+        { totalAmount: 100, documentType: "invoice_in" },
+        { amount: "-100.00", counterparty: null, transactionDate: "2026-03-03", counterpartyIban: null, reference: null },
+      )).toBe(false);
+    });
+
+    it("requires a compatible payment direction for incoming invoices", () => {
+      expect(isSafeAutoMatch(
+        { totalAmount: 100, documentType: "invoice_in", counterparty: "Beispiel AG" },
+        { amount: "100.00", counterparty: "Beispiel AG", transactionDate: "2026-03-03", counterpartyIban: null, reference: null },
+      )).toBe(false);
+    });
+
+    it("allows an auto-match only with amount, identity signal and compatible direction", () => {
+      expect(isSafeAutoMatch(
+        { totalAmount: 100, documentType: "invoice_in", counterparty: "Beispiel AG", documentDate: "2026-03-01" },
+        { amount: "-100.00", counterparty: "Beispiel AG", transactionDate: "2026-03-03", counterpartyIban: null, reference: null },
+      )).toBe(true);
     });
   });
 
@@ -207,44 +228,5 @@ describe("Manual Document Matching", () => {
     expect(manualMatch.matchScore).toBe(100);
     expect(autoMatch.matchStatus).toBe("matched");
     expect(autoMatch.matchScore).toBeLessThan(100);
-  });
-});
-
-describe("calculateMatchScore – Härtung (Phase 1)", () => {
-  const docBase = { totalAmount: 350.0, counterparty: undefined, documentDate: "2026-03-01" };
-  const txnBase = { amount: "-350.00", counterparty: null, transactionDate: "2026-03-02", counterpartyIban: null, reference: null };
-
-  it("Betrag allein reicht für Auto-Match nie (requireIdentity)", () => {
-    const score = calculateMatchScore({ ...docBase }, { ...txnBase }, { requireIdentity: true });
-    expect(score).toBeLessThanOrEqual(39);
-  });
-
-  it("Betrag allein bleibt für die Score-Anzeige hoch (ohne requireIdentity)", () => {
-    const score = calculateMatchScore({ ...docBase }, { ...txnBase });
-    expect(score).toBeGreaterThanOrEqual(50);
-  });
-
-  it("Kreditoren-Beleg (invoice_in) matcht keine Zahlungseingänge", () => {
-    const score = calculateMatchScore(
-      { ...docBase, documentType: "invoice_in" },
-      { ...txnBase, amount: "350.00" }
-    );
-    expect(score).toBe(0);
-  });
-
-  it("Ausgangsrechnung (invoice_out) matcht keine Ausgaben", () => {
-    const score = calculateMatchScore(
-      { ...docBase, documentType: "invoice_out" },
-      { ...txnBase, amount: "-350.00" }
-    );
-    expect(score).toBe(0);
-  });
-
-  it("Ausgangsrechnung (invoice_out) matcht Zahlungseingang in korrekter Richtung", () => {
-    const score = calculateMatchScore(
-      { ...docBase, documentType: "invoice_out", counterparty: "Kunde AG" },
-      { ...txnBase, amount: "350.00", counterparty: "Kunde AG" }
-    );
-    expect(score).toBeGreaterThan(50);
   });
 });

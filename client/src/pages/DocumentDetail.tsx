@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useRoute, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -100,11 +100,6 @@ export default function DocumentDetail() {
   const [manualLinkSearch, setManualLinkSearch] = useState("");
   const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
 
-  // KK-Sammelbuchung state
-  const [kkItems, setKkItems] = useState<Array<{ date: string; description: string; amount: string; debitAccountId: string; confidence?: number; matchSource?: string; matchRulePattern?: string | null }>>([]);
-  const [kkParsed, setKkParsed] = useState(false);
-  const [kkPaidAmount, setKkPaidAmount] = useState(""); // effektiv bezahlter Betrag (Bankbelastung)
-
   // Queries
   const { data, isLoading, isError, refetch } = trpc.documents.getById.useQuery(
     { documentId: docId! },
@@ -147,9 +142,9 @@ export default function DocumentDetail() {
   // Direct booking mutation (for documents without bank transaction, e.g. Barauslagen)
   const bookDirectMutation = trpc.documents.bookDirect.useMutation({
     onSuccess: (result) => {
-      toast.success(`Beleg verbucht (Journal #${result.entryId})`);
+      toast.success(`Beleg direkt verbucht (Journal #${result.entryId})`);
       setIsBooking(false);
-      navigate("/belege");
+      refetch();
     },
     onError: (err: any) => {
       toast.error("Verbuchung fehlgeschlagen: " + err.message);
@@ -166,75 +161,6 @@ export default function DocumentDetail() {
       refetch();
     },
     onError: (err: any) => toast.error("Verknüpfung fehlgeschlagen: " + err.message),
-  });
-
-  // KK-Sammelbuchung: Nemotron-Toggle (Standard: Nemotron)
-  const [useNemotron, setUseNemotron] = React.useState(true);
-
-  // Nemotron-Bildanalyse Mutation
-  const parsePdfWithNemotronMutation = trpc.creditCard.parsePdfWithNemotron.useMutation({
-    onSuccess: (result) => {
-      if (!result.items?.length) { toast.error("Keine Positionen erkannt (Nemotron)"); return; }
-      const mapped = result.items.map((item: any) => {
-        let debitAccountId = "";
-        if (item.suggestedAccount) {
-          const m = item.suggestedAccount.match(/^(\d{4})/);
-          if (m) {
-            const found = accountsQuery.data?.find((a: any) => a.number === m[1]);
-            if (found) debitAccountId = String(found.id);
-          }
-        }
-        return { date: item.date, description: item.description, amount: item.amount, debitAccountId, confidence: item.confidence, matchSource: item.matchSource, matchRulePattern: item.matchRulePattern };
-      });
-      setKkItems(mapped);
-      setKkParsed(true);
-      toast.success(`${mapped.length} Positionen mit Nemotron erkannt (${result.pagesProcessed} Seiten analysiert)`);
-    },
-    onError: (e) => toast.error("Nemotron-Analyse fehlgeschlagen: " + e.message),
-  });
-
-  // KK-Sammelbuchung: parsePdf
-  const parsePdfMutation = trpc.creditCard.parsePdf.useMutation({
-    onSuccess: (result) => {
-      if (!result.items?.length) { toast.error("Keine Positionen erkannt"); return; }
-      const mapped = result.items.map((item: any) => {
-        let debitAccountId = "";
-        if (item.suggestedAccount) {
-          const m = item.suggestedAccount.match(/^(\d{4})/);
-          if (m) {
-            const found = accountsQuery.data?.find((a: any) => a.number === m[1]);
-            if (found) debitAccountId = String(found.id);
-          }
-        }
-        return { date: item.date, description: item.description, amount: item.amount, debitAccountId, confidence: item.confidence, matchSource: item.matchSource, matchRulePattern: item.matchRulePattern };
-      });
-      setKkItems(mapped);
-      setKkParsed(true);
-      toast.success(`${result.items.length} Positionen erkannt`);
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  // KK-Sammelbuchung: approveCcFromBankImport (zwei Buchungen: 1082/1032 + Aufwand/1082)
-  const approveCcFromBankImportMutation = trpc.creditCard.approveCcFromBankImport.useMutation({
-    onSuccess: (result) => {
-      toast.success(`KK-Abrechnung verbucht: ${result.itemCount} Positionen, CHF ${result.totalAmount} (bezahlt: CHF ${result.paidAmount})`);
-      setKkItems([]);
-      setKkParsed(false);
-      navigate("/belege");
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  // KK-Sammelbuchung: approveWithItems (Fallback ohne Banktransaktion)
-  const approveWithItemsMutation = trpc.creditCard.approveWithItems.useMutation({
-    onSuccess: (result) => {
-      toast.success(`KK-Sammelbuchung verbucht: ${result.itemCount} Positionen, CHF ${result.totalAmount}`);
-      setKkItems([]);
-      setKkParsed(false);
-      navigate("/belege");
-    },
-    onError: (e) => toast.error(e.message),
   });
 
   const reanalyzeMutation = trpc.documents.reanalyze.useMutation({
@@ -447,42 +373,37 @@ export default function DocumentDetail() {
   };
 
   return (
-    <div className="h-full flex flex-col" style={{ background: "var(--paper)" }}>
+    <div className="h-full flex flex-col">
       {/* Header */}
-      <div
-        className="flex items-center gap-3 p-4"
-        style={{ borderBottom: "1px solid var(--hair)", background: "var(--surface)" }}
-      >
+      <div className="flex items-center gap-3 p-4 border-b border-border bg-card">
         <Button variant="ghost" size="icon" onClick={() => navigate("/documents")}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex-1 min-w-0">
-          <h2 className="display text-[18px] font-medium truncate" style={{ color: "var(--ink)" }}>
-            {doc.filename}
-          </h2>
-          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-            <span className="pill">
+          <h2 className="text-lg font-bold truncate">{doc.filename}</h2>
+          <div className="flex items-center gap-2 mt-0.5">
+            <Badge variant="outline" className="text-xs">
               {DOC_TYPE_LABELS[doc.documentType] || doc.documentType}
-            </span>
+            </Badge>
             {doc.matchStatus === "matched" || doc.matchStatus === "manual" ? (
-              <span className="pill pill--pos">
-                <CheckCircle2 className="w-3 h-3" />
+              <Badge className="text-xs bg-green-100 text-green-700 border-green-200">
+                <CheckCircle2 className="w-3 h-3 mr-1" />
                 Mit Bank abgeglichen
-              </span>
+              </Badge>
             ) : (
-              <span className="pill pill--warn">
-                <AlertCircle className="w-3 h-3" />
+              <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
+                <AlertCircle className="w-3 h-3 mr-1" />
                 Nicht verbucht
-              </span>
+              </Badge>
             )}
             {bookingSuggestion && (
-              <span className={bookingSuggestion.source === 'auto_learn' ? 'pill pill--info' : 'pill pill--ai'}>
+              <Badge className={`text-xs ${bookingSuggestion.source === 'auto_learn' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-purple-100 text-purple-700 border-purple-200'}`}>
                 {bookingSuggestion.source === 'auto_learn' ? (
-                  <><GraduationCap className="w-3 h-3" />Gelernt</>
+                  <><GraduationCap className="w-3 h-3 mr-1" />Gelernt</>
                 ) : (
-                  <><Sparkles className="w-3 h-3" />KI-Vorschlag</>
+                  <><Sparkles className="w-3 h-3 mr-1" />KI-Vorschlag</>
                 )}
-              </span>
+              </Badge>
             )}
           </div>
         </div>
@@ -494,7 +415,11 @@ export default function DocumentDetail() {
             disabled={reanalyzeMutation.isPending}
             className="gap-1.5"
           >
-            {reanalyzeMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {reanalyzeMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
             Neu analysieren
           </Button>
           <Button
@@ -503,7 +428,11 @@ export default function DocumentDetail() {
             disabled={!isDirty || updateMutation.isPending}
             className="gap-1.5"
           >
-            {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {updateMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
             Speichern
           </Button>
         </div>
@@ -511,17 +440,13 @@ export default function DocumentDetail() {
 
       {/* Split Panel */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Document Preview — KLAX paper surface */}
-        <div
-          className="w-1/2 flex flex-col"
-          style={{ borderRight: "1px solid var(--hair)", background: "var(--surface-2)" }}
-        >
-          <div className="flex-1 overflow-auto p-3">
+        {/* Left: Document Preview */}
+        <div className="w-1/2 border-r border-border bg-muted/30 flex flex-col">
+          <div className="flex-1 overflow-auto p-2">
             {isPdf ? (
               <iframe
                 src={doc.s3Url}
-                className="w-full h-full min-h-[70vh]"
-                style={{ background: "var(--surface)", border: "1px solid var(--hair)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2)" }}
+                className="w-full h-full min-h-[70vh] rounded-lg border border-border"
                 title="PDF Vorschau"
               />
             ) : isImage ? (
@@ -529,20 +454,18 @@ export default function DocumentDetail() {
                 <img
                   src={doc.s3Url}
                   alt={doc.filename}
-                  className="max-w-full max-h-full object-contain"
-                  style={{ borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2)" }}
+                  className="max-w-full max-h-full object-contain rounded-lg shadow-sm"
                 />
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center h-full" style={{ color: "var(--ink-3)" }}>
-                <FileText className="w-14 h-14 mb-3 opacity-30" />
-                <p className="text-[13px]">Vorschau nicht verfügbar</p>
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                <FileText className="w-16 h-16 mb-3 opacity-30" />
+                <p>Vorschau nicht verfügbar</p>
                 <a
                   href={doc.s3Url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-2 text-[12.5px] flex items-center gap-1 hover:underline"
-                  style={{ color: "var(--klax-accent)" }}
+                  className="text-primary mt-2 text-sm flex items-center gap-1"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   Datei öffnen
@@ -564,12 +487,10 @@ export default function DocumentDetail() {
                 <Receipt className="w-3.5 h-3.5" />
                 Belegdetails
               </TabsTrigger>
-              {doc.documentType !== "credit_card_statement" && (
-                <TabsTrigger value="kontierung" className="gap-1.5 text-xs">
-                  <BookOpen className="w-3.5 h-3.5" />
-                  Kontierung
-                </TabsTrigger>
-              )}
+              <TabsTrigger value="kontierung" className="gap-1.5 text-xs">
+                <BookOpen className="w-3.5 h-3.5" />
+                Kontierung
+              </TabsTrigger>
               <TabsTrigger value="zahlung" className="gap-1.5 text-xs">
                 <Banknote className="w-3.5 h-3.5" />
                 Zahlung
@@ -1065,7 +986,35 @@ export default function DocumentDetail() {
                 )}
               </div>
 
-              {/* Buchungskonten werden im Verbuchen-Tab angezeigt, nicht hier */}
+              {/* Buchungskonten – only show if journal entry exists */}
+              {journalEntryAccounts && (
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-muted-foreground" />
+                    Buchungskonten (verbucht)
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-xs text-muted-foreground">Soll (Aufwand/Aktiv)</span>
+                      <p className="font-mono font-medium mt-0.5">
+                        {journalEntryAccounts.debitAccountNumber}
+                        {journalEntryAccounts.debitAccountName && (
+                          <span className="font-sans font-normal text-muted-foreground ml-1">{journalEntryAccounts.debitAccountName}</span>
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground">Haben (Kredit/Passiv)</span>
+                      <p className="font-mono font-medium mt-0.5">
+                        {journalEntryAccounts.creditAccountNumber}
+                        {journalEntryAccounts.creditAccountName && (
+                          <span className="font-sans font-normal text-muted-foreground ml-1">{journalEntryAccounts.creditAccountName}</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </TabsContent>
 
             {/* ─── Tab: Verbuchen ──────────────────────────────────── */}
@@ -1158,294 +1107,58 @@ export default function DocumentDetail() {
 
               {/* KK-Abrechnung: Verbuchungsvorschlag */}
               {doc.documentType === "credit_card_statement" && !txIsBooked && !isDirectBooked && (
-                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-5 h-5 text-purple-600" />
-                    <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Zwei Buchungen</p>
-                  </div>
-                  {/* Buchungsübersicht */}
-                  <div className="bg-white border border-purple-200 rounded-lg p-3 space-y-1.5 text-xs">
-                    <p className="font-semibold text-purple-800 mb-1">Buchungsvorschlag:</p>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Buchung 1 (Bankzahlung):</span>
-                      <span className="font-mono">1082 Durchlaufkonto VISA <span className="text-muted-foreground">an</span> 1032 LUKB</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Buchung 2 (Sammelbuchung):</span>
-                      <span className="font-mono">Div. Aufwandkonten <span className="text-muted-foreground">an</span> 1082 Durchlaufkonto</span>
-                    </div>
-                  </div>
-                  {/* Zahlungsbetrag (effektiv bezahlt) */}
-                  <div>
-                    <Label className="text-xs text-purple-700 font-semibold">Effektiv bezahlter Betrag (Buchung 1: 1082 / 1032)</Label>
-                    <p className="text-xs text-purple-500 mb-1">Entspricht dem Bankbelastungsbetrag – kann kleiner sein als das Abrechnungstotal (z.B. wegen Guthaben vom Vormonat)</p>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={kkPaidAmount}
-                      onChange={(e) => setKkPaidAmount(e.target.value)}
-                      placeholder={docAmount > 0 ? docAmount.toFixed(2) : "0.00"}
-                      className="mt-1 font-mono"
-                    />
-                  </div>
-                  <p className="text-xs text-purple-600">
-                    Die KI analysiert alle Einzelpositionen und schlägt Aufwandskonten vor. Sie können die Konten vor dem Verbuchen anpassen (Buchung 2).
-                  </p>
-
-                  {/* Parse-Button mit Nemotron-Toggle */}
-                  {!kkParsed && (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setUseNemotron(!useNemotron)}
-                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                            useNemotron ? 'bg-purple-600' : 'bg-gray-300'
-                          }`}
-                        >
-                          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                            useNemotron ? 'translate-x-4.5' : 'translate-x-0.5'
-                          }`} />
-                        </button>
-                        <span className="text-xs text-purple-700 font-medium">
-                          {useNemotron ? '🧠 Nemotron (Bildanalyse, empfohlen)' : '📄 Standard-KI (Text-Extraktion)'}
-                        </span>
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                  <div className="flex items-start gap-3">
+                    <CreditCard className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-purple-800 text-sm">Kreditkartenabrechnung – Verbuchungsvorschlag</p>
+                      <p className="text-xs text-purple-600 mt-1">
+                        Kreditkartenabrechnungen werden typischerweise als Sammelposten verbucht:
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-white border border-purple-200 rounded p-2">
+                          <span className="text-purple-500 font-medium block">Soll (Aufwand)</span>
+                          <span className="font-mono font-semibold">2000 Kreditoren</span>
+                          <span className="text-muted-foreground block">oder 6xxx Aufwandkonto</span>
+                        </div>
+                        <div className="bg-white border border-purple-200 rounded p-2">
+                          <span className="text-purple-500 font-medium block">Haben (Bank)</span>
+                          <span className="font-mono font-semibold">1032 Bankkonto</span>
+                          <span className="text-muted-foreground block">Zahlung an Kreditkartengesellschaft</span>
+                        </div>
                       </div>
+                      <p className="text-xs text-purple-600 mt-2">
+                        Betrag: <strong>CHF {formatCHF(docAmount)}</strong> · Gegenpartei: <strong>{editedMeta.counterparty || '–'}</strong>
+                      </p>
                       <Button
+                        variant="outline"
                         size="sm"
-                        className={`gap-1.5 text-white ${
-                          useNemotron
-                            ? 'bg-purple-700 hover:bg-purple-800'
-                            : 'bg-purple-600 hover:bg-purple-700'
-                        }`}
-                        disabled={(useNemotron ? parsePdfWithNemotronMutation.isPending : parsePdfMutation.isPending) || !doc.s3Url}
+                        className="mt-3 gap-1.5 border-purple-300 text-purple-700 hover:bg-purple-100"
                         onClick={() => {
-                          if (useNemotron) {
-                            parsePdfWithNemotronMutation.mutate({ documentUrl: doc.s3Url });
-                          } else {
-                            parsePdfMutation.mutate({ documentUrl: doc.s3Url });
-                          }
+                          // Pre-fill with typical KK booking: Soll=2000 Kreditoren, Haben=Bankkonto
+                          const creditorsAcc = accountOptions.find((a: any) => a.number === '2000');
+                          const bankAcc = accountOptions.find((a: any) => a.number === '1032');
+                          if (creditorsAcc) setBookingDebitId(creditorsAcc.id);
+                          if (bankAcc) setBookingCreditId(bankAcc.id);
+                          setBookingText(`KK-Abrechnung ${editedMeta.counterparty || ''} ${editedMeta.documentDate || ''}`.trim());
+                          toast.info("Verbuchungsvorschlag übernommen – bitte Konten prüfen");
                         }}
                       >
-                        {(useNemotron ? parsePdfWithNemotronMutation.isPending : parsePdfMutation.isPending) ? (
-                          <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {useNemotron ? 'Nemotron analysiert Bilder...' : 'Positionen werden analysiert...'}</>
-                        ) : (
-                          <><Sparkles className="w-3.5 h-3.5" /> {useNemotron ? 'Mit Nemotron analysieren' : 'Positionen mit KI analysieren'}</>
-                        )}
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Vorschlag übernehmen
                       </Button>
-                    </div>
-                  )}
-
-                  {/* Positions table */}
-                  {kkParsed && kkItems.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-purple-700">{kkItems.length} Positionen erkannt</span>
-                        <Button
-                          variant="ghost" size="sm"
-                          className="text-xs text-purple-600 h-7 px-2"
-                          onClick={() => { setKkItems([]); setKkParsed(false); }}
-                        >
-                          Neu analysieren
-                        </Button>
-                      </div>
-                      <div className="overflow-x-auto rounded border border-purple-200">
-                        <table className="w-full text-xs">
-                          <thead className="bg-purple-100">
-                            <tr>
-                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Datum</th>
-                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Beschreibung</th>
-                              <th className="px-2 py-1.5 text-right font-medium text-purple-700">Betrag</th>
-                              <th className="px-2 py-1.5 text-left font-medium text-purple-700">Aufwandskonto</th>
-                              <th className="px-2 py-1.5 text-center font-medium text-purple-700">Konfidenz</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-purple-100 bg-white">
-                            {kkItems.map((item, idx) => (
-                              <tr key={idx}>
-                                <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">{item.date}</td>
-                                <td className="px-2 py-1.5">{item.description}</td>
-                                <td className="px-2 py-1.5 text-right font-mono">{parseFloat(item.amount).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="px-2 py-1.5">
-                                  <Select
-                                    value={item.debitAccountId}
-                                    onValueChange={(v) => setKkItems(prev => prev.map((it, i) => i === idx ? { ...it, debitAccountId: v } : it))}
-                                  >
-                                    <SelectTrigger className="h-7 text-xs w-48"><SelectValue placeholder="Konto..." /></SelectTrigger>
-                                    <SelectContent>
-                                      {accountOptions
-                                        .filter((a: any) => a.number.startsWith('4') || a.number.startsWith('6') || a.number.startsWith('1'))
-                                        .map((a: any) => (
-                                          <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                  </Select>
-                                </td>
-                                <td className="px-2 py-1.5 text-center">
-                                  {item.confidence != null && (
-                                    <div className="flex flex-col items-center gap-0.5">
-                                      <span
-                                        title={item.matchSource === 'rule'
-                                          ? `Gelernte Buchungsregel: "${item.matchRulePattern}" passt – sehr hohe Konfidenz`
-                                          : item.matchSource === 'llm_known_account'
-                                          ? 'KI-Vorschlag: bekanntes Konto aus Kontenplan verwendet'
-                                          : 'KI-Schätzung: kein direkter Regelabgleich möglich'}
-                                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold cursor-help ${
-                                          item.confidence >= 90 ? 'bg-green-100 text-green-700 border border-green-200'
-                                          : item.confidence >= 75 ? 'bg-yellow-100 text-yellow-700 border border-yellow-200'
-                                          : 'bg-red-100 text-red-600 border border-red-200'
-                                        }`}
-                                      >
-                                        {item.confidence}%
-                                      </span>
-                                      <span className="text-[9px] text-muted-foreground">
-                                        {item.matchSource === 'rule' ? '📚 Regel' : '🤖 KI'}
-                                      </span>
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot className="bg-purple-50">
-                            <tr>
-                              <td colSpan={2} className="px-2 py-1.5 font-semibold text-purple-800">Total</td>
-                              <td className="px-2 py-1.5 text-right font-mono font-semibold text-purple-800">
-                                CHF {kkItems.reduce((s, i) => s + parseFloat(i.amount || '0'), 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </td>
-                              <td></td>
-                              <td></td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-
-                      {/* Approve button - zwei Buchungen */}
-                      <Button
-                        className="w-full bg-green-600 hover:bg-green-700 text-white gap-1.5"
-                        disabled={kkItems.some(i => !i.debitAccountId) || approveCcFromBankImportMutation.isPending || approveWithItemsMutation.isPending}
-                        onClick={() => {
-                          const statementDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
-                          const counterparty = editedMeta.counterparty || doc.filename;
-                          const items = kkItems.map(i => ({
-                            date: i.date,
-                            description: i.description,
-                            amount: i.amount,
-                            debitAccountId: parseInt(i.debitAccountId),
-                          }));
-                          // Wenn Banktransaktion verknüpft: approveCcFromBankImport (zwei Buchungen)
-                          if (linkedTransaction?.id) {
-                            approveCcFromBankImportMutation.mutate({
-                              bankTransactionId: linkedTransaction.id,
-                              statementDate,
-                              counterparty,
-                              paidAmount: kkPaidAmount || undefined,
-                              items,
-                            });
-                          } else {
-                            // Ohne Banktransaktion: approveWithItems (eine Sammelbuchung)
-                            approveWithItemsMutation.mutate({ statementDate, counterparty, items });
-                          }
-                        }}
-                      >
-                        {(approveCcFromBankImportMutation.isPending || approveWithItemsMutation.isPending) ? (
-                          <><Loader2 className="w-4 h-4 animate-spin" /> Wird verbucht...</>
-                        ) : (
-                          <><CheckCircle2 className="w-4 h-4" /> {linkedTransaction?.id ? `KK-Abrechnung verbuchen (2 Buchungen, ${kkItems.length} Positionen)` : `Sammelbuchung verbuchen (${kkItems.length} Positionen)`}</>
-                        )}
-                      </Button>
-                      {kkItems.some(i => !i.debitAccountId) && (
-                        <p className="text-xs text-amber-600">Bitte für alle Positionen ein Aufwandskonto auswählen.</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* KK-Abrechnung: Verbucht-Status */}
-              {doc.documentType === "credit_card_statement" && (txIsBooked || isDirectBooked) && (
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                  <div className="flex items-center gap-3">
-                    <CheckCircle2 className="w-8 h-8 text-green-600" />
-                    <div>
-                      <p className="font-semibold text-green-800">KK-Abrechnung verbucht</p>
-                      <p className="text-sm text-green-600">Zwei Journal-Einträge wurden erstellt (1082/1032 + Aufwandkonten/1082)</p>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3 gap-1.5"
-                    onClick={() => navigate("/freigaben?filter=booked")}
-                  >
-                    <ArrowRight className="w-4 h-4" />
-                    Im Journal anzeigen
-                  </Button>
                 </div>
               )}
 
-              {/* Booking Form - show if not yet booked (either via tx or direct) - NOT for KK (handled above) */}
-              {!txIsBooked && !isDirectBooked && doc.documentType !== "credit_card_statement" ? (
+              {/* Booking Form - show if not yet booked (either via tx or direct) */}
+              {!txIsBooked && !isDirectBooked ? (
                 <div className="bg-card border border-border rounded-xl p-4 space-y-3">
                   <h3 className="font-semibold text-sm flex items-center gap-2">
                     <CheckSquare className="w-4 h-4 text-muted-foreground" />
                     Buchung erstellen
                   </h3>
-
-                  {/* Buchungsvorschlag-Banner */}
-                  {bookingSuggestion && (
-                    <div className={`rounded-lg border p-3 text-xs ${
-                      bookingSuggestion.source === 'auto_learn'
-                        ? 'bg-blue-50 border-blue-200'
-                        : 'bg-purple-50 border-purple-200'
-                    }`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
-                          {bookingSuggestion.source === 'auto_learn' ? (
-                            <><GraduationCap className="w-3.5 h-3.5 text-blue-600" />
-                            <span className="font-semibold text-blue-700">Gelernte Buchungsregel</span></>
-                          ) : (
-                            <><Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                            <span className="font-semibold text-purple-700">KI-Buchungsvorschlag</span></>
-                          )}
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className={`h-6 px-2 text-xs ${
-                            bookingSuggestion.source === 'auto_learn'
-                              ? 'text-blue-700 hover:bg-blue-100'
-                              : 'text-purple-700 hover:bg-purple-100'
-                          }`}
-                          onClick={() => {
-                            if (bookingSuggestion.accountId) {
-                              const amt = linkedTransaction ? parseFloat(linkedTransaction.amount) : -(docAmount);
-                              const bankAccountId = linkedBankAccount?.accountId || null;
-                              if (amt < 0) {
-                                setBookingDebitId(bookingSuggestion.accountId);
-                                if (bankAccountId) setBookingCreditId(bankAccountId);
-                              } else {
-                                if (bankAccountId) setBookingDebitId(bankAccountId);
-                                setBookingCreditId(bookingSuggestion.accountId);
-                              }
-                              if (bookingSuggestion.bookingText) setBookingText(bookingSuggestion.bookingText);
-                            }
-                          }}
-                        >
-                          ↺ Vorschlag übernehmen
-                        </Button>
-                      </div>
-                      <div className="mt-1.5 space-y-0.5" style={{ color: bookingSuggestion.source === 'auto_learn' ? 'var(--blue-700, #1d4ed8)' : '#7c3aed' }}>
-                        <p><span className="opacity-70">Konto:</span> <span className="font-mono font-medium">{bookingSuggestion.accountNumber} {bookingSuggestion.accountName}</span></p>
-                        {bookingSuggestion.vatRate != null && (
-                          <p><span className="opacity-70">MWST:</span> <span className="font-medium">{bookingSuggestion.vatRate}%</span></p>
-                        )}
-                        {bookingSuggestion.bookingText && (
-                          <p><span className="opacity-70">Buchungstext:</span> <span className="font-medium">{bookingSuggestion.bookingText}</span></p>
-                        )}
-                      </div>
-                    </div>
-                  )}
 
                   <div className="grid grid-cols-1 gap-3">
                     <div>

@@ -113,10 +113,6 @@ export function parseCAMT053(xmlContent: string): ParsedTransaction[] {
     const description = addtlInfoMatch?.[1] ?? ustrdMatch?.[1] ?? "Bankbuchung";
 
     const endToEndMatch = entry.match(/<EndToEndId>(.*?)<\/EndToEndId>/);
-    // Strukturierte Referenz (QR-Referenz aus QR-Rechnung) hat Priorität vor
-    // der EndToEndId – nur sie erlaubt den automatischen Debitoren-Abgleich.
-    const strdRefMatch = entry.match(/<CdtrRefInf>[\s\S]*?<Ref>(.*?)<\/Ref>/);
-    const reference = strdRefMatch?.[1]?.trim() ?? endToEndMatch?.[1];
     const creditorNameMatch = entry.match(/<Cdtr>[\s\S]*?<Nm>(.*?)<\/Nm>/);
     const debtorNameMatch = entry.match(/<Dbtr>[\s\S]*?<Nm>(.*?)<\/Nm>/);
     const counterparty = creditorNameMatch?.[1] ?? debtorNameMatch?.[1];
@@ -130,7 +126,7 @@ export function parseCAMT053(xmlContent: string): ParsedTransaction[] {
       amount: amount.toFixed(2),
       currency,
       description: description.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim(),
-      reference,
+      reference: endToEndMatch?.[1],
       counterparty: counterparty?.trim(),
       counterpartyIban: counterpartyIban?.trim(),
     });

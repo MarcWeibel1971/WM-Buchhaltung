@@ -15,5 +15,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary", "html"],
+      reportsDirectory: "coverage",
+      include: ["server/**/*.ts", "client/src/**/*.ts", "client/src/**/*.tsx"],
+      exclude: ["server/_core/**", "**/*.test.ts", "**/*.test.tsx"],
+    },
   },
 });

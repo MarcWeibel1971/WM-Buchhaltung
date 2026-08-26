@@ -5,14 +5,6 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, orgProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
-import { invokeNemotron } from "./nemotron";
-import { pdfUrlToImages } from "./pdfToImages";
-import {
-  extractInvoiceFields,
-  extractBankStatement,
-  detectDocumentStructure,
-  enhanceExtractionWithLocateAnything,
-} from "./locateAnything";
 import { transcribeAudio } from "./_core/voiceTranscription";
 import {
   getAllAccounts, getAccountByNumber, getAccountBalance,
@@ -21,15 +13,13 @@ import {
   getBankAccounts, getPendingBankTransactions, getBankTransactionsByStatus, saveBankTransaction, approveBankTransaction, updateBankTransaction, getBankTransactionsByIds,
   getEmployees, getPayrollEntries,
   getBalanceSheet, getIncomeStatement,
-  getVatPeriods, getCreditCardStatements, getDashboardStats, getMonthlyAggregates,
+  getVatPeriods, getCreditCardStatements, getDashboardStats,
   getDb,
   findMatchingRule, getAllBookingRules, upsertBookingRule, incrementRuleUsage,
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
-  deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
-  findOpenInvoiceByQRReference, applyInvoicePayment,
+  deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement, buildReversalLines,
 } from "./db";
-import { normalizeQRReference, validateManualReference } from "../shared/qrReference";
-import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings, organizations, invoices } from "../drizzle/schema";
+import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings } from "../drizzle/schema";
 import { settingsRouter } from "./settingsRouter";
 import { globalRulesRouter } from "./globalRulesRouter";
 import { yearEndRouter } from "./yearEndRouter";
@@ -41,496 +31,74 @@ import { customersRouter } from "./customersRouter";
 import { organizationsRouter } from "./organizationsRouter";
 import { authRouter } from "./authRouter";
 import { invoicesRouter } from "./invoicesRouter";
+import { recurringInvoicesRouter } from "./recurringInvoicesRouter";
 import { remindersRouter } from "./remindersRouter";
 import { stripeRouter } from "./stripeRouter";
-import { posRouter } from "./posRouter";
-import { ebicsRouter } from "./ebicsRouter";
 import { searchCompanies } from "./uidSearch";
 import { invitationsRouter } from "./invitationsRouter";
 import { eq, and, desc, asc, sql, inArray, like, gte, lte } from "drizzle-orm";
 import crypto from "crypto";
 import { normaliseDate } from "../shared/bankParser";
-import { isSupportedBookingCurrency, unsupportedBookingCurrencyMessage } from "../shared/currency";
-import { createLogger } from "./_core/logger";
-
-const logger = createLogger("routers");
-
-/**
- * Converts a date string or Date object to 'YYYY-MM-DD' string for Drizzle date() columns.
- * Drizzle's date() in mysql2 mode expects a plain string, NOT a Date object.
- */
-function toDateStr(val: string | Date | undefined | null): string | undefined {
-  if (!val) return undefined;
-  if (val instanceof Date) {
-    if (isNaN(val.getTime())) return undefined;
-    return val.toISOString().substring(0, 10);
-  }
-  // Already a string – normalise to YYYY-MM-DD
-  const s = String(val).trim();
-  // DD.MM.YYYY
-  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
-  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
-  // YYYY-MM-DD (already ISO)
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0, 10);
-  // MM/DD/YYYY
-  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
-  // YYYYMMDD compact
-  if (/^\d{8}$/.test(s)) return `${s.substring(0,4)}-${s.substring(4,6)}-${s.substring(6,8)}`;
-  return undefined;
-}
-
-// ─── Org Account Mappings (Phase 3c) ──────────────────────────────────────
-// Zentrale Auflösung der konfigurierbaren Standard-Konten (Bank, CC-Clearing,
-// Gross-Lohn) mit Fallback auf die historisch hardcodierten Konto-Nummern,
-// damit bestehende Mandanten ohne Zuordnung weiter funktionieren.
-
-type OrgAccountMapping = {
-  bankAccountId: number | null;
-  ccClearingAccountId: number | null;
-  salaryExpenseAccountId: number | null;
-};
-
-async function getOrgAccountMapping(organizationId: number): Promise<OrgAccountMapping> {
-  const db = await getDb();
-  if (!db) return { bankAccountId: null, ccClearingAccountId: null, salaryExpenseAccountId: null };
-  const [row] = await db.select({
-    b:  organizations.defaultBankAccountId,
-    cc: organizations.creditCardClearingAccountId,
-    s:  organizations.defaultSalaryExpenseAccountId,
-  }).from(organizations).where(eq(organizations.id, organizationId)).limit(1);
-  return {
-    bankAccountId: row?.b ?? null,
-    ccClearingAccountId: row?.cc ?? null,
-    salaryExpenseAccountId: row?.s ?? null,
-  };
-}
-
-/** Liefert das Bank-Konto: Org-Mapping → Fallback accounts.number "1032". */
-async function resolveBankAccount(organizationId: number) {
-  const map = await getOrgAccountMapping(organizationId);
-  if (map.bankAccountId) {
-    const db = await getDb();
-    if (db) {
-      const [acc] = await db.select().from(accounts)
-        .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, map.bankAccountId)))
-        .limit(1);
-      if (acc) return acc;
-    }
-  }
-  return await getAccountByNumber(organizationId, "1032");
-}
-
-/** Liefert das CC-Durchlaufkonto: Org-Mapping → Fallback "1082". */
-async function resolveCcClearingAccount(organizationId: number) {
-  const map = await getOrgAccountMapping(organizationId);
-  if (map.ccClearingAccountId) {
-    const db = await getDb();
-    if (db) {
-      const [acc] = await db.select().from(accounts)
-        .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, map.ccClearingAccountId)))
-        .limit(1);
-      if (acc) return acc;
-    }
-  }
-  return await getAccountByNumber(organizationId, "1082");
-}
-
-/** Liefert das Gross-Lohn-Konto: Employee → Org-Mapping → Fallback "4000". */
-async function resolveGrossSalaryAccount(
-  organizationId: number,
-  employeeGrossSalaryAccountId: number | null | undefined,
-) {
-  const db = await getDb();
-  if (employeeGrossSalaryAccountId && db) {
-    const [acc] = await db.select().from(accounts)
-      .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, employeeGrossSalaryAccountId)))
-      .limit(1);
-    if (acc) return acc;
-  }
-  const map = await getOrgAccountMapping(organizationId);
-  if (map.salaryExpenseAccountId && db) {
-    const [acc] = await db.select().from(accounts)
-      .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, map.salaryExpenseAccountId)))
-      .limit(1);
-    if (acc) return acc;
-  }
-  return await getAccountByNumber(organizationId, "4000");
-}
-
-/** Liefert das Kontokorrent/Zahlkonto des Mitarbeiters (optional). */
-async function resolveEmployeeSalaryAccount(
-  organizationId: number,
-  employeeSalaryAccountId: number | null | undefined,
-) {
-  if (!employeeSalaryAccountId) return null;
-  const db = await getDb();
-  if (!db) return null;
-  const [acc] = await db.select().from(accounts)
-    .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, employeeSalaryAccountId)))
-    .limit(1);
-  return acc ?? null;
-}
-
-// ─── Accounts Router ──────────────────────────────────────────────────────────
-const accountsRouter = router({
-  list: orgProcedure.query(({ ctx }) => getAllAccounts(ctx.organizationId)),
-
-  getBalance: orgProcedure
-    .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
-    .query(({ input, ctx }) => getAccountBalance(ctx.organizationId, input.accountId, input.fiscalYear)),
-
-  // Returns the total balance of all bank/cash accounts (1000-1099) for the dashboard
-  getBankBalance: orgProcedure
-    .input(z.object({ fiscalYear: z.number().optional() }))
-    .query(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) return { balance: 0, accounts: [] };
-      // Get all accounts in range 1000-1099 (Flüssige Mittel)
-      const bankAccs = await db.select().from(accounts)
-        .where(and(
-          eq(accounts.organizationId, ctx.organizationId),
-          sql`${accounts.number} >= '1000' AND ${accounts.number} <= '1099'`
-        ));
-      let totalBalance = 0;
-      const accountBalances: Array<{ id: number; number: string; name: string; balance: number }> = [];
-      for (const acc of bankAccs) {
-        const bal = await getAccountBalance(ctx.organizationId, acc.id, input.fiscalYear);
-        totalBalance += bal;
-        accountBalances.push({ id: acc.id, number: acc.number, name: acc.name, balance: bal });
-      }
-      return { balance: totalBalance, accounts: accountBalances };
-    }),
-  getLedger: orgProcedure
-    .input(z.object({ accountId: z.number(), fiscalYear: z.number().optional() }))
-    .query(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) return { account: null, lines: [], openingBalance: 0 };
-
-      const [account] = await db.select().from(accounts)
-        .where(and(
-          eq(accounts.organizationId, ctx.organizationId),
-          eq(accounts.id, input.accountId),
-        ))
-        .limit(1);
-      if (!account) return { account: null, lines: [], openingBalance: 0 };
-
-      let openingBalance = 0;
-      if (input.fiscalYear) {
-        const ob = await db.select().from(openingBalances)
-          .where(and(
-            eq(openingBalances.organizationId, ctx.organizationId),
-            eq(openingBalances.accountId, input.accountId),
-            eq(openingBalances.fiscalYear, input.fiscalYear),
-          ))
-          .limit(1);
-        if (ob[0]) openingBalance = parseFloat(ob[0].balance as string);
-      }
-
-      const lines = await db.select({
-        line: journalLines,
-        entry: journalEntries,
-      }).from(journalLines)
-        .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
-        .where(and(
-          eq(journalEntries.organizationId, ctx.organizationId),
-          eq(journalLines.accountId, input.accountId),
-          eq(journalEntries.status, "approved"),
-          input.fiscalYear ? eq(journalEntries.fiscalYear, input.fiscalYear) : sql`1=1`
-        ))
-        .orderBy(asc(journalEntries.bookingDate), asc(journalEntries.id));
-
-      return { account, lines, openingBalance };
-    }),
-});
+import { assertSupportedAccountingCurrency } from "./accountingCurrency";
+import { logger } from "./_core/logger";
+import { toDateStr } from "./accountingDate";
+import { getInfoniqaTaxId as getTaxId } from "./infoniqaTax";
+import type { BankImportUndoSnapshot } from "./bankImportTypes";
+import { accountsRouter } from "./accountsRouter";
+import { reportsRouter } from "./reportsRouter";
+import { avatarSettingsRouter } from "./avatarSettingsRouter";
+import { importAutomationRouter } from "./importAutomationRouter";
+import { uidSearchRouter } from "./uidSearchRouter";
+import { vatRouter } from "./vatRouter";
+import { buildJournalCsvExport } from "./journalCsvExport";
+import { journalBulkEntryIdsSchema, journalCreateInputSchema, journalEditableLineSchema, journalEntryIdSchema, journalExportInputSchema, journalIdFilterInputSchema, journalLineSchema, journalListInputSchema, journalReverseInputSchema, journalUpdateInputSchema } from "./journalSchemas";
+import { assertPendingJournalEntry } from "./journalGuards";
+import { journalQueryProcedures } from "./journalQueryProcedures";
+import { journalCommandProcedures } from "./journalCommandProcedures";
+import { journalMutationProcedures } from "./journalMutationProcedures";
+import { journalBulkProcedures } from "./journalBulkProcedures";
+import { journalCsvProcedures } from "./journalCsvProcedures";
+import { journalInfoniqaProcedures } from "./journalInfoniqaProcedures";
+import { journalRouter } from "./journalRouter";
+import { bankImportAccountProcedures } from "./bankImportAccountProcedures";
+import { bankImportSnapshotProcedures } from "./bankImportSnapshotProcedures";
+import { bankImportMaintenanceProcedures } from "./bankImportMaintenanceProcedures";
+import { bankImportHistoryProcedures } from "./bankImportHistoryProcedures";
+import { bankImportIngestionProcedures } from "./bankImportIngestionProcedures";
+import { bankImportCategorizationProcedures } from "./bankImportCategorizationProcedures";
+import { bankImportStatusProcedures } from "./bankImportStatusProcedures";
+import { bankImportApprovalProcedures } from "./bankImportApprovalProcedures";
+import { bankImportBookingTextProcedures } from "./bankImportBookingTextProcedures";
+import { bankImportTransferDetectionProcedures } from "./bankImportTransferDetectionProcedures";
+import { bankImportListingProcedures } from "./bankImportListingProcedures";
+import { bankImportTransferApprovalProcedures } from "./bankImportTransferApprovalProcedures";
+import { bankImportRefreshProcedures } from "./bankImportRefreshProcedures";
+import { bankImportRouter as activeBankImportRouter } from "./bankImportRouter";
 
 // ─── Journal Router ───────────────────────────────────────────────────────────
-// Helper: Map account VAT rate to Infoniqa TaxId code
-function getTaxId(acct: any, line: any): string {
-  if (!acct) return '""';
-  // Check if account is VAT relevant and has a default rate
-  const vatRate = line?.vatRate ? parseFloat(line.vatRate as string) : (acct?.defaultVatRate ? parseFloat(acct.defaultVatRate as string) : null);
-  if (!vatRate || vatRate === 0) return '""';
-  if (vatRate === 8.1 || (vatRate >= 7.5 && vatRate <= 8.5)) return 'USt81';
-  if (vatRate === 2.6 || (vatRate >= 2.0 && vatRate <= 3.0)) return 'USt26';
-  if (vatRate === 3.8 || (vatRate >= 3.5 && vatRate <= 4.0)) return 'USt38';
-  return '""';
-}
-
+/* Legacy-Journalrouter: Die aktive Routerkomposition liegt in journalRouter.ts.
 const journalRouter = router({
-  list: orgProcedure
-    .input(z.object({
-      status: z.enum(["pending", "approved", "rejected"]).optional(),
-      source: z.string().optional(),
-      fiscalYear: z.number().optional(),
-      search: z.string().optional(),
-      limit: z.number().default(50),
-      offset: z.number().default(0),
-    }))
-    .query(({ input, ctx }) => getJournalEntries(ctx.organizationId, input)),
-
-  getWithLines: orgProcedure
-    .input(z.object({ entryId: z.number() }))
-    .query(({ input, ctx }) => getJournalEntryWithLines(ctx.organizationId, input.entryId)),
-
-  create: orgProcedure
-    .input(z.object({
-      bookingDate: z.string(),
-      valueDate: z.string().optional(),
-      description: z.string().min(1),
-      source: z.enum(["manual", "bank_import", "credit_card", "payroll", "vat", "system"]).default("manual"),
-      fiscalYear: z.number().optional(),
-      lines: z.array(z.object({
-        accountId: z.number(),
-        side: z.enum(["debit", "credit"]),
-        amount: z.string(),
-        description: z.string().optional(),
-        vatAmount: z.string().optional(),
-        vatRate: z.string().optional(),
-      })).min(2),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const year = input.fiscalYear ?? new Date(input.bookingDate).getFullYear();
-      const entryId = await createJournalEntry({
-        organizationId: ctx.organizationId,
-        bookingDate: toDateStr(input.bookingDate) as string,
-        valueDate: toDateStr(input.valueDate),
-        description: input.description,
-        source: input.source,
-        fiscalYear: year,
-        status: "pending",
-        lines: input.lines,
-      });
-      return { entryId };
-    }),
-
-  approve: orgProcedure
-    .input(z.object({
-      entryId: z.number(),
-      lines: z.array(z.object({
-        accountId: z.number(),
-        side: z.enum(["debit", "credit"]),
-        amount: z.string(),
-        description: z.string().optional(),
-      })).optional(),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      if (input.lines) {
-        await updateJournalEntryLines(input.entryId, input.lines);
-      }
-      await approveJournalEntry(input.entryId, ctx.user.id);
-      return { success: true };
-    }),
-
-  reject: orgProcedure
-    .input(z.object({ entryId: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      await rejectJournalEntry(input.entryId);
-      return { success: true };
-    }),
-
-  update: orgProcedure
-    .input(z.object({
-      entryId: z.number(),
-      description: z.string().optional(),
-      bookingDate: z.string().optional(),
-      lines: z.array(z.object({
-        accountId: z.number(),
-        side: z.enum(["debit", "credit"]),
-        amount: z.string(),
-        description: z.string().optional(),
-      })).optional(),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      // GeBüV (Art. 957d OR): verbuchte Einträge sind unveränderlich.
-      const [existing] = await db.select({ status: journalEntries.status })
-        .from(journalEntries)
-        .where(eq(journalEntries.id, input.entryId))
-        .limit(1);
-      if (!existing) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
-      }
-      if (existing.status !== "pending") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Verbuchte Einträge sind unveränderlich (GeBüV). Erstellen Sie eine Stornobuchung.",
-        });
-      }
-      const updateData: Record<string, unknown> = {};
-      if (input.description) updateData.description = input.description;
-      if (input.bookingDate) updateData.bookingDate = toDateStr(input.bookingDate);
-      if (Object.keys(updateData).length > 0) {
-        await db.update(journalEntries).set(updateData).where(eq(journalEntries.id, input.entryId));
-      }
-      if (input.lines) await updateJournalEntryLines(input.entryId, input.lines);
-      return { success: true };
-    }),
-  // Delete a journal entry (only allowed for pending entries – GeBüV).
-  // Approved entries müssen per Stornobuchung rückgängig gemacht werden.
-  delete: orgProcedure
-    .input(z.object({ entryId: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      // GeBüV (Art. 957d OR): verbuchte Einträge dürfen nicht gelöscht werden.
-      const [existing] = await db.select({ status: journalEntries.status })
-        .from(journalEntries)
-        .where(eq(journalEntries.id, input.entryId))
-        .limit(1);
-      if (!existing) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
-      }
-      if (existing.status !== "pending") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Verbuchte Einträge können nicht gelöscht werden (GeBüV). Erstellen Sie eine Stornobuchung.",
-        });
-      }
-      // Revert any linked bank transactions back to pending
-      const linkedTxs = await db.select().from(bankTransactions)
-        .where(eq(bankTransactions.journalEntryId, input.entryId));
-      for (const tx of linkedTxs) {
-        await revertBankTransaction(tx.id);
-      }
-      // Revert any linked CC statements back to pending
-      const linkedStmts = await db.select().from(creditCardStatements)
-        .where(eq(creditCardStatements.journalEntryId, input.entryId));
-      for (const stmt of linkedStmts) {
-        await revertCcStatement(stmt.id);
-      }
-      await deleteJournalEntry(input.entryId);
-      return { success: true };
-    }),
-  // Revert zurück auf pending. GeBüV (Art. 957d OR): Verbuchte (approved)
-  // Einträge sind unveränderbar – Korrekturen nur per Stornobuchung.
-  revert: orgProcedure
-    .input(z.object({ entryId: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [existing] = await db.select({ status: journalEntries.status })
-        .from(journalEntries)
-        .where(eq(journalEntries.id, input.entryId))
-        .limit(1);
-      if (!existing) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
-      }
-      if (existing.status !== "pending") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Verbuchte Einträge können nicht zurückgesetzt werden (GeBüV-Immutabilität). Erstellen Sie eine Stornobuchung.",
-        });
-      }
-      await db.update(journalEntries)
-        .set({ status: "pending", approvedBy: null, approvedAt: null })
-        .where(eq(journalEntries.id, input.entryId));
-      // Also clear journalEntryId from linked documents so they no longer show as "verbucht"
-      await db.update(documents)
-        .set({ journalEntryId: null, matchStatus: "unmatched" })
-        .where(eq(documents.journalEntryId, input.entryId));
-      return { success: true };
-    }),
-
-  // Bulk approve multiple journal entries. Uses approveJournalEntry() so that
-  // each entry gets a gapless fiscal-year sequence number (GeBüV).
-  bulkApprove: orgProcedure
-    .input(z.object({ entryIds: z.array(z.number()) }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      let approved = 0;
-      let skipped = 0;
-      for (const id of input.entryIds) {
-        const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
-        if (!entry || entry.status !== "pending") { skipped++; continue; }
-        await approveJournalEntry(id, ctx.user.id);
-        approved++;
-      }
-      return { approved, skipped };
-    }),
-
-  // Bulk delete multiple journal entries (with proper bank/CC transaction revert)
-  bulkDelete: orgProcedure
-    .input(z.object({ entryIds: z.array(z.number()) }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      let deleted = 0;
-      let skipped = 0;
-      for (const id of input.entryIds) {
-        try {
-          // Revert linked bank transactions back to pending
-          const linkedTxs = await db.select().from(bankTransactions)
-            .where(eq(bankTransactions.journalEntryId, id));
-          for (const tx of linkedTxs) {
-            await revertBankTransaction(tx.id);
-          }
-          // Revert linked CC statements back to pending
-          const linkedStmts = await db.select().from(creditCardStatements)
-            .where(eq(creditCardStatements.journalEntryId, id));
-          for (const stmt of linkedStmts) {
-            await revertCcStatement(stmt.id);
-          }
-          await deleteJournalEntry(id);
-          deleted++;
-        } catch {
-          skipped++;
-        }
-      }
-      return { deleted, skipped };
-    }),
-
-  // Bulk revert multiple journal entries back to pending
-  bulkRevert: orgProcedure
-    .input(z.object({ entryIds: z.array(z.number()) }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      let reverted = 0;
-      let skipped = 0;
-      for (const id of input.entryIds) {
-        const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
-        // GeBüV (Art. 957d OR): approved Einträge sind unveränderbar – nur
-        // Stornobuchung. Pending-Einträge zurückzusetzen ist eine No-Op.
-        if (!entry || entry.status === "approved") { skipped++; continue; }
-        await db.update(journalEntries)
-          .set({ status: "pending", approvedBy: null, approvedAt: null })
-          .where(eq(journalEntries.id, id));
-        // Also clear journalEntryId from linked documents
-        await db.update(documents)
-          .set({ journalEntryId: null, matchStatus: "unmatched" })
-          .where(eq(documents.journalEntryId, id));
-        reverted++;
-      }
-      return { reverted, skipped };
-    }),
+  ...journalQueryProcedures,
+  ...journalCommandProcedures,
+  ...journalMutationProcedures,
+  ...journalBulkProcedures,
+  ...journalCsvProcedures,
+  ...journalInfoniqaProcedures,
 
   // ─── Export Endpoints ─────────────────────────────────────────────────────
-  exportInfoniqa: orgProcedure
-    .input(z.object({
-      fiscalYear: z.number(),
-      startDate: z.string().optional(),
-      endDate: z.string().optional(),
-      statusFilter: z.enum(["approved", "all"]).default("approved"),
-    }))
+  // Legacy-Quelltext: Der aktive Infoniqa-Export wird durch journalInfoniqaProcedures bereitgestellt.
+  legacyExportInfoniqa: orgProcedure
+    .input(journalExportInputSchema)
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Build conditions
-      const conditions = [eq(journalEntries.fiscalYear, input.fiscalYear)];
+      const conditions = [
+        eq(journalEntries.organizationId, ctx.organizationId),
+        eq(journalEntries.fiscalYear, input.fiscalYear),
+      ];
       if (input.statusFilter === "approved") {
         conditions.push(eq(journalEntries.status, "approved"));
       }
@@ -554,7 +122,8 @@ const journalRouter = router({
         .where(inArray(journalLines.entryId, entryIds));
 
       // Get all accounts for lookup
-      const allAccounts = await db.select().from(accounts);
+      const allAccounts = await db.select().from(accounts)
+        .where(eq(accounts.organizationId, ctx.organizationId));
       const accountMap = new Map(allAccounts.map(a => [a.id, a]));
 
       // Build CSV rows
@@ -707,127 +276,28 @@ const journalRouter = router({
       };
     }),
 
-  exportCsv: orgProcedure
-    .input(z.object({
-      fiscalYear: z.number(),
-      startDate: z.string().optional(),
-      endDate: z.string().optional(),
-      statusFilter: z.enum(["approved", "all"]).default("approved"),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-
-      const conditions = [eq(journalEntries.fiscalYear, input.fiscalYear)];
-      if (input.statusFilter === "approved") {
-        conditions.push(eq(journalEntries.status, "approved"));
-      }
-      if (input.startDate) conditions.push(gte(journalEntries.bookingDate, input.startDate));
-      if (input.endDate) conditions.push(lte(journalEntries.bookingDate, input.endDate));
-
-      const entries = await db.select()
-        .from(journalEntries)
-        .where(and(...conditions))
-        .orderBy(asc(journalEntries.bookingDate), asc(journalEntries.id));
-
-      if (entries.length === 0) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Keine Buchungen für den Export gefunden" });
-      }
-
-      const entryIds = entries.map(e => e.id);
-      const allLines = await db.select()
-        .from(journalLines)
-        .where(inArray(journalLines.entryId, entryIds));
-
-      const allAccounts = await db.select().from(accounts);
-      const accountMap = new Map(allAccounts.map(a => [a.id, a]));
-
-      const csvRows: string[] = [];
-      csvRows.push('Belegnummer;Datum;Konto;Kontoname;Gegenkonto;Gegenkontoname;Soll;Haben;Beschreibung;MWST-Satz;MWST-Betrag;Quelle;Status');
-
-      for (const entry of entries) {
-        const lines = allLines.filter(l => l.entryId === entry.id);
-        for (const line of lines) {
-          const acct = accountMap.get(line.accountId);
-          // Find the counter account
-          const counterLine = lines.find(l => l.id !== line.id && l.side !== line.side);
-          const counterAcct = counterLine ? accountMap.get(counterLine.accountId) : null;
-
-          const [yyyy, mmP, dd] = entry.bookingDate.split('-');
-          const dateStr = `${dd}.${mmP}.${yyyy}`;
-
-          csvRows.push([
-            entry.entryNumber || '',
-            dateStr,
-            acct?.number || '',
-            acct?.name || '',
-            counterAcct?.number || '',
-            counterAcct?.name || '',
-            line.side === 'debit' ? parseFloat(line.amount as string).toFixed(2) : '',
-            line.side === 'credit' ? parseFloat(line.amount as string).toFixed(2) : '',
-            (line.description || entry.description).replace(/;/g, ','),
-            line.vatRate ? `${line.vatRate}%` : '',
-            line.vatAmount ? parseFloat(line.vatAmount as string).toFixed(2) : '',
-            entry.source,
-            entry.status,
-          ].join(';'));
-        }
-      }
-
-      const csvContent = csvRows.join('\n') + '\n';
-      return {
-        csv: csvContent,
-        filename: `Journal_${input.fiscalYear}.csv`,
-        entryCount: entries.length,
-      };
-    }),
-
-  getAllIds: orgProcedure
-    .input(z.object({
-      status: z.enum(["pending", "approved", "rejected"]).optional(),
-      fiscalYear: z.number().optional(),
-      search: z.string().optional(),
-    }))
-    .query(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const conditions = [];
-      if (input.status) conditions.push(eq(journalEntries.status, input.status));
-      if (input.fiscalYear) conditions.push(eq(journalEntries.fiscalYear, input.fiscalYear));
-      if (input.search) conditions.push(like(journalEntries.description, `%${input.search}%`));
-      const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-      const rows = await db.select({ id: journalEntries.id }).from(journalEntries).where(whereClause);
-      return { ids: rows.map(r => r.id) };
-    }),
 });
+*/
 
 // ─── Bank Import Router ───────────────────────────────────────────────────────────────────────
 // In-memory undo snapshot store (per user)
-type UndoSnapshot = {
-  id: string;
-  actionName: string;
-  timestamp: number;
-  transactions: Array<{
-    id: number;
-    description: string | null;
-    suggestedDebitAccountId: number | null;
-    suggestedCreditAccountId: number | null;
-    aiConfidence: number | null;
-    aiReasoning: string | null;
-    suggestedBookingText: string | null;
-    isTransfer: boolean | null;
-    transferPartnerId: number | null;
-    manuallyEdited: boolean | null;
-    matchedDocumentId: number | null;
-    matchScore: number | null;
-    status: string;
-  }>;
-};
-const undoSnapshots = new Map<number, UndoSnapshot>();
+const undoSnapshots = new Map<number, BankImportUndoSnapshot>();
 
-const bankImportRouter = router({
+const legacyBankImportRouter = router({
+  ...bankImportAccountProcedures,
+  ...bankImportSnapshotProcedures,
+  ...bankImportMaintenanceProcedures,
+  ...bankImportHistoryProcedures,
+  ...bankImportIngestionProcedures,
+  ...bankImportCategorizationProcedures,
+  ...bankImportStatusProcedures,
+  ...bankImportApprovalProcedures,
+  ...bankImportBookingTextProcedures,
+  ...bankImportTransferDetectionProcedures,
+  ...bankImportListingProcedures,
+  ...bankImportTransferApprovalProcedures,
+  ...bankImportRefreshProcedures,
+  /* Legacy-Konto- und Listenprozeduren: aktiv ist bankImportAccountProcedures.
   getBankAccounts: orgProcedure.query(({ ctx }) => getBankAccounts(ctx.organizationId)),
   updateBankAccount: orgProcedure
     .input(z.object({
@@ -856,27 +326,11 @@ const bankImportRouter = router({
     .input(z.object({ status: z.enum(["pending", "matched", "all"]), bankAccountId: z.number().optional(), fiscalYear: z.number().optional() }))
     .query(async ({ input, ctx }) => {
       const txs = await getBankTransactionsByStatus(ctx.organizationId, input.status, input.bankAccountId, input.fiscalYear);
+      // For transfer transactions, enrich with partner bank account name and accounting account IDs
       const db = await getDb();
       if (!db) return txs;
-
-      // QR-Match-Anreicherung (Phase 2.1): Rechnungsnummer der via QR-Referenz
-      // zugeordneten Debitoren-Rechnung für die Anzeige im Client
-      const invoiceIds = Array.from(new Set(txs.map(t => t.matchedInvoiceId).filter((id): id is number => !!id)));
-      const invMap = new Map<number, string | null>();
-      if (invoiceIds.length > 0) {
-        const invRows = await db.select({ id: invoices.id, invoiceNumber: invoices.invoiceNumber })
-          .from(invoices).where(inArray(invoices.id, invoiceIds));
-        for (const r of invRows) invMap.set(r.id, r.invoiceNumber);
-      }
-      const withInvoice = <T extends Record<string, unknown>>(t: T, extra: Record<string, unknown> = {}) => ({
-        ...t,
-        matchedInvoiceNumber: (t as any).matchedInvoiceId ? invMap.get((t as any).matchedInvoiceId) ?? null : null,
-        ...extra,
-      });
-
-      // For transfer transactions, enrich with partner bank account name and accounting account IDs
       const transferTxs = txs.filter(t => t.transferPartnerId);
-      if (transferTxs.length === 0) return txs.map(t => withInvoice(t));
+      if (transferTxs.length === 0) return txs;
       const partnerIds = transferTxs.map(t => t.transferPartnerId!);
       const partners = await db.select({ id: bankTransactions.id, bankAccountId: bankTransactions.bankAccountId })
         .from(bankTransactions).where(inArray(bankTransactions.id, partnerIds));
@@ -890,22 +344,25 @@ const bankImportRouter = router({
       const partnerMap = new Map(partners.map(p => [p.id, bas.find(b => b.id === p.bankAccountId)]));
       const ownBaMap = new Map(bas.map(b => [b.id, b]));
       return txs.map(t => {
-        if (!t.isTransfer || !t.transferPartnerId) return withInvoice(t, { transferPartnerBankName: null });
+        if (!t.isTransfer || !t.transferPartnerId) return { ...t, transferPartnerBankName: null };
         const partnerBa = partnerMap.get(t.transferPartnerId);
         const ownBa = ownBaMap.get(t.bankAccountId);
         const amtA = parseFloat(t.amount as string);
         // Determine debit/credit based on sign
         const debitAccountId = amtA >= 0 ? ownBa?.accountId : partnerBa?.accountId;
         const creditAccountId = amtA < 0 ? ownBa?.accountId : partnerBa?.accountId;
-        return withInvoice(t, {
+        return {
+          ...t,
           transferPartnerBankName: partnerBa?.name ?? null,
           // Override suggested accounts for transfers
           suggestedDebitAccountId: debitAccountId ?? t.suggestedDebitAccountId,
           suggestedCreditAccountId: creditAccountId ?? t.suggestedCreditAccountId,
-        });
+        };
       });
     }),
+  */
 
+  /* Legacy-Importprozedur: aktiv ist bankImportIngestionProcedures.
   importTransactions: orgProcedure
     .input(z.object({
       bankAccountId: z.number(),
@@ -981,7 +438,7 @@ const bankImportRouter = router({
             importedBy: ctx.user.openId,
           });
         } catch (e) {
-          logger.error("Failed to save import history:", e);
+          logger.error({ err: e, importBatchId: batchId }, "Failed to save bank import history");
         }
       }
 
@@ -1025,7 +482,6 @@ const bankImportRouter = router({
                   documentDate: meta.documentDate,
                   counterpartyIban: meta.counterpartyIban,
                   referenceNumber: meta.referenceNumber,
-                  documentType: meta.documentType,
                 },
                 {
                   amount: txn.amount,
@@ -1033,8 +489,7 @@ const bankImportRouter = router({
                   transactionDate: txn.transactionDate,
                   counterpartyIban: txn.counterpartyIban,
                   reference: txn.reference,
-                },
-                { requireIdentity: true }
+                }
               );
 
               // Higher threshold for auto-matching (60+)
@@ -1063,57 +518,15 @@ const bankImportRouter = router({
             }
           }
         } catch (e) {
-          logger.error("Auto-match after import failed:", e);
+          logger.error({ err: e, importBatchId: batchId }, "Auto-match after bank import failed");
         }
       }
 
-      // ─── Debitoren-Abgleich via QR-Referenz (Phase 2.1) ───────────────────
-      // Zahlungseingänge mit gültiger QR-Referenz werden direkt der offenen
-      // Debitoren-Rechnung zugeordnet und erhalten einen fertigen
-      // Buchungsvorschlag (Bank an Debitoren). Gebucht wird erst nach
-      // manueller Freigabe durch den User (approveTransaction).
-      let invoiceMatched = 0;
-      if (db && imported > 0) {
-        try {
-          const creditTxns = (await db.select().from(bankTransactions)
-            .where(and(
-              eq(bankTransactions.importBatchId, batchId),
-              eq(bankTransactions.status, 'pending'),
-            ))).filter(t => parseFloat(t.amount as string) > 0 && !!t.reference);
-
-          if (creditTxns.length > 0) {
-            const [bankAcc] = await db.select().from(bankAccounts)
-              .where(eq(bankAccounts.id, input.bankAccountId)).limit(1);
-            const debitorenAcc = await getAccountByNumber(ctx.organizationId, "1100");
-
-            for (const txn of creditTxns) {
-              const ref = normalizeQRReference(txn.reference);
-              if (!ref) continue;
-              const inv = await findOpenInvoiceByQRReference(ctx.organizationId, ref);
-              if (!inv) continue;
-
-              const txnAmount = parseFloat(txn.amount as string);
-              const openAmount = Math.round((parseFloat(inv.total as string) - parseFloat(inv.paidAmount as string)) * 100) / 100;
-              const isFullPayment = Math.abs(txnAmount - openAmount) <= 0.01;
-
-              await db.update(bankTransactions).set({
-                matchedInvoiceId: inv.id,
-                matchScore: isFullPayment ? 100 : 90,
-                suggestedDebitAccountId: bankAcc?.accountId ?? txn.suggestedDebitAccountId,
-                suggestedCreditAccountId: debitorenAcc?.id ?? txn.suggestedCreditAccountId,
-                suggestedBookingText: `Zahlungseingang ${inv.invoiceNumber ?? `Rechnung #${inv.id}`}${isFullPayment ? "" : ` (Rechnung offen: CHF ${openAmount.toFixed(2)})`}`,
-              }).where(eq(bankTransactions.id, txn.id));
-              invoiceMatched++;
-            }
-          }
-        } catch (e) {
-          console.error("QR-Referenz-Abgleich nach Import fehlgeschlagen:", e);
-        }
-      }
-
-      return { imported, duplicates, skipped, batchId, autoMatched, invoiceMatched };
+      return { imported, duplicates, skipped, batchId, autoMatched };
     }),
 
+  */
+  /* Legacy-Historienprozeduren: aktiv ist bankImportHistoryProcedures.
   getImportHistory: orgProcedure
     .input(z.object({ bankAccountId: z.number().optional() }))
     .query(async ({ input }) => {
@@ -1144,6 +557,8 @@ const bankImportRouter = router({
       return row ?? null;
     }),
 
+  */
+  /* Legacy-Kategorisierung: aktiv ist bankImportCategorizationProcedures.
   categorizeWithAI: orgProcedure
     .input(z.object({ transactionIds: z.array(z.number()) }))
     .mutation(async ({ input, ctx }) => {
@@ -1270,7 +685,7 @@ Regeln:
             }
           }
         } catch (e) {
-          logger.error(`AI categorization failed for tx ${tx.id}:`, e);
+          logger.error({ err: e, transactionId: tx.id }, "AI transaction categorization failed");
           results.push({ txId: tx.id, success: false });
         }
       }
@@ -1278,6 +693,8 @@ Regeln:
       return { results };
     }),
 
+  */
+  /* Legacy-Buchungsprozeduren: aktiv ist bankImportApprovalProcedures.
   approveTransaction: orgProcedure
     .input(z.object({
       transactionId: z.number(),
@@ -1290,15 +707,12 @@ Regeln:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      const [tx] = await db.select().from(bankTransactions).where(and(eq(bankTransactions.id, input.transactionId), eq(bankTransactions.organizationId, ctx.organizationId))).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
-      // ── Fremdwährungs-Guard (Phase 2.5): keine unumgerechneten Beträge buchen ──
-      if (!isSupportedBookingCurrency(tx.currency)) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(tx.currency) });
-      }
-      // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
-      if (tx.status === "matched" && tx.journalEntryId) {
-        throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
+      try {
+        assertSupportedAccountingCurrency(tx.currency);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Fremdwährung kann nicht verbucht werden." });
       }
 
       const amount = Math.abs(parseFloat(tx.amount as string));
@@ -1322,29 +736,6 @@ Regeln:
       await approveBankTransaction(input.transactionId, entryId);
       await approveJournalEntry(entryId, ctx.user.id);
 
-      // ── Debitoren-Abgleich (Phase 2.1): Zahlungseingang auf der verknüpften
-      // Rechnung verbuchen (paidAmount/Status/paidDate). Schlägt das fehl (z. B.
-      // Rechnung zwischenzeitlich storniert), wird nur gewarnt – die Buchung
-      // selbst ist bereits erfolgt und bleibt gültig.
-      let invoicePayment: { status: string; openAmount: number } | null = null;
-      if (tx.matchedInvoiceId) {
-        try {
-          const result = await applyInvoicePayment(
-            ctx.organizationId,
-            tx.matchedInvoiceId,
-            amount,
-            toDateStr(tx.transactionDate as string) as string,
-          );
-          if (result) {
-            invoicePayment = { status: result.status, openAmount: result.openAmount };
-          } else {
-            console.warn(`Invoice payment skipped: invoice ${tx.matchedInvoiceId} not in payable status`);
-          }
-        } catch (e) {
-          console.error("applyInvoicePayment failed:", e);
-        }
-      }
-
       // ── Learn booking rule from this approval ──
       if (tx.counterparty) {
         try {
@@ -1362,11 +753,11 @@ Regeln:
           if (!bankAccountIds.includes(input.creditAccountId)) ruleData.creditAccountId = input.creditAccountId;
           await upsertBookingRule(ruleData);
         } catch (e) {
-          logger.error("Failed to learn booking rule:", e);
+          logger.error({ err: e, transactionId: tx.id }, "Failed to learn booking rule from approved transaction");
         }
       }
 
-      return { success: true, entryId, invoicePayment };
+      return { success: true, entryId };
     }),
 
   // ── Approve as Sammelbuchung (compound entry) ──
@@ -1387,16 +778,8 @@ Regeln:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      const [tx] = await db.select().from(bankTransactions).where(and(eq(bankTransactions.id, input.transactionId), eq(bankTransactions.organizationId, ctx.organizationId))).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
-      // ── Fremdwährungs-Guard (Phase 2.5): keine unumgerechneten Beträge buchen ──
-      if (!isSupportedBookingCurrency(tx.currency)) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(tx.currency) });
-      }
-      // ── Duplikat-Schutz: Bereits verbuchte Transaktion ──
-      if (tx.status === "matched" && tx.journalEntryId) {
-        throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
-      }
 
       const year = new Date(tx.transactionDate as any).getFullYear();
 
@@ -1418,13 +801,15 @@ Regeln:
       return { success: true, entryId };
     }),
 
+  */
+  /* Legacy-Statusprozeduren: aktiv ist bankImportStatusProcedures.
   ignoreTransaction: orgProcedure
     .input(z.object({ transactionId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      await db.update(bankTransactions).set({ status: "ignored" }).where(eq(bankTransactions.id, input.transactionId));
+      await db.update(bankTransactions).set({ status: "ignored" }).where(and(eq(bankTransactions.id, input.transactionId), eq(bankTransactions.organizationId, ctx.organizationId)));
       return { success: true };
     }),
 
@@ -1435,7 +820,7 @@ Regeln:
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      const [tx] = await db.select().from(bankTransactions).where(and(eq(bankTransactions.id, input.transactionId), eq(bankTransactions.organizationId, ctx.organizationId))).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       if (tx.status !== "matched") throw new TRPCError({ code: "BAD_REQUEST", message: "Transaktion ist nicht verbucht" });
       // Delete the linked journal entry
@@ -1461,16 +846,6 @@ Regeln:
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const { transactionId, ...data } = input;
-      // Manuelle Referenz validieren: strukturierte Referenzen (QRR/SCOR)
-      // brauchen eine gültige Prüfziffer; gültige werden kanonisch
-      // (ohne Leerzeichen) gespeichert, damit der Auto-Abgleich greift.
-      if (data.reference !== undefined) {
-        const refCheck = validateManualReference(data.reference);
-        if (!refCheck.valid) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: refCheck.reason });
-        }
-        if (refCheck.canonical) data.reference = refCheck.canonical;
-      }
       // Mark as manually edited so refresh won't overwrite
       await updateBankTransaction(transactionId, { ...data, manuallyEdited: true });
 
@@ -1478,7 +853,7 @@ Regeln:
       // so that future refreshes apply the NEW mapping to similar transactions
       const db = await getDb();
       if (db) {
-        const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, transactionId)).limit(1);
+        const [tx] = await db.select().from(bankTransactions).where(and(eq(bankTransactions.id, transactionId), eq(bankTransactions.organizationId, ctx.organizationId))).limit(1);
         if (tx && tx.counterparty) {
           try {
             // Get bank account IDs to exclude them from rule learning
@@ -1504,7 +879,7 @@ Regeln:
               await upsertBookingRule(ruleData);
             }
           } catch (e) {
-            logger.error("Failed to learn booking rule from edit:", e);
+            logger.error({ err: e, transactionId: input.transactionId }, "Failed to learn booking rule from transaction edit");
           }
         }
       }
@@ -1512,6 +887,7 @@ Regeln:
       return { success: true };
     }),
 
+  */
   bulkApprove: orgProcedure
     .input(z.object({
       transactions: z.array(z.object({
@@ -1532,7 +908,7 @@ Regeln:
       const results = [];
       for (const item of input.transactions) {
         try {
-          const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, item.transactionId)).limit(1);
+          const [tx] = await db.select().from(bankTransactions).where(and(eq(bankTransactions.id, item.transactionId), eq(bankTransactions.organizationId, ctx.organizationId))).limit(1);
           if (!tx || tx.status !== "pending") { results.push({ txId: item.transactionId, success: false, error: "Nicht ausstehend" }); continue; }
 
           const amount = Math.abs(parseFloat(tx.amount as string));
@@ -1571,7 +947,7 @@ Regeln:
               if (!bankAccountIds.includes(item.creditAccountId)) ruleData.creditAccountId = item.creditAccountId;
               await upsertBookingRule(ruleData);
             } catch (e) {
-              logger.error("Failed to learn booking rule:", e);
+              logger.error({ err: e, transactionId: item.transactionId }, "Failed to learn booking rule from bulk approval");
             }
           }
         } catch (e: any) {
@@ -1581,6 +957,7 @@ Regeln:
       return { results, approved: results.filter(r => r.success).length, failed: results.filter(r => !r.success).length };
     }),
 
+  /* Legacy-Buchungstextprozedur: aktiv ist bankImportBookingTextProcedures.
   generateBookingText: orgProcedure
     .input(z.object({ transactionIds: z.array(z.number()) }))
     .mutation(async ({ input, ctx }) => {
@@ -1646,6 +1023,8 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       return { results };
     }),
 
+  */
+  /* Legacy-Regelaktualisierung: aktiv ist bankImportRefreshProcedures.
   // ── Refresh: Apply learned rules to all pending transactions (skip manually edited ones) ──
   refreshSuggestions: orgProcedure
     .input(z.object({ bankAccountId: z.number().optional() }))
@@ -1659,10 +1038,14 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
 
       // Load bank accounts for auto-filling the correct bank account per transaction
       const allBankAccounts = await db.select({ id: bankAccounts.id, accountId: bankAccounts.accountId, name: bankAccounts.name })
-        .from(bankAccounts);
+        .from(bankAccounts)
+        .where(eq(bankAccounts.organizationId, ctx.organizationId));
 
       // Get all pending transactions
-      const conditions = [eq(bankTransactions.status, "pending" as const)];
+      const conditions = [
+        eq(bankTransactions.organizationId, ctx.organizationId),
+        eq(bankTransactions.status, "pending" as const),
+      ];
       if (input.bankAccountId) {
         conditions.push(eq(bankTransactions.bankAccountId, input.bankAccountId));
       }
@@ -1788,7 +1171,10 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         if (changed) {
           updateData.aiReasoning = `Gelernte Regel: ${matchedRule.counterpartyPattern} (${matchedRule.usageCount}x verwendet)`;
           updateData.aiConfidence = 98; // High confidence for learned rules
-          await db.update(bankTransactions).set(updateData).where(eq(bankTransactions.id, tx.id));
+          await db.update(bankTransactions).set(updateData).where(and(
+            eq(bankTransactions.id, tx.id),
+            eq(bankTransactions.organizationId, ctx.organizationId),
+          ));
           await incrementRuleUsage(matchedRule.id);
           updated++;
         }
@@ -1799,8 +1185,10 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       return { updated, skippedManual, total: pending.length, message: parts.join(", ") + "." };
     }),
 
+  */
   // ── List all learned booking rules ──
   // ── Detect internal transfers between bank accounts ──
+  /* Legacy-Transfererkennung: aktiv ist bankImportTransferDetectionProcedures.
   detectTransfers: orgProcedure
     .mutation(async ({ ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -1816,7 +1204,10 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         description: bankTransactions.description,
         isTransfer: bankTransactions.isTransfer,
       }).from(bankTransactions)
-        .where(and(eq(bankTransactions.status, 'pending')));
+        .where(and(
+          eq(bankTransactions.organizationId, ctx.organizationId),
+          eq(bankTransactions.status, 'pending'),
+        ));
 
       // Find matching pairs: same absolute amount, opposite sign, within 2 days, different bank accounts
       const found: Array<{idA: number, idB: number, amount: number}> = [];
@@ -1841,15 +1232,17 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       // Mark found pairs as transfers
       let marked = 0;
       for (const { idA, idB } of found) {
-        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idB }).where(eq(bankTransactions.id, idA));
-        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idA }).where(eq(bankTransactions.id, idB));
+        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idB }).where(and(eq(bankTransactions.id, idA), eq(bankTransactions.organizationId, ctx.organizationId)));
+        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idA }).where(and(eq(bankTransactions.id, idB), eq(bankTransactions.organizationId, ctx.organizationId)));
         marked += 2;
       }
 
       return { found: found.length, marked, pairs: found };
     }),
 
+  */
   // ── Approve an internal transfer: creates ONE journal entry ──
+  /* Legacy-Transferfreigabe: aktiv ist bankImportTransferApprovalProcedures.
   approveTransfer: orgProcedure
     .input(z.object({
       txId: z.number(),          // The transaction we're approving
@@ -1862,12 +1255,12 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       const db = dbRaw2;
 
       // Get this transaction
-      const [txA] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.txId));
+      const [txA] = await db.select().from(bankTransactions).where(and(eq(bankTransactions.id, input.txId), eq(bankTransactions.organizationId, ctx.organizationId)));
       if (!txA) throw new TRPCError({ code: "NOT_FOUND", message: "Transaktion nicht gefunden" });
       if (!txA.isTransfer || !txA.transferPartnerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Keine Transfer-Transaktion" });
 
       // Get partner transaction
-      const [txB] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, txA.transferPartnerId));
+      const [txB] = await db.select().from(bankTransactions).where(and(eq(bankTransactions.id, txA.transferPartnerId), eq(bankTransactions.organizationId, ctx.organizationId)));
       if (!txB) throw new TRPCError({ code: "NOT_FOUND", message: "Partner-Transaktion nicht gefunden" });
 
       // Check if already booked (either one)
@@ -1876,8 +1269,8 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       }
 
       // Get bank accounts to find accounting account IDs
-      const [baA] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, txA.bankAccountId));
-      const [baB] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, txB.bankAccountId));
+      const [baA] = await db.select().from(bankAccounts).where(and(eq(bankAccounts.id, txA.bankAccountId), eq(bankAccounts.organizationId, ctx.organizationId)));
+      const [baB] = await db.select().from(bankAccounts).where(and(eq(bankAccounts.id, txB.bankAccountId), eq(bankAccounts.organizationId, ctx.organizationId)));
       if (!baA || !baB) throw new TRPCError({ code: "NOT_FOUND", message: "Bankkonto nicht gefunden" });
 
       const amtA = parseFloat(txA.amount as string);
@@ -1916,8 +1309,8 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
 
       // Mark both transactions as matched
       const db2 = db!;
-      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txA.id));
-      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txB.id));
+      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(and(eq(bankTransactions.id, txA.id), eq(bankTransactions.organizationId, ctx.organizationId)));
+      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(and(eq(bankTransactions.id, txB.id), eq(bankTransactions.organizationId, ctx.organizationId)));
 
       // Retrieve the allocated entry number for the response
       const [savedEntry] = await db2.select({ entryNumber: journalEntries.entryNumber })
@@ -1926,6 +1319,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       return { success: true, entryId: newEntryId, entryNumber: savedEntry?.entryNumber ?? null };
     }),
 
+  /* Legacy-Listenprozeduren: aktiv ist bankImportListingProcedures.
   listRules: orgProcedure
     .query(async ({ ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -1997,6 +1391,8 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       }));
     }),
 
+  */
+  /* Legacy-Snapshotprozeduren: aktiv ist bankImportSnapshotProcedures.
   // ── Snapshot: Save current state of pending transactions before a bulk action ──
   createSnapshot: orgProcedure
     .input(z.object({ actionName: z.string() }))
@@ -2084,7 +1480,9 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       undoSnapshots.delete(ctx.user.id as number);
       return { success: true };
     }),
+  */
 
+  /* Legacy-Rollback- und IBAN-Prozeduren: aktiv ist bankImportMaintenanceProcedures.
   // ── Delete an import batch (rollback) ──
   deleteImport: orgProcedure
     .input(z.object({ importBatchId: z.string() }))
@@ -2147,6 +1545,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       const valid = accountIban === fileIban;
       return { valid, accountIban, fileIban };
     }),
+  */
 });
 
 // ─── Credit Card Router ───────────────────────────────────────────────────────
@@ -2174,6 +1573,7 @@ const creditCardRouter = router({
         organizationId: ctx.organizationId,
         statementDate: toDateStr(input.statementDate) as string,
         totalAmount: input.totalAmount,
+        owner: "mw",
         status: "pending",
         rawText: input.rawText,
         parsedItems: input.parsedItems,
@@ -2195,13 +1595,9 @@ const creditCardRouter = router({
 
       const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
       if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
-      // ── Fremdwährungs-Guard (Phase 2.5) ──
-      if (!isSupportedBookingCurrency(stmt.currency)) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(stmt.currency) });
-      }
 
-      const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
-      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Mahnwesen/Konten)" });
+      const visaAccount = await getAccountByNumber(ctx.organizationId, "1082");
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
 
       const amount = Math.abs(parseFloat(stmt.totalAmount as string));
       const year = new Date(stmt.statementDate as any).getFullYear();
@@ -2216,7 +1612,7 @@ const creditCardRouter = router({
         status: "approved",
         lines: [
           { accountId: input.debitAccountId, side: "debit", amount: amount.toFixed(2), description: "Kreditkartenaufwand" },
-          { accountId: visaAccount.id, side: "credit", amount: amount.toFixed(2), description: `Durchlaufkonto ${visaAccount.name}` },
+          { accountId: visaAccount.id, side: "credit", amount: amount.toFixed(2), description: "Durchlaufkonto VISA mw" },
         ],
       });
 
@@ -2314,172 +1710,13 @@ Antwort NUR als JSON-Array, keine Erklärung:
       if (!jsonMatch) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "KI konnte keine Positionen extrahieren" });
 
       try {
-        const rawItems = JSON.parse(jsonMatch[0]);
-        // Enrich each item with confidence score and matched rule info
-        const enrichedItems = await Promise.all(rawItems.map(async (i: any) => {
-          const description = i.description ?? "";
-          const suggestedAccount = i.suggestedAccount ?? "";
-          // Check if a learned rule matches this description
-          const matchedRule = await findMatchingRule(ctx.organizationId, description);
-          let confidence = 70; // Default LLM confidence
-          let matchSource = "llm";
-          let matchRulePattern: string | null = null;
-          if (matchedRule) {
-            // Rule matched: high confidence
-            confidence = 95;
-            matchSource = "rule";
-            matchRulePattern = matchedRule.counterpartyPattern;
-          } else {
-            // LLM: estimate confidence based on whether account number was found in rules context
-            const accountNum = suggestedAccount.match(/^(\d{4})/)?.[1];
-            const ruleForAccount = allRules.find(r => {
-              const acct = acctMap[r.debitAccountId!];
-              return acct && acct.number === accountNum;
-            });
-            if (ruleForAccount) {
-              confidence = 80; // LLM used a known account
-              matchSource = "llm_known_account";
-            } else {
-              confidence = 65; // LLM guessed
-              matchSource = "llm_guess";
-            }
-          }
-          return {
-            date: i.date ?? "",
-            description,
-            amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
-            suggestedAccount,
-            confidence,
-            matchSource,
-            matchRulePattern,
-          };
-        }));
-        return { items: enrichedItems };
-      } catch {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
-      }
-    }),
-
-  // Nemotron-basiertes PDF-Parsing mit Bildverständnis
-  parsePdfWithNemotron: orgProcedure
-    .input(z.object({ documentUrl: z.string() }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-
-      // Kontext laden
-      const allRules = await getAllBookingRules(ctx.organizationId);
-      const allAccts = await getAllAccounts(ctx.organizationId);
-      const [orgRow] = await (await getDb())!.select({ name: companySettings.companyName })
-        .from(companySettings)
-        .where(eq(companySettings.organizationId, ctx.organizationId))
-        .limit(1);
-      const companyName = orgRow?.name ?? "Ihre Firma";
-
-      const acctMap: Record<number, { number: string; name: string }> = {};
-      allAccts.forEach(a => { acctMap[a.id] = { number: a.number, name: a.name }; });
-
-      const rulesContext = allRules
-        .filter(r => r.debitAccountId)
-        .map(r => {
-          const acct = acctMap[r.debitAccountId!];
-          return acct ? `${r.counterpartyPattern} → ${acct.number} ${acct.name}` : null;
-        })
-        .filter(Boolean)
-        .join("\n");
-
-      const accountList = allAccts
-        .filter(a => a.number.startsWith("4") || a.number.startsWith("1"))
-        .map(a => `${a.number} ${a.name}`)
-        .join("\n");
-
-      // PDF in Bilder konvertieren (max. 3 Seiten für Kreditkartenabrechnungen)
-      let images: Array<{ base64: string; pageNumber: number }> = [];
-      try {
-        images = await pdfUrlToImages(input.documentUrl, 3);
-      } catch (err) {
-        logger.error("PDF-zu-Bild-Konvertierung fehlgeschlagen:", err);
-        // Fallback auf Text-only Parsing
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "PDF konnte nicht verarbeitet werden" });
-      }
-
-      if (images.length === 0) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Keine Seiten im PDF gefunden" });
-      }
-
-      // Nemotron-Prompt mit Bildern
-      const systemPrompt = `Du bist Buchhalter für ${companyName} in der Schweiz (SKR04 Kontenplan).
-Analysiere diese Kreditkartenabrechnung VISUELL und extrahiere ALLE Einzelpositionen.
-WICHTIG:
-- Erkenne Tabellen, Logos, Stempel und handschriftliche Notizen
-- Extrahiere ALLE Transaktionen, überspringe keine
-- Beträge in CHF (Absolutwert, ohne Minus)
-- Ignoriere: Saldo Vormonat, Zahlung, Neuer Saldo, Total
-- QR-Referenz: 27-stellige Zahl falls vorhanden
-- Vorsteuer-Konto 1170 bei Eingangsrechnungen mit MWST
-GELERNTE KONTENZUORDNUNGEN (höchste Priorität):
-${rulesContext || "(keine gelernten Regeln)"}
-KONTENPLAN:
-${accountList}
-Antworte NUR als JSON-Array:
-[{"date":"YYYY-MM-DD","description":"Vendor","amount":"123.45","suggestedAccount":"4xxx Kontoname","qrReference":"","vatRate":0}]`;
-
-      // Alle Seiten als Bilder an Nemotron senden
-      const imageContents = images.map(img => ({
-        type: "image_url" as const,
-        image_url: {
-          url: `data:image/png;base64,${img.base64}`,
-          detail: "high" as const,
-        },
-      }));
-
-      const result = await invokeNemotron({
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              ...imageContents,
-              { type: "text", text: "Extrahiere alle Transaktionen aus dieser Kreditkartenabrechnung als JSON-Array." },
-            ],
-          },
-        ],
-        maxTokens: 4096,
-        temperature: 0.05,
-      });
-
-      // JSON extrahieren
-      let jsonStr = result.content;
-      const jsonMatch = jsonStr.match(/\[\s*\{[\s\S]*\}\s*\]/);
-      if (!jsonMatch) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Nemotron konnte keine Positionen extrahieren. Antwort: ${jsonStr.slice(0, 200)}` });
-      }
-
-      try {
-        const rawItems = JSON.parse(jsonMatch[0]);
-        const enrichedItems = await Promise.all(rawItems.map(async (i: any) => {
-          const description = i.description ?? "";
-          const matchedRule = await findMatchingRule(ctx.organizationId, description);
-          let confidence = 75;
-          let matchSource = "nemotron";
-          let matchRulePattern: string | null = null;
-          if (matchedRule) {
-            confidence = 95;
-            matchSource = "rule";
-            matchRulePattern = matchedRule.counterpartyPattern;
-          }
-          return {
-            date: i.date ?? "",
-            description,
-            amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
-            suggestedAccount: i.suggestedAccount ?? "",
-            qrReference: i.qrReference ?? "",
-            vatRate: i.vatRate ?? 0,
-            confidence,
-            matchSource,
-            matchRulePattern,
-          };
-        }));
-        return { items: enrichedItems, pagesProcessed: images.length };
+        const items = JSON.parse(jsonMatch[0]);
+        return { items: items.map((i: any) => ({
+          date: i.date ?? "",
+          description: i.description ?? "",
+          amount: String(Math.abs(parseFloat(i.amount ?? "0"))),
+          suggestedAccount: i.suggestedAccount ?? "",
+        })) };
       } catch {
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "JSON-Parsing fehlgeschlagen" });
       }
@@ -2503,14 +1740,14 @@ Antworte NUR als JSON-Array:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
-      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Konten-Mapping)" });
+      const visaAccount = await getAccountByNumber(ctx.organizationId, "1082");
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
 
       const totalAmount = input.items.reduce((s, i) => s + Math.abs(parseFloat(i.amount)), 0);
       const dateStr = toDateStr(input.statementDate) ?? new Date().toISOString().split("T")[0];
       const year = parseInt(dateStr.substring(0, 4));
 
-      // Build journal lines: one debit per item + one credit total for CC clearing
+      // Build journal lines: one debit per item + one credit total for 1082
       const debitLines = input.items.map(item => ({
         accountId: item.debitAccountId,
         side: "debit" as const,
@@ -2522,7 +1759,7 @@ Antworte NUR als JSON-Array:
         accountId: visaAccount.id,
         side: "credit" as const,
         amount: totalAmount.toFixed(2),
-        description: `${visaAccount.name} – ${input.counterparty}`,
+        description: `Durchlaufkonto VISA mw – ${input.counterparty}`,
       };
 
       const entryId = await createJournalEntry({
@@ -2548,6 +1785,7 @@ Antworte NUR als JSON-Array:
         organizationId: ctx.organizationId,
         statementDate: dateStr,
         totalAmount: totalAmount.toFixed(2),
+        owner: "mw",
         status: "approved",
         journalEntryId: entryId,
         rawText: input.items.map(i => `${i.date} ${i.description} ${i.amount}`).join("\n"),
@@ -2558,10 +1796,8 @@ Antworte NUR als JSON-Array:
     }),
 
   // ── Approve CC from BankImport: creates TWO journal entries ──
-  // Entry 1: CC-Durchlaufkonto (Soll) / Bankkonto (Haben) → Totalbetrag
-  // Entry 2: Diverse Aufwandkonten (Soll) / CC-Durchlaufkonto (Haben) → Sammelbuchung
-  // Konto-Mapping pro Org (Phase 3c): organizations.creditCardClearingAccountId
-  // und organizations.defaultBankAccountId (Fallback: 1082 / 1032).
+  // Entry 1: 1082 Durchlaufkonto (Soll) / 1032 LUKB mw (Haben) → Totalbetrag
+  // Entry 2: Diverse Aufwandkonten (Soll) / 1082 Durchlaufkonto (Haben) → Sammelbuchung
   approveCcFromBankImport: orgProcedure
     .input(z.object({
       bankTransactionId: z.number(),
@@ -2585,10 +1821,10 @@ Antworte NUR als JSON-Array:
       const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.bankTransactionId)).limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Banktransaktion nicht gefunden" });
 
-      const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
-      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Konten-Mapping)" });
-      const bankAccount = await resolveBankAccount(ctx.organizationId);
-      if (!bankAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Standard-Bankkonto nicht gefunden (Einstellungen → Konten-Mapping)" });
+      const visaAccount = await getAccountByNumber(ctx.organizationId, "1082");
+      if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1082 nicht gefunden" });
+      const bankAccount = await getAccountByNumber(ctx.organizationId, "1032");
+      if (!bankAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Konto 1032 nicht gefunden" });
 
       // totalAmount = Abrechnungstotal (alle Positionen)
       // paidAmount = effektiv bezahlter Betrag (Bankbelastung, kann kleiner sein wegen Vormonatsguthaben)
@@ -2597,7 +1833,7 @@ Antworte NUR als JSON-Array:
       const dateStr = toDateStr(input.statementDate) ?? toDateStr(tx.transactionDate as string) ?? new Date().toISOString().split("T")[0];
       const year = parseInt(dateStr!.substring(0, 4));
 
-      // ── Entry 1: CC-Clearing (Soll) / Bank (Haben) → effektiv bezahlter Betrag ──
+      // ── Entry 1: 1082 Durchlaufkonto (Soll) / 1032 LUKB mw (Haben) → effektiv bezahlter Betrag ──
       const entry1Id = await createJournalEntry({
         organizationId: ctx.organizationId,
         bookingDate: dateStr as string,
@@ -2607,8 +1843,8 @@ Antworte NUR als JSON-Array:
         fiscalYear: year,
         status: "approved",
         lines: [
-          { accountId: visaAccount.id, side: "debit", amount: paidAmount.toFixed(2), description: visaAccount.name },
-          { accountId: bankAccount.id, side: "credit", amount: paidAmount.toFixed(2), description: bankAccount.name },
+          { accountId: visaAccount.id, side: "debit", amount: paidAmount.toFixed(2), description: "Durchlaufkonto VISA mw" },
+          { accountId: bankAccount.id, side: "credit", amount: paidAmount.toFixed(2), description: "LUKB mw" },
         ],
       });
       await approveJournalEntry(entry1Id, ctx.user.id);
@@ -2631,7 +1867,7 @@ Antworte NUR als JSON-Array:
         status: "approved",
         lines: [
           ...debitLines,
-          { accountId: visaAccount.id, side: "credit", amount: itemsTotal.toFixed(2), description: `${visaAccount.name} – ${input.counterparty}` },
+          { accountId: visaAccount.id, side: "credit", amount: itemsTotal.toFixed(2), description: `Durchlaufkonto VISA mw – ${input.counterparty}` },
         ],
       });
       await approveJournalEntry(entry2Id, ctx.user.id);
@@ -2649,6 +1885,7 @@ Antworte NUR als JSON-Array:
           organizationId: ctx.organizationId,
           statementDate: dateStr as string,
           totalAmount: itemsTotal.toFixed(2),
+          owner: "mw",
           status: "approved",
           journalEntryId: entry2Id,
           rawText: input.items.map(i => `${i.date} ${i.description} ${i.amount}`).join("\n"),
@@ -2848,14 +2085,6 @@ const payrollRouter = router({
       // AHV/IV/EO/ALV rates (stored as e.g. 6.4000 meaning 6.4%)
       const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
       const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
-
-      // AHV-Fallback-Warnung: Ohne hinterlegten Satz wird stillschweigend 6.4%
-      // angenommen. Das ist ein Sollwert, kein Ersatz für die echten Satzdaten –
-      // der Aufrufer muss die Warnung an den User durchreichen.
-      const fallbackWarnings: string[] = [];
-      if (!ahvSetting) {
-        fallbackWarnings.push("Kein AHV/IV/EO-Satz in den Versicherungseinstellungen hinterlegt – Fallback 6.4% verwendet. Bitte den aktuellen Satz unter Einstellungen → Versicherungen erfassen.");
-      }
       // BVG: fixed monthly CHF amounts
       const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
       const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
@@ -3111,7 +2340,7 @@ const payrollRouter = router({
         }
       }
 
-      return { created, updated, skipped, total: grouped.size, warnings: fallbackWarnings };
+      return { created, updated, skipped, total: grouped.size };
     }),
 
   // Recalculate all payroll entries with current insurance settings
@@ -3130,14 +2359,6 @@ const payrollRouter = router({
 
       const ahvEmpRate = ahvSetting ? parseFloat(ahvSetting.employeeRate as string ?? '0') / 100 : 0.064;
       const ahvEmprRate = ahvSetting ? parseFloat(ahvSetting.employerRate as string ?? '0') / 100 : 0.064;
-
-      // AHV-Fallback-Warnung: Ohne hinterlegten Satz wird stillschweigend 6.4%
-      // angenommen. Das ist ein Sollwert, kein Ersatz für die echten Satzdaten –
-      // der Aufrufer muss die Warnung an den User durchreichen.
-      const fallbackWarnings: string[] = [];
-      if (!ahvSetting) {
-        fallbackWarnings.push("Kein AHV/IV/EO-Satz in den Versicherungseinstellungen hinterlegt – Fallback 6.4% verwendet. Bitte den aktuellen Satz unter Einstellungen → Versicherungen erfassen.");
-      }
       const bvgEmpMonthly = bvgSetting?.bvgEmployeeMonthly ? parseFloat(bvgSetting.bvgEmployeeMonthly as string) : 0;
       const bvgEmprMonthly = bvgSetting?.bvgEmployerMonthly ? parseFloat(bvgSetting.bvgEmployerMonthly as string) : 0;
       const ktgEmpRate = ktgSetting ? parseFloat(ktgSetting.employeeRate as string ?? '0') / 100 : 0;
@@ -3180,7 +2401,7 @@ const payrollRouter = router({
         }
       }
 
-      return { recalculated, total: entries.length, warnings: fallbackWarnings };
+      return { recalculated, total: entries.length };
     }),
 
   approve: orgProcedure
@@ -3206,16 +2427,19 @@ const payrollRouter = router({
       const bvgTotal = parseFloat(p.bvgEmployee as string) + parseFloat(p.bvgEmployer as string);
       const ktgTotal = parseFloat(p.ktgUvgEmployee as string) + parseFloat(p.ktgUvgEmployer as string);
 
-      // Get accounts: Mitarbeiter-Zuordnung > Org-Default > hardcodierter Fallback.
-      const grossAcc = await resolveGrossSalaryAccount(ctx.organizationId, emp.grossSalaryAccountId);
+      // Get accounts
+      const grossAccNum = emp.code === "mw" ? "4000" : "4001";
+      const grossAcc = await getAccountByNumber(ctx.organizationId, grossAccNum);
       const ahvAcc = await getAccountByNumber(ctx.organizationId, "4010");
       const bvgAcc = await getAccountByNumber(ctx.organizationId, "4040");
       const ktgAcc = await getAccountByNumber(ctx.organizationId, "4025");
-      const bankAcc = await resolveBankAccount(ctx.organizationId);
-      const kkAcc = await resolveEmployeeSalaryAccount(ctx.organizationId, emp.salaryAccountId);
+      const bankAcc = await getAccountByNumber(ctx.organizationId, "1032"); // LUKB mw
+      const kkAcc = emp.code === "mw"
+        ? await getAccountByNumber(ctx.organizationId, "1081")
+        : await getAccountByNumber(ctx.organizationId, "1071");
 
       if (!grossAcc || !ahvAcc || !bvgAcc || !ktgAcc || !bankAcc) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Lohnkonten nicht gefunden (bitte in den Einstellungen Konten-Mapping prüfen)" });
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Lohnkonten nicht gefunden" });
       }
 
       const monthName = new Date(p.year, p.month - 1).toLocaleString("de-CH", { month: "long" });
@@ -3448,466 +2672,6 @@ const payrollRouter = router({
     }),
 });
 
-// ─── Reports Router ───────────────────────────────────────────────────────────
-const reportsRouter = router({
-  balanceSheet: orgProcedure
-    .input(z.object({ fiscalYear: z.number() }))
-    .query(({ input, ctx }) => getBalanceSheet(ctx.organizationId, input.fiscalYear)),
-
-  incomeStatement: orgProcedure
-    .input(z.object({ fiscalYear: z.number() }))
-    .query(({ input, ctx }) => getIncomeStatement(ctx.organizationId, input.fiscalYear)),
-
-  dashboard: orgProcedure
-    .input(z.object({ fiscalYear: z.number() }))
-    .query(({ input, ctx }) => getDashboardStats(ctx.organizationId, input.fiscalYear)),
-
-  monthlyAggregates: orgProcedure
-    .input(z.object({ months: z.number().optional() }))
-    .query(({ input, ctx }) => getMonthlyAggregates(ctx.organizationId, input.months ?? 6)),
-  cashflowForecast: orgProcedure
-    .query(async ({ ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
-      const orgId = ctx.organizationId;
-      // Current bank balance (Konto 1020, 1021, 1032)
-      const bankAccNums = ['1020', '1021', '1032'];
-      const bankAccRows = await db.select({ number: accounts.number, id: accounts.id })
-        .from(accounts)
-        .where(and(eq(accounts.organizationId, orgId), inArray(accounts.number, bankAccNums)));
-      const bankAccIds = bankAccRows.map(a => a.id);
-      let currentBalance = 0;
-      if (bankAccIds.length > 0) {
-        const lines = await db.select({ side: journalLines.side, amount: journalLines.amount })
-          .from(journalLines)
-          .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
-          .where(and(
-            eq(journalEntries.organizationId, orgId),
-            eq(journalEntries.status, 'approved'),
-            inArray(journalLines.accountId, bankAccIds),
-          ));
-        for (const l of lines) {
-          const amt = parseFloat(String(l.amount));
-          currentBalance += l.side === 'debit' ? amt : -amt;
-        }
-      }
-      // Open invoices (receivables) – next 13 weeks
-      const today = new Date();
-      const weeks: Array<{ week: number; label: string; inflow: number; outflow: number; balance: number }> = [];
-      let runningBalance = currentBalance;
-      // Get open invoices from invoices table
-      let openInvoices: Array<{ dueDate: string | null; totalAmount: string | null; type: string }> = [];
-      try {
-        const invoicesTable = (await import('../drizzle/schema')).invoices;
-        const rawInvoices = await db.select({ dueDate: invoicesTable.dueDate, total: invoicesTable.total })
-          .from(invoicesTable)
-          .where(and(
-            eq(invoicesTable.organizationId, orgId),
-            inArray(invoicesTable.status, ['sent', 'partially_paid']),
-          ));
-        // All open invoices are outgoing (receivables) in this system
-        openInvoices = rawInvoices.map(inv => ({ dueDate: inv.dueDate, totalAmount: inv.total, type: 'outgoing' }));
-      } catch { /* invoices table may not exist */ }
-      // Average monthly expenses from last 3 months
-      const threeMonthsAgo = new Date(today);
-      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-      const expenseLines = await db.select({ amount: journalLines.amount })
-        .from(journalLines)
-        .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
-        .innerJoin(accounts, eq(journalLines.accountId, accounts.id))
-        .where(and(
-          eq(journalEntries.organizationId, orgId),
-          eq(journalEntries.status, 'approved'),
-          eq(journalLines.side, 'debit'),
-          eq(accounts.accountType, 'expense'),
-          gte(journalEntries.bookingDate, threeMonthsAgo.toISOString().substring(0, 10)),
-        ));
-      const totalExpenses3M = expenseLines.reduce((s, l) => s + parseFloat(String(l.amount)), 0);
-      const weeklyExpenseBase = totalExpenses3M / 13; // 3 months ≈ 13 weeks
-      for (let w = 0; w < 13; w++) {
-        const weekStart = new Date(today);
-        weekStart.setDate(weekStart.getDate() + w * 7);
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekEnd.getDate() + 6);
-        const weekStartStr = weekStart.toISOString().substring(0, 10);
-        const weekEndStr = weekEnd.toISOString().substring(0, 10);
-        // Inflows: invoices due this week
-        const inflow = openInvoices
-          .filter(inv => inv.type === 'outgoing' && inv.dueDate && inv.dueDate >= weekStartStr && inv.dueDate <= weekEndStr)
-          .reduce((s, inv) => s + parseFloat(String(inv.totalAmount ?? '0')), 0);
-        // Outflows: invoices to pay + estimated expenses
-        const outflowInvoices = openInvoices
-          .filter(inv => inv.type === 'incoming' && inv.dueDate && inv.dueDate >= weekStartStr && inv.dueDate <= weekEndStr)
-          .reduce((s, inv) => s + parseFloat(String(inv.totalAmount ?? '0')), 0);
-        const outflow = outflowInvoices + weeklyExpenseBase;
-        runningBalance += inflow - outflow;
-        const label = `KW${String(weekStart.getMonth() + 1).padStart(2, '0')}/${String(weekStart.getDate()).padStart(2, '0')}`;
-        weeks.push({
-          week: w + 1,
-          label,
-          inflow: Math.round(inflow * 100) / 100,
-          outflow: Math.round(outflow * 100) / 100,
-          balance: Math.round(runningBalance * 100) / 100,
-        });
-      }
-      return {
-        currentBalance: Math.round(currentBalance * 100) / 100,
-        weeks,
-        weeklyExpenseBase: Math.round(weeklyExpenseBase * 100) / 100,
-      };
-    }),
-});
-// ─── VAT Routerr ───────────────────────────────────────────────────────────────
-const vatRouter = router({
-  list: orgProcedure
-    .input(z.object({ year: z.number().optional() }))
-    .query(({ input, ctx }) => getVatPeriods(ctx.organizationId, input.year)),
-
-  create: orgProcedure
-    .input(z.object({
-      year: z.number(),
-      period: z.string(),
-      startDate: z.string(),
-      endDate: z.string(),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-
-      const startDate = toDateStr(input.startDate) as string;
-      const endDate = toDateStr(input.endDate) as string;
-
-      // Get company settings to determine VAT method (scoped to this org)
-      const [settings] = await db.select().from(companySettings)
-        .where(eq(companySettings.organizationId, ctx.organizationId))
-        .limit(1);
-      const vatMethod = settings?.vatMethod ?? "effective";
-      const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
-
-      // Calculate turnover from approved journal entries in the period (scoped)
-      const entries = await db.select({
-        entryId: journalEntries.id,
-        bookingDate: journalEntries.bookingDate,
-      }).from(journalEntries)
-        .where(and(
-          eq(journalEntries.organizationId, ctx.organizationId),
-          eq(journalEntries.status, "approved"),
-          gte(journalEntries.bookingDate, startDate),
-          lte(journalEntries.bookingDate, endDate),
-        ));
-
-      if (entries.length === 0) {
-        // No entries – insert with zeros
-        const [result] = await db.insert(vatPeriods).values({
-          organizationId: ctx.organizationId,
-          year: input.year,
-          period: input.period,
-          startDate,
-          endDate,
-        });
-        return { periodId: (result as any).insertId };
-      }
-
-      const entryIds = entries.map(e => e.entryId);
-
-      // Get all journal lines for these entries that are on VAT-relevant revenue accounts
-      // Revenue accounts have credit-side entries (Haben = Ertrag)
-      const vatRevenueAccounts = await db.select({
-        id: accounts.id,
-        number: accounts.number,
-        defaultVatRate: accounts.defaultVatRate,
-      }).from(accounts)
-        .where(and(
-          eq(accounts.isVatRelevant, true),
-          eq(accounts.accountType, "revenue"),
-        ));
-
-      const vatAccountIds = vatRevenueAccounts.map(a => a.id);
-
-      let totalTurnover = 0;
-      let turnover81 = 0;
-      let turnover26 = 0;
-      let turnover38 = 0;
-
-      if (vatAccountIds.length > 0) {
-        // Get all credit-side lines on VAT-relevant revenue accounts for these entries
-        const lines = await db.select({
-          accountId: journalLines.accountId,
-          amount: journalLines.amount,
-          side: journalLines.side,
-          vatRate: journalLines.vatRate,
-        }).from(journalLines)
-          .where(and(
-            inArray(journalLines.entryId, entryIds),
-            inArray(journalLines.accountId, vatAccountIds),
-          ));
-
-        for (const line of lines) {
-          const amt = parseFloat(line.amount as string);
-          // Revenue is on credit side; if debit, it's a reversal
-          const signedAmt = line.side === "credit" ? amt : -amt;
-
-          // Determine VAT rate: use line vatRate, or fall back to account defaultVatRate
-          const lineVatRate = line.vatRate ? parseFloat(line.vatRate as string) : null;
-          const acct = vatRevenueAccounts.find(a => a.id === line.accountId);
-          const acctVatRate = acct?.defaultVatRate ? parseFloat(acct.defaultVatRate as string) : null;
-          const effectiveRate = lineVatRate ?? acctVatRate ?? 8.1;
-
-          totalTurnover += signedAmt;
-
-          if (effectiveRate >= 7) {
-            turnover81 += signedAmt;
-          } else if (effectiveRate >= 3) {
-            turnover38 += signedAmt;
-          } else {
-            turnover26 += signedAmt;
-          }
-        }
-      }
-
-      // Calculate VAT due based on method
-      let vatDue81 = 0, vatDue26 = 0, vatDue38 = 0;
-
-      if (vatMethod === "saldo") {
-        // Saldosteuersatz: one flat rate on total turnover
-        // All turnover goes into turnover81 bucket for simplicity
-        const totalVat = totalTurnover * (saldoRate / 100);
-        turnover81 = totalTurnover;
-        turnover26 = 0;
-        turnover38 = 0;
-        vatDue81 = totalVat;
-      } else {
-        // Effective method: apply individual rates
-        vatDue81 = turnover81 * 0.081;
-        vatDue26 = turnover26 * 0.026;
-        vatDue38 = turnover38 * 0.038;
-      }
-
-      // Input tax (Vorsteuer) – sum of vatAmount on debit-side lines on expense accounts
-      let inputTax = 0;
-      if (vatMethod === "effective") {
-        const expenseAccounts = await db.select({ id: accounts.id }).from(accounts)
-          .where(and(
-            eq(accounts.isVatRelevant, true),
-            eq(accounts.accountType, "expense"),
-          ));
-        const expenseIds = expenseAccounts.map(a => a.id);
-        if (expenseIds.length > 0) {
-          const expenseLines = await db.select({
-            vatAmount: journalLines.vatAmount,
-            side: journalLines.side,
-          }).from(journalLines)
-            .where(and(
-              inArray(journalLines.entryId, entryIds),
-              inArray(journalLines.accountId, expenseIds),
-            ));
-          for (const line of expenseLines) {
-            if (line.vatAmount) {
-              inputTax += parseFloat(line.vatAmount as string);
-            }
-          }
-        }
-      }
-      // For Saldosteuersatz: no Vorsteuer deduction
-
-      const netVatPayable = (vatDue81 + vatDue26 + vatDue38) - inputTax;
-
-      const [result] = await db.insert(vatPeriods).values({
-        organizationId: ctx.organizationId,
-        year: input.year,
-        period: input.period,
-        startDate,
-        endDate,
-        turnover81: turnover81.toFixed(2),
-        turnover26: turnover26.toFixed(2),
-        turnover38: turnover38.toFixed(2),
-        vatDue81: vatDue81.toFixed(2),
-        vatDue26: vatDue26.toFixed(2),
-        vatDue38: vatDue38.toFixed(2),
-        inputTax: inputTax.toFixed(2),
-        netVatPayable: netVatPayable.toFixed(2),
-      });
-      return { periodId: (result as any).insertId };
-    }),
-
-  detail: orgProcedure
-    .input(z.object({ vatPeriodId: z.number() }))
-    .query(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-
-      // Get the VAT period (mandantenbezogen!)
-      const [vp] = await db.select().from(vatPeriods).where(and(
-        eq(vatPeriods.id, input.vatPeriodId),
-        eq(vatPeriods.organizationId, ctx.organizationId),
-      ));
-      if (!vp) throw new TRPCError({ code: "NOT_FOUND", message: "MWST-Periode nicht gefunden" });
-
-      const startDate = vp.startDate;
-      const endDate = vp.endDate;
-
-      // Get company settings for VAT method
-      const [settings] = await db.select().from(companySettings)
-        .where(eq(companySettings.organizationId, ctx.organizationId))
-        .limit(1);
-      const vatMethod = settings?.vatMethod ?? "effective";
-      const saldoRate = parseFloat(settings?.vatSaldoRate as string ?? "6.20");
-
-      // Get all approved journal entries in the date range
-      const entries = await db.select({
-        entryId: journalEntries.id,
-        entryNumber: journalEntries.entryNumber,
-        bookingDate: journalEntries.bookingDate,
-        description: journalEntries.description,
-        source: journalEntries.source,
-      }).from(journalEntries)
-        .where(and(
-          eq(journalEntries.organizationId, ctx.organizationId),
-          eq(journalEntries.status, "approved"),
-          gte(journalEntries.bookingDate, startDate),
-          lte(journalEntries.bookingDate, endDate),
-        ))
-        .orderBy(asc(journalEntries.bookingDate));
-
-      if (entries.length === 0) {
-        return { period: vp, vatMethod, saldoRate, transactions: [] };
-      }
-
-      const entryIds = entries.map(e => e.entryId);
-
-      // Get all journal lines for these entries
-      const allLines = await db.select({
-        id: journalLines.id,
-        entryId: journalLines.entryId,
-        accountId: journalLines.accountId,
-        side: journalLines.side,
-        amount: journalLines.amount,
-        description: journalLines.description,
-        vatAmount: journalLines.vatAmount,
-        vatRate: journalLines.vatRate,
-      }).from(journalLines)
-        .where(inArray(journalLines.entryId, entryIds));
-
-      // Get all accounts for lookup
-      const allAccounts = await db.select({
-        id: accounts.id,
-        number: accounts.number,
-        name: accounts.name,
-        accountType: accounts.accountType,
-        isVatRelevant: accounts.isVatRelevant,
-        defaultVatRate: accounts.defaultVatRate,
-      }).from(accounts)
-        .where(eq(accounts.organizationId, ctx.organizationId));
-
-      const accountMap = new Map(allAccounts.map(a => [a.id, a]));
-
-      // Build transaction details
-      type VatTransaction = {
-        entryId: number;
-        entryNumber: string | null;
-        bookingDate: string;
-        description: string;
-        source: string;
-        lines: Array<{
-          accountNumber: string;
-          accountName: string;
-          side: string;
-          amount: string;
-          vatRate: string | null;
-          vatAmount: string | null;
-          isVatRelevant: boolean;
-        }>;
-        totalAmount: number;
-        vatAmount: number;
-        effectiveVatRate: number;
-        category: 'revenue' | 'expense' | 'other';
-      };
-
-      const transactions: VatTransaction[] = [];
-
-      for (const entry of entries) {
-        const entryLines = allLines.filter(l => l.entryId === entry.entryId);
-        let entryTotalAmount = 0;
-        let entryVatAmount = 0;
-        let hasVatRelevantLine = false;
-        let category: 'revenue' | 'expense' | 'other' = 'other';
-
-        const lineDetails = entryLines.map(line => {
-          const acct = accountMap.get(line.accountId);
-          const lineVatRate = line.vatRate ? parseFloat(line.vatRate as string) : null;
-          const acctVatRate = acct?.defaultVatRate ? parseFloat(acct.defaultVatRate as string) : null;
-          const effectiveRate = lineVatRate ?? acctVatRate;
-
-          if (acct?.isVatRelevant) {
-            hasVatRelevantLine = true;
-            const amt = parseFloat(line.amount as string);
-            if (acct.accountType === 'revenue') {
-              category = 'revenue';
-              const signedAmt = line.side === 'credit' ? amt : -amt;
-              entryTotalAmount += signedAmt;
-              // Calculate VAT for this line
-              if (vatMethod === 'saldo') {
-                entryVatAmount += signedAmt * (saldoRate / 100);
-              } else {
-                const rate = effectiveRate ?? 8.1;
-                entryVatAmount += signedAmt * (rate / 100);
-              }
-            } else if (acct.accountType === 'expense') {
-              category = 'expense';
-              const signedAmt = line.side === 'debit' ? amt : -amt;
-              entryTotalAmount += signedAmt;
-              if (line.vatAmount) {
-                entryVatAmount += parseFloat(line.vatAmount as string);
-              }
-            }
-          }
-
-          return {
-            accountNumber: acct?.number ?? '?',
-            accountName: acct?.name ?? 'Unbekannt',
-            side: line.side,
-            amount: line.amount as string,
-            vatRate: effectiveRate !== null && effectiveRate !== undefined ? effectiveRate.toString() : null,
-            vatAmount: line.vatAmount as string | null,
-            isVatRelevant: acct?.isVatRelevant ?? false,
-          };
-        });
-
-        if (hasVatRelevantLine) {
-          const effectiveVatRate = entryTotalAmount !== 0
-            ? (entryVatAmount / entryTotalAmount) * 100
-            : 0;
-
-          transactions.push({
-            entryId: entry.entryId,
-            entryNumber: entry.entryNumber,
-            bookingDate: entry.bookingDate,
-            description: entry.description,
-            source: entry.source,
-            lines: lineDetails,
-            totalAmount: entryTotalAmount,
-            vatAmount: entryVatAmount,
-            effectiveVatRate,
-            category,
-          });
-        }
-      }
-
-      return { period: vp, vatMethod, saldoRate, transactions };
-    }),
-
-  delete: orgProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      await db.delete(vatPeriods).where(eq(vatPeriods.id, input.id));
-      return { success: true };
-    }),
-});
-
 // ─── Documents Router ─────────────────────────────────────────────────────────
 const documentsRouter = router({
   list: orgProcedure
@@ -3988,7 +2752,7 @@ const documentsRouter = router({
 
   // Auto-match unmatched documents with pending bank transactions
   autoMatch: orgProcedure
-    .input(z.object({ threshold: z.number().default(40) }))
+    .input(z.object({ threshold: z.number().min(50).default(50) }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
@@ -4588,41 +3352,16 @@ Antworte NUR mit dem JSON-Objekt.`,
       // Verify document exists
       const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
-      // ── Fremdwährungs-Guard (Phase 2.5): Währung aus den KI-Metadaten ──
-      let docCurrency: string | null = null;
-      try { docCurrency = JSON.parse(doc.aiMetadata || "{}")?.currency ?? null; } catch { /* Metadaten nicht parsbar → CHF annehmen */ }
-      if (!isSupportedBookingCurrency(docCurrency)) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(docCurrency) });
-      }
-      // ── Duplikat-Schutz: Bereits verbuchtes Dokument ──
-      if (doc.journalEntryId) {
-        throw new TRPCError({ code: "CONFLICT", message: `Dieser Beleg wurde bereits verbucht (Journal-Eintrag #${doc.journalEntryId}). Doppelbuchung verhindert.` });
-      }
       
       const year = new Date(input.bookingDate).getFullYear();
-      // ── Vorsteuer-Automatik: Konto 1170 bei Eingangsrechnungen mit MWST ──
-      // Nettobetrag = Totalbetrag - MWST-Betrag
-      const totalAmount = parseFloat(input.amount);
-      const vatAmt = input.vatAmount ? parseFloat(input.vatAmount) : 0;
-      const netAmount = vatAmt > 0 ? (totalAmount - vatAmt).toFixed(2) : input.amount;
       const lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string; vatAmount?: string; vatRate?: string }> = [
-        { accountId: input.debitAccountId, side: "debit", amount: netAmount },
+        { accountId: input.debitAccountId, side: "debit", amount: input.amount },
         { accountId: input.creditAccountId, side: "credit", amount: input.amount },
       ];
       // Add VAT info to the expense line if provided
       if (input.vatAmount && input.vatRate) {
         lines[0].vatAmount = input.vatAmount;
         lines[0].vatRate = input.vatRate;
-        // Automatische Vorsteuer-Buchung auf Konto 1170
-        const vorsteuerAccount = await getAccountByNumber(ctx.organizationId, "1170");
-        if (vorsteuerAccount) {
-          lines.push({
-            accountId: vorsteuerAccount.id,
-            side: "debit",
-            amount: vatAmt.toFixed(2),
-            vatRate: input.vatRate,
-          });
-        }
       }
       
       const entryId = await createJournalEntry({
@@ -4631,10 +3370,10 @@ Antworte NUR mit dem JSON-Objekt.`,
         description: input.description || `Beleg: ${doc.filename}`,
         source: "manual",
         fiscalYear: year,
-        status: "approved",
+        status: "pending",
+        createdBy: ctx.user.id,
         lines,
       });
-      await approveJournalEntry(entryId, ctx.user.id);
       
       // Link document to journal entry
       await db.update(docs)
@@ -4645,211 +3384,6 @@ Antworte NUR mit dem JSON-Objekt.`,
         .where(eqOp(docs.id, input.documentId));
       
       return { entryId };
-    }),
-
-  // Delete a single document (admin)
-  delete: orgProcedure
-    .input(z.object({ documentId: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "Nur Admins können Belege löschen" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const { documents: docs } = await import("../drizzle/schema");
-      const { eq: eqOp } = await import("drizzle-orm");
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
-      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
-      // Delete S3 file if key exists
-      if (doc.s3Key) {
-        try {
-          const { storageDelete } = await import("./storage");
-          await storageDelete(doc.s3Key);
-        } catch { /* S3 delete failed, continue */ }
-      }
-      await db.delete(docs).where(eqOp(docs.id, input.documentId));
-      return { success: true };
-    }),
-
-  // Bulk delete documents (admin)
-  bulkDelete: orgProcedure
-    .input(z.object({ ids: z.array(z.number()).min(1).max(200) }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "Nur Admins können Belege löschen" });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const { documents: docs } = await import("../drizzle/schema");
-      const { inArray: inArrayOp } = await import("drizzle-orm");
-      // Load docs to get S3 keys
-      const rows = await db.select({ id: docs.id, s3Key: docs.s3Key }).from(docs)
-        .where(inArrayOp(docs.id, input.ids));
-      // Delete S3 files
-      for (const row of rows) {
-        if (row.s3Key) {
-          try {
-            const { storageDelete } = await import("./storage");
-            await storageDelete(row.s3Key);
-          } catch { /* S3 delete failed, continue */ }
-        }
-      }
-       await db.delete(docs).where(inArrayOp(docs.id, input.ids));
-      return { deleted: rows.length };
-    }),
-
-  // Nemotron: Kamerafoto direkt analysieren (kein separates OCR)
-  analyzeImageWithNemotron: orgProcedure
-    .input(z.object({
-      imageUrl: z.string(), // S3-URL des hochgeladenen Fotos
-      documentId: z.number().optional(),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      if (!process.env.OPENROUTER_API_KEY) {
-        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Nemotron nicht konfiguriert" });
-      }
-      const allAccts = await getAllAccounts(ctx.organizationId);
-      const accountList = allAccts
-        .filter(a => a.number.startsWith("4") || a.number.startsWith("2") || a.number.startsWith("1"))
-        .slice(0, 50)
-        .map(a => `${a.number} ${a.name}`)
-        .join("\n");
-
-      const result = await invokeNemotron({
-        messages: [
-          {
-            role: "system",
-            content: `Du bist ein Schweizer Buchhalter. Analysiere dieses Belegfoto und extrahiere die Buchhaltungsdaten.
-KONTENPLAN (SKR04):
-${accountList}
-Antworte NUR als JSON-Objekt:
-{"documentType":"invoice_in|receipt|other","counterparty":"Firmenname","documentDate":"YYYY-MM-DD","totalAmount":123.45,"vatRate":8.1,"vatAmount":9.50,"currency":"CHF","invoiceNumber":"RE-2026-001","qrReference":"","suggestedDebitAccount":"4xxx Kontoname","suggestedCreditAccount":"2000 Kreditoren","confidence":85,"description":"Kurzbeschreibung"}`,
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url" as const,
-                image_url: { url: input.imageUrl, detail: "high" as const },
-              },
-              { type: "text", text: "Analysiere diesen Beleg und extrahiere alle Buchhaltungsdaten." },
-            ],
-          },
-        ],
-        maxTokens: 1024,
-        temperature: 0.05,
-      });
-
-      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Nemotron konnte keine Daten extrahieren" });
-      }
-      const extracted = JSON.parse(jsonMatch[0]);
-
-      // Optionally update document metadata in DB
-      if (input.documentId) {
-        const db = await getDb();
-        if (db) {
-          const meta = {
-            documentType: extracted.documentType,
-            counterparty: extracted.counterparty,
-            documentDate: extracted.documentDate,
-            totalAmount: extracted.totalAmount,
-            vatRate: extracted.vatRate,
-            vatAmount: extracted.vatAmount,
-            currency: extracted.currency || "CHF",
-            invoiceNumber: extracted.invoiceNumber,
-            qrReference: extracted.qrReference,
-            suggestedAccount: extracted.suggestedDebitAccount,
-            description: extracted.description,
-          };
-          await db.update(documents)
-            .set({ aiMetadata: JSON.stringify(meta), documentType: extracted.documentType || "other" })
-            .where(and(eq(documents.id, input.documentId), eq(documents.organizationId, ctx.organizationId)));
-        }
-      }
-
-      return {
-        documentType: extracted.documentType,
-        counterparty: extracted.counterparty,
-        documentDate: extracted.documentDate,
-        totalAmount: extracted.totalAmount,
-        vatRate: extracted.vatRate,
-        vatAmount: extracted.vatAmount,
-        currency: extracted.currency || "CHF",
-        invoiceNumber: extracted.invoiceNumber,
-        qrReference: extracted.qrReference,
-        suggestedDebitAccount: extracted.suggestedDebitAccount,
-        suggestedCreditAccount: extracted.suggestedCreditAccount,
-        confidence: extracted.confidence ?? 80,
-        description: extracted.description,
-        reasoning: result.reasoning,
-      };
-    }),
-});
-
-// ─── NVIDIA LocateAnything-3B Vision Endpoints ───────────────────────────────
-const locateAnythingRouter = router({
-  /**
-   * Analysiert ein Belegfoto mit LocateAnything-3B.
-   * Gibt Bounding Boxes für alle erkannten Felder zurück.
-   * Ergänzt die Nemotron-Pipeline bei niedriger Konfidenz.
-   */
-  analyzeInvoice: orgProcedure
-    .input(z.object({
-      imageUrl: z.string().optional(),
-      imageBase64: z.string().optional(),
-      mimeType: z.string().optional(),
-    }))
-    .mutation(async ({ input }) => {
-      if (!input.imageBase64 && !input.imageUrl) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "imageUrl oder imageBase64 erforderlich" });
-      }
-      const result = await extractInvoiceFields(
-        input.imageBase64 ?? "",
-        input.mimeType ?? "image/png"
-      );
-      return result;
-    }),
-
-  /**
-   * Analysiert einen Kontoauszug oder eine Kreditkartenabrechnung.
-   */
-  analyzeBankStatement: orgProcedure
-    .input(z.object({
-      imageBase64: z.string(),
-      mimeType: z.string().optional(),
-    }))
-    .mutation(async ({ input }) => {
-      return extractBankStatement(input.imageBase64, input.mimeType ?? "image/png");
-    }),
-
-  /**
-   * Erkennt die Dokumentstruktur (Tabellen, Felder, QR-Codes, Stempel).
-   */
-  detectStructure: orgProcedure
-    .input(z.object({
-      imageBase64: z.string(),
-      mimeType: z.string().optional(),
-    }))
-    .mutation(async ({ input }) => {
-      return detectDocumentStructure(input.imageBase64, input.mimeType ?? "image/png");
-    }),
-
-  /**
-   * Kombinierter Enhancer: Reichert ein Nemotron-Ergebnis mit LocateAnything-Boxes an.
-   * Wird automatisch aufgerufen wenn Nemotron-Konfidenz < 85%.
-   */
-  enhanceExtraction: orgProcedure
-    .input(z.object({
-      nemotronResult: z.record(z.string(), z.unknown()).nullable(),
-      imageBase64: z.string(),
-      documentType: z.enum(["invoice", "lohnausweis", "bank_statement", "generic"]).optional(),
-    }))
-    .mutation(async ({ input }) => {
-      return enhanceExtractionWithLocateAnything(
-        input.nemotronResult,
-        input.imageBase64,
-        input.documentType ?? "generic"
-      );
     }),
 });
 
@@ -4915,21 +3449,8 @@ const avatarChatRouter = router({
           .orderBy(desc(documents.createdAt))
           .limit(5);
 
-        // Financial context from income statement
-        const currentYear = new Date().getFullYear();
-        const dashStats = await getDashboardStats(orgId, currentYear);
-        const incomeStmt = await getIncomeStatement(orgId, currentYear);
-        const totalRevenue = incomeStmt?.revenues?.reduce((s: number, r: {balance: number}) => s + (r.balance || 0), 0) ?? 0;
-        const totalExpenses = incomeStmt?.expenses?.reduce((s: number, r: {balance: number}) => s + (r.balance || 0), 0) ?? 0;
         contextText = `
-## Aktuelle Buchhaltungsdaten der Organisation (GJ ${currentYear}):
-
-### Finanzstatus:
-- Ertrag YTD: CHF ${totalRevenue.toFixed(2)}
-- Aufwand YTD: CHF ${totalExpenses.toFixed(2)}
-- Ergebnis: CHF ${(totalRevenue - totalExpenses).toFixed(2)}
-- Ausstehende Buchungen: ${dashStats?.pendingEntries ?? 0}
-- Ungematchte Banktransaktionen: ${dashStats?.pendingBankTransactions ?? 0}
+## Aktuelle Buchhaltungsdaten der Organisation:
 
 ### Letzte Journalbuchungen (${recentJournals.length}):
 ${recentJournals.map(j => `- ${j.bookingDate}: ${j.description} | Status: ${j.status}`).join('\n')}
@@ -4945,7 +3466,7 @@ ${recentDocs.map(d => {
 }).join('\n')}
 `;
       } catch (e) {
-        logger.error('Avatar chat context error:', e);
+        logger.error({ err: e }, "Avatar chat context construction failed");
       }
 
       const systemPrompt = `Du bist ${cfgAvatarName}, der Buchhaltungsberater der WM Weibel Mueller AG. Antworte IMMER extrem kurz und direkt – maximal ${cfgMaxSentences} Sätze. Keine Einleitungen, kein Smalltalk, kein "Gerne", kein "Natürlich". Nur die Antwort.${cfgCustomPrompt ? '\n' + cfgCustomPrompt : ''}
@@ -4959,30 +3480,9 @@ ${contextText}`;
         { role: 'user' as const, content: input.message },
       ];
 
-      // Nemotron mit Reasoning verwenden falls OPENROUTER_API_KEY vorhanden
-      let reply: string;
-      let reasoning: string | undefined;
-      if (process.env.OPENROUTER_API_KEY) {
-        try {
-          const nemotronResult = await invokeNemotron({
-            messages,
-            maxTokens: 512,
-            temperature: 0.2,
-            enableReasoning: true,
-          });
-          reply = nemotronResult.content || 'Entschuldigung, ich konnte keine Antwort generieren.';
-          reasoning = nemotronResult.reasoning;
-        } catch (e) {
-          logger.error('Nemotron Chat Fehler, Fallback auf LLM:', e);
-          const llmResponse = await invokeLLM({ messages });
-          const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
-          reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
-        }
-      } else {
-        const llmResponse = await invokeLLM({ messages });
-        const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
-        reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
-      }
+      const llmResponse = await invokeLLM({ messages });
+       const replyRaw = llmResponse.choices?.[0]?.message?.content ?? 'Entschuldigung, ich konnte keine Antwort generieren.';
+      const reply = typeof replyRaw === 'string' ? replyRaw : 'Entschuldigung, ich konnte keine Antwort generieren.';
       // TTS via ElevenLabs (optional) – return as base64 data URL to avoid CORS issues
       let audioUrl: string | undefined;
       const elevenLabsKey = process.env.ELEVENLABS_API_KEY;
@@ -5011,10 +3511,10 @@ ${contextText}`;
             audioUrl = `data:audio/mpeg;base64,${base64}`;
           } else {
             const errText = await ttsRes.text().catch(() => '');
-            logger.error('ElevenLabs TTS error:', ttsRes.status, errText);
+            logger.error({ status: ttsRes.status, errorText: errText }, "ElevenLabs text-to-speech request failed");
           }
         } catch (e) {
-          logger.error('ElevenLabs TTS error:', e);
+          logger.error({ err: e }, "ElevenLabs text-to-speech request failed");
         }
       }
       return { reply, audioUrl };
@@ -5067,102 +3567,13 @@ ${contextText}`;
             const buf = await ttsRes.arrayBuffer();
             audioUrl = `data:audio/mpeg;base64,${Buffer.from(buf).toString('base64')}`;
           } else {
-            logger.error('ElevenLabs TTS greeting error:', ttsRes.status);
+            logger.error({ status: ttsRes.status, organizationId: ctx.organizationId }, "ElevenLabs greeting request failed");
           }
         } catch (e) {
-          logger.error('ElevenLabs TTS greeting error:', e);
+          logger.error({ err: e, organizationId: ctx.organizationId }, "ElevenLabs greeting request failed");
         }
       }
       return { audioUrl };
-    }),
-});
-
-// ─── App Router ───────────────────────────────────────────────────────────────
-// ─── Avatar Settings Router ──────────────────────────────────────────────────
-const avatarSettingsRouter = router({
-  get: orgProcedure.query(async ({ ctx }) => {
-    const db = await getDb();
-    if (!db) return null;
-    const [row] = await db.select().from(avatarSettings)
-      .where(eq(avatarSettings.organizationId, ctx.organizationId))
-      .limit(1);
-    return row ?? null;
-  }),
-
-  save: orgProcedure
-    .input(z.object({
-      language: z.string().max(10).optional(),
-      style: z.enum(["concise", "balanced", "detailed"]).optional(),
-      maxSentences: z.number().min(1).max(10).optional(),
-      customPrompt: z.string().max(2000).optional(),
-      voiceId: z.string().max(100).optional(),
-      avatarName: z.string().max(100).optional(),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      if (ctx.user.role !== 'admin') throw new TRPCError({ code: 'FORBIDDEN', message: 'Nur Administratoren können die Avatar-Einstellungen ändern.' });
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
-      const [existing] = await db.select({ id: avatarSettings.id })
-        .from(avatarSettings)
-        .where(eq(avatarSettings.organizationId, ctx.organizationId))
-        .limit(1);
-      const data: Record<string, unknown> = { organizationId: ctx.organizationId };
-      if (input.language !== undefined) data.language = input.language;
-      if (input.style !== undefined) data.style = input.style;
-      if (input.maxSentences !== undefined) data.maxSentences = input.maxSentences;
-      if (input.customPrompt !== undefined) data.customPrompt = input.customPrompt;
-      if (input.voiceId !== undefined) data.voiceId = input.voiceId;
-      if (input.avatarName !== undefined) data.avatarName = input.avatarName;
-      if (existing) {
-        await db.update(avatarSettings).set(data).where(eq(avatarSettings.organizationId, ctx.organizationId));
-      } else {
-        await db.insert(avatarSettings).values(data as any);
-      }
-      return { success: true };
-    }),
-});
-
-// ─── Import Automation Router ───────────────────────────────────────────────
-const importAutomationRouter = router({
-  get: orgProcedure.query(async ({ ctx }) => {
-    const db = await getDb();
-    if (!db) return null;
-    const [row] = await db.select().from(importAutomationSettings)
-      .where(eq(importAutomationSettings.organizationId, ctx.organizationId))
-      .limit(1);
-    // Return defaults if no row exists
-    return row ?? {
-      autoKiCategorize: true,
-      autoGenerateBookingTexts: true,
-      autoRefreshLearned: true,
-      autoDetectTransfers: true,
-      autoMatchDocuments: false,
-    };
-  }),
-
-  save: orgProcedure
-    .input(z.object({
-      autoKiCategorize: z.boolean(),
-      autoGenerateBookingTexts: z.boolean(),
-      autoRefreshLearned: z.boolean(),
-      autoDetectTransfers: z.boolean(),
-      autoMatchDocuments: z.boolean(),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
-      const [existing] = await db.select({ id: importAutomationSettings.id })
-        .from(importAutomationSettings)
-        .where(eq(importAutomationSettings.organizationId, ctx.organizationId))
-        .limit(1);
-      const data = { ...input, organizationId: ctx.organizationId };
-      if (existing) {
-        await db.update(importAutomationSettings).set(data)
-          .where(eq(importAutomationSettings.organizationId, ctx.organizationId));
-      } else {
-        await db.insert(importAutomationSettings).values(data);
-      }
-      return { success: true };
     }),
 });
 
@@ -5171,7 +3582,7 @@ export const appRouter = router({
   auth: authRouter,
   accounts: accountsRouter,
   journal: journalRouter,
-  bankImport: bankImportRouter,
+  bankImport: activeBankImportRouter,
   creditCard: creditCardRouter,
   payroll: payrollRouter,
   reports: reportsRouter,
@@ -5187,34 +3598,14 @@ export const appRouter = router({
   customers: customersRouter,
   organizations: organizationsRouter,
   invoices: invoicesRouter,
+  recurringInvoices: recurringInvoicesRouter,
   reminders: remindersRouter,
   stripe: stripeRouter,
   avatarChat: avatarChatRouter,
-  locateAnything: locateAnythingRouter,
   avatarSettings: avatarSettingsRouter,
   importAutomation: importAutomationRouter,
   invitations: invitationsRouter,
-  pos: posRouter,
-  ebics: ebicsRouter,
-  uidSearch: router({
-    search: publicProcedure
-      .input(z.object({ name: z.string().min(2).max(200) }))
-      .query(async ({ input }) => {
-        try {
-          const results = await searchCompanies(input.name, 10);
-          return results;
-        } catch (e) {
-          logger.error("UID search error:", e);
-          return [];
-        }
-      }),
-  }),
+  uidSearch: uidSearchRouter,
 });
 
 export type AppRouter = typeof appRouter;
-
-
-// ─── POS Router (wird direkt in appRouter eingebunden) ───────────────────────
-// Hinweis: posRouter wird am Ende dieser Datei nach appRouter definiert und
-// dann via Patch in den appRouter eingefügt – da appRouter bereits exportiert
-// ist, erstellen wir einen separaten Export.

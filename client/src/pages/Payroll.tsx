@@ -566,7 +566,6 @@ export default function Payroll() {
   const syncMutation = trpc.payroll.syncFromJournal.useMutation({
     onSuccess: (res) => {
       toast.success(`Synchronisiert: ${res.created} neue, ${res.updated} aktualisierte, ${res.skipped} übersprungene Einträge`);
-      if (res.warnings?.length) res.warnings.forEach((w) => toast.warning(w, { duration: 10000 }));
       refetch();
       utils.payroll.annualSummary.invalidate();
     },
@@ -576,7 +575,6 @@ export default function Payroll() {
   const recalcMutation = trpc.payroll.recalculate.useMutation({
     onSuccess: (res) => {
       toast.success(`${res.recalculated} von ${res.total} Einträgen neu berechnet (Brutto/Abzüge)`);
-      if (res.warnings?.length) res.warnings.forEach((w) => toast.warning(w, { duration: 10000 }));
       refetch();
       utils.payroll.annualSummary.invalidate();
     },
@@ -584,13 +582,11 @@ export default function Payroll() {
   });
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
+    <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Lohnbuchhaltung</h2>
-          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
-            Schweizer Lohnabrechnung mit AHV / IV / EO / ALV / BVG / UVG
-          </p>
+          <h2 className="text-xl font-bold">Lohnbuchhaltung</h2>
+          <p className="text-sm text-muted-foreground">Lohnabrechnung für mw und jm</p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" className="gap-2"
@@ -603,7 +599,7 @@ export default function Payroll() {
             onClick={() => syncMutation.mutate({ year })}
             disabled={syncMutation.isPending}>
             <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
-            Synchronisieren
+            Aus Journal synchronisieren
           </Button>
           <Button size="sm" className="gap-2" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4" /> Lohnabrechnung
@@ -611,44 +607,21 @@ export default function Payroll() {
         </div>
       </div>
 
-      {/* Sozialversicherungssätze-Leiste {year} */}
-      <div className="klax-card--soft p-3 flex items-center gap-4 flex-wrap text-[12px]" style={{ color: "var(--ink-2)" }}>
-        <span className="k-label" style={{ marginRight: 4 }}>Sozialvers. {year}</span>
-        {[
-          { label: "AHV/IV/EO", val: "10.6%" },
-          { label: "ALV", val: "2.2%" },
-          { label: "BVG", val: "var." },
-          { label: "UVG", val: "0.86%" },
-          { label: "KTG", val: "1.5%" },
-        ].map(s => (
-          <span key={s.label} className="inline-flex items-center gap-1.5">
-            <span style={{ color: "var(--ink-3)" }}>{s.label}</span>
-            <span className="mono font-medium">{s.val}</span>
-          </span>
-        ))}
-      </div>
-
       {/* Employees overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {employees?.map(emp => (
-          <div key={emp.id} className="klax-card p-5">
+          <div key={emp.id} className="bg-card rounded-xl border border-border p-5 shadow-sm">
             <div className="flex items-center gap-3 mb-3">
-              <div
-                className="w-10 h-10 rounded-full flex items-center justify-center font-semibold"
-                style={{ background: "var(--klax-accent-soft)", color: "var(--klax-accent)" }}
-              >
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">
                 {emp.code.toUpperCase()}
               </div>
               <div>
-                <div className="text-[13.5px] font-semibold" style={{ color: "var(--ink)" }}>
-                  {emp.firstName} {emp.lastName}
-                </div>
-                <div className="text-[11px]" style={{ color: "var(--ink-3)" }}>{emp.code}</div>
+                <div className="font-semibold">{emp.firstName} {emp.lastName}</div>
+                <div className="text-xs text-muted-foreground">{emp.code}</div>
               </div>
             </div>
-            <div className="text-[12.5px]">
-              <span className="text-[11px]" style={{ color: "var(--ink-3)" }}>AHV-Nr.: </span>
-              <span className="mono" style={{ color: "var(--ink)" }}>{emp.ahvNumber ?? "–"}</span>
+            <div className="text-sm">
+              <span className="text-muted-foreground text-xs">AHV-Nr.:</span> {emp.ahvNumber ?? "–"}
             </div>
           </div>
         ))}
@@ -1005,6 +978,7 @@ function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }:
   const [ktgEmployer, setKtgEmployer] = useState("0");
 
   const selectedEmp = employees.find(e => e.id === employeeId);
+  const usesAhvFallback = !insuranceSettings.some((s: any) => s.insuranceType === 'ahv' && s.isActive);
 
   // Auto-fill from employee data using DB insurance settings
   const fillFromEmployee = (emp: any) => {
@@ -1078,6 +1052,11 @@ function CreatePayrollDialog({ employees, insuranceSettings, onClose, onSaved }:
           <DialogTitle>Lohnabrechnung erstellen</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {usesAhvFallback && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <strong>AHV-Standardwert aktiv:</strong> Es ist keine aktive AHV-Versicherung konfiguriert. Die Berechnung verwendet vorläufig 5.3 % für Arbeitnehmer und Arbeitgeber. Bitte prüfen Sie die Versicherungs-Einstellungen vor dem Verbuchen.
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-3">
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Mitarbeiter</label>

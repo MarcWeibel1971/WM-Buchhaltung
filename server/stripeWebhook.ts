@@ -4,9 +4,7 @@ import { getDb } from "./db";
 import { subscriptions } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import type Stripe from "stripe";
-import { createLogger } from "./_core/logger";
-
-const logger = createLogger("stripeWebhook");
+import { logger } from "./_core/logger";
 
 export const stripeWebhookRouter = Router();
 
@@ -25,7 +23,7 @@ stripeWebhookRouter.post(
     try {
       event = constructWebhookEvent(req.body, sig);
     } catch (err: any) {
-      logger.error("[Stripe Webhook] Signature verification failed:", err.message);
+      logger.error({ err }, "Stripe webhook signature verification failed");
       res.status(400).json({ error: `Webhook Error: ${err.message}` });
       return;
     }
@@ -49,7 +47,7 @@ stripeWebhookRouter.post(
           const subscriptionId = session.subscription as string;
 
           if (!orgId || !userId) {
-            logger.error("[Stripe Webhook] Missing orgId or userId in metadata");
+            logger.error({ eventId: event.id }, "Stripe checkout is missing organization or user metadata");
             break;
           }
 
@@ -80,7 +78,7 @@ stripeWebhookRouter.post(
               status: "trialing",
             });
           }
-          logger.info(`[Stripe Webhook] Checkout completed: org=${orgId} plan=${plan}`);
+          logger.info({ organizationId: orgId, plan, eventId: event.id }, "Stripe checkout completed");
           break;
         }
 
@@ -119,7 +117,7 @@ stripeWebhookRouter.post(
               })
               .where(eq(subscriptions.id, existing.id));
 
-            logger.info(`[Stripe Webhook] Subscription updated: ${subId} status=${status}`);
+            logger.info({ subscriptionId: subId, status, eventId: event.id }, "Stripe subscription updated");
           }
           break;
         }
@@ -133,7 +131,7 @@ stripeWebhookRouter.post(
             .set({ status: "canceled" })
             .where(eq(subscriptions.stripeSubscriptionId, subId));
 
-          logger.info(`[Stripe Webhook] Subscription deleted: ${subId}`);
+          logger.info({ subscriptionId: subId, eventId: event.id }, "Stripe subscription deleted");
           break;
         }
 
@@ -154,7 +152,7 @@ stripeWebhookRouter.post(
               .update(subscriptions)
               .set({ status: "active" })
               .where(eq(subscriptions.id, existing.id));
-            logger.info(`[Stripe Webhook] Invoice paid, subscription activated: ${subId}`);
+            logger.info({ subscriptionId: subId, eventId: event.id }, "Stripe invoice paid and subscription activated");
           }
           break;
         }
@@ -169,7 +167,7 @@ stripeWebhookRouter.post(
             .set({ status: "past_due" })
             .where(eq(subscriptions.stripeSubscriptionId, subId));
 
-          logger.info(`[Stripe Webhook] Payment failed for subscription: ${subId}`);
+          logger.warn({ subscriptionId: subId, eventId: event.id }, "Stripe invoice payment failed");
           break;
         }
 
@@ -179,7 +177,7 @@ stripeWebhookRouter.post(
 
       res.json({ received: true });
     } catch (err: any) {
-      logger.error("[Stripe Webhook] Processing error:", err);
+      logger.error({ err, eventId: event.id }, "Stripe webhook processing failed");
       res.status(500).json({ error: "Webhook processing failed" });
     }
   }

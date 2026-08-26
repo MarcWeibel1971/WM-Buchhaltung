@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2, AlertTriangle } from "lucide-react";
+import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -13,13 +13,25 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { parseStatement, extractCAMT053AccountIban } from "../../../shared/bankParser";
-import { validateManualReference } from "@shared/qrReference";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-
-function formatCHF(val: string | number) {
-  const n = typeof val === "string" ? parseFloat(val) : val;
-  return new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
-}
+import { BankImportStatusTiles } from "@/components/BankImportStatusTiles";
+import { BankImportFiscalYearNotice, BankImportFiscalYearSelect } from "@/components/BankImportFiscalYearControls";
+import { BankImportFilterBar } from "@/components/BankImportFilterBar";
+import { BankImportSortIcon } from "@/components/BankImportSortIcon";
+import { BankImportDocumentPreviewDialog } from "@/components/BankImportDocumentPreviewDialog";
+import { BankImportDeleteConfirmDialog } from "@/components/BankImportDeleteConfirmDialog";
+import { BankImportCreditCardDialog } from "@/components/BankImportCreditCardDialog";
+import { BankImportTransactionEditDialog } from "@/components/BankImportTransactionEditDialog";
+import { BankImportSingleBookingFields } from "@/components/BankImportSingleBookingFields";
+import { BankImportCollectiveBookingLines } from "@/components/BankImportCollectiveBookingLines";
+import { BankImportCollectiveBookingPreview } from "@/components/BankImportCollectiveBookingPreview";
+import { BankImportMatchedDocumentInfo } from "@/components/BankImportMatchedDocumentInfo";
+import { BankImportAiReasoning } from "@/components/BankImportAiReasoning";
+import { BankImportTransactionBasics } from "@/components/BankImportTransactionBasics";
+import { BankImportBookingModeToggle } from "@/components/BankImportBookingModeToggle";
+import { BankImportCollectiveBankAccountLine } from "@/components/BankImportCollectiveBankAccountLine";
+import { BankImportTransactionActionBar } from "@/components/BankImportTransactionActionBar";
+import { formatCHF } from "@/lib/formatters";
 
 type EditableTx = {
   id: number;
@@ -39,8 +51,11 @@ type EditableTx = {
 };
 
 export default function BankImport() {
-  // Read tab from URL query params (sidebar sub-items use ?tab=...)
-  const urlTab = new URLSearchParams(window.location.search).get("tab");
+  // Read tab/action from URL query params. `action=bank-import` is kept as a
+  // backwards-compatible deep-link used by Dashboard and external shortcuts.
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlTab = urlParams.get("tab");
+  const urlAction = urlParams.get("action");
   const getInitialStatusFilter = (): "pending" | "matched" | "all" => {
     if (urlTab === "unmatched") return "pending";
     if (urlTab === "matched") return "matched";
@@ -50,17 +65,19 @@ export default function BankImport() {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [pendingFilter, setPendingFilter] = useState<number | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<"pending" | "matched" | "all">(getInitialStatusFilter);
-  const [showImportSection, setShowImportSection] = useState(urlTab === "import");
+  const [showImportSection, setShowImportSection] = useState(urlTab === "import" || urlAction === "bank-import");
   const [showAccountsSection, setShowAccountsSection] = useState(urlTab === "accounts");
   
   // Update filters when URL changes (sidebar navigation)
   useEffect(() => {
-    const newTab = new URLSearchParams(window.location.search).get("tab");
+    const params = new URLSearchParams(window.location.search);
+    const newTab = params.get("tab");
+    const newAction = params.get("action");
     if (newTab === "unmatched") setStatusFilter("pending");
     else if (newTab === "matched") setStatusFilter("matched");
-    else if (newTab === "import") setShowImportSection(true);
+    else if (newTab === "import" || newAction === "bank-import") setShowImportSection(true);
     else if (newTab === "accounts") setShowAccountsSection(true);
-  }, [urlTab]);
+  }, [urlTab, urlAction]);
   // showCreditorExport removed – now at /zahlungen/kreditoren
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -103,10 +120,7 @@ export default function BankImport() {
     if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
     else { setSortCol(col); setSortDir(col === "amount" ? "desc" : "asc"); }
   };
-  const SortIcon = ({ col }: { col: string }) => {
-    if (sortCol !== col) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-30" />;
-    return sortDir === "asc" ? <ArrowUp className="h-3 w-3 ml-1" /> : <ArrowDown className="h-3 w-3 ml-1" />;
-  };
+  const SortIcon = ({ col }: { col: string }) => <BankImportSortIcon column={col} activeColumn={sortCol} direction={sortDir} />;
 
   // Credit card dialog state
   const [ccDialog, setCcDialog] = useState<{ txId: number; counterparty: string; txAmount: string; statementDate: string; ccStatementId?: number; matchedDocUrl?: string } | null>(null);
@@ -122,7 +136,7 @@ export default function BankImport() {
     }
   }, [ccDialog?.matchedDocUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
+  const { fiscalYear, setFiscalYear, fiscalYears, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
   const { data: importAutomation } = trpc.importAutomation.get.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   // Always filter by selected fiscal year (consistent across all views)
@@ -171,9 +185,6 @@ export default function BankImport() {
   const importMutation = trpc.bankImport.importTransactions.useMutation({
     onSuccess: (data) => {
       toast.success(`${data.imported} Transaktionen importiert, ${data.duplicates} Duplikate übersprungen`);
-      if ((data as any).invoiceMatched > 0) {
-        toast.success(`${(data as any).invoiceMatched} Zahlungseingang/Zahlungseingänge via QR-Referenz einer Rechnung zugeordnet`, { duration: 6000 });
-      }
       refetchTxs();
       setImporting(false);
       if (data.imported > 0) {
@@ -616,59 +627,22 @@ export default function BankImport() {
   };
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1200px] mx-auto">
-      <div>
-        <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Bankimport</h2>
-        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
-          CAMT.053, MT940, CSV oder PDF importieren
-        </p>
-      </div>
+    <div className="p-6 space-y-6">
 
-      {/* Warnung: Geschäftsjahr geschlossen */}
-      {!isCurrentYearOpen && (
-        <div
-          className="flex items-center gap-3 rounded-md px-4 py-3 text-[13px]"
-          style={{ background: "var(--warn-soft)", border: "1px solid color-mix(in oklab, var(--warn) 20%, transparent)", color: "var(--warn)" }}
-        >
-          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-          <span>Das Geschäftsjahr <strong>{fiscalYear}</strong> ist geschlossen. Ausstehende Transaktionen werden nicht angezeigt und neue Buchungen sind nicht möglich.</span>
-        </div>
-      )}
+      <BankImportFiscalYearNotice fiscalYear={fiscalYear} isCurrentYearOpen={isCurrentYearOpen} />
 
-      {/* Filter-Kacheln (KLAX) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { key: "all",     label: "Alle Transaktionen", count: txStats.total,   icon: <ArrowLeftRight className="w-4 h-4" /> },
-          { key: "pending", label: "Ausstehend",          count: txStats.pending, icon: <Clock className="w-4 h-4" /> },
-          { key: "matched", label: "Verbucht",             count: txStats.matched, icon: <CheckCircle className="w-4 h-4" /> },
-          { key: "ignored", label: "Ignoriert",            count: txStats.ignored, icon: <EyeOff className="w-4 h-4" /> },
-        ].map(tile => {
-          const isActive = statusFilter === tile.key;
-          return (
-            <button
-              key={tile.key}
-              onClick={() => { setStatusFilter(tile.key as any); setSelectedTxIds(new Set()); }}
-              className="text-left p-4 rounded-[14px] transition-all"
-              style={{
-                background: isActive ? "var(--klax-accent)" : "var(--surface)",
-                color: isActive ? "var(--klax-accent-ink)" : "var(--ink)",
-                border: `1px solid ${isActive ? "var(--klax-accent)" : "var(--hair)"}`,
-                boxShadow: isActive ? "var(--shadow-2)" : "var(--shadow-1)",
-              }}
-            >
-              <div className="flex items-center gap-2 mb-2" style={{ color: isActive ? "var(--klax-accent-ink)" : "var(--ink-3)" }}>
-                {tile.icon}
-                <span className="text-[10.5px] uppercase tracking-wider font-medium">{tile.label}</span>
-              </div>
-              <div className="display mono text-[26px] font-medium leading-none">{tile.count}</div>
-            </button>
-          );
-        })}
-      </div>
+      <BankImportStatusTiles
+        stats={txStats}
+        activeStatus={statusFilter}
+        onSelect={(status) => { setStatusFilter(status as typeof statusFilter); setSelectedTxIds(new Set()); }}
+      />
 
       {/* Import section */}
-      <div className="klax-card p-5">
-        <h3 className="text-[14px] font-semibold mb-4" style={{ color: "var(--ink)" }}>Kontoauszug importieren</h3>
+      <div className="bg-card rounded-xl border border-border p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold">Kontoauszug importieren</h3>
+          <BankImportFiscalYearSelect fiscalYear={fiscalYear} fiscalYearInfos={fiscalYearInfos ?? []} onSelect={setFiscalYear} />
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Bankkonto</label>
@@ -843,96 +817,36 @@ export default function BankImport() {
 
       {/* Transactions list */}
       <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-wrap gap-2">
-          <div>
-            <h3 className="font-semibold">
-              {statusFilter === "pending" ? "Ausstehende Transaktionen" :
-               statusFilter === "matched" ? "Verbuchte Transaktionen" : "Alle Transaktionen"}
-            </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">{transactions?.length ?? 0} Transaktionen</p>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            {/* Status filter */}
-            <Select value={statusFilter} onValueChange={v => { setStatusFilter(v as any); setSelectedTxIds(new Set()); }}>
-              <SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="pending">Ausstehend</SelectItem>
-                <SelectItem value="matched">Verbucht</SelectItem>
-                <SelectItem value="all">Alle</SelectItem>
-              </SelectContent>
-            </Select>
-            {/* Bank account filter */}
-            <Select value={String(pendingFilter ?? "all")} onValueChange={v => setPendingFilter(v === "all" ? undefined : parseInt(v))}>
-              <SelectTrigger className="w-40 h-8 text-xs"><SelectValue placeholder="Alle Konten" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle Konten</SelectItem>
-                {bankAccounts?.map(ba => (
-                  <SelectItem key={ba.bankAccount.id} value={String(ba.bankAccount.id)}>{ba.bankAccount.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {/* Pending-only actions */}
-            {isPending && pendingIds.length > 0 && (
-              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
-                disabled={categorizeMutation.isPending}
-                onClick={() => withSnapshot("KI kategorisieren", () => categorizeMutation.mutate({ transactionIds: pendingIds }))}>
-                <Zap className="h-3 w-3" />
-                {categorizeMutation.isPending ? "KI läuft..." : `KI kategorisieren (${pendingIds.length})`}
-              </Button>
-            )}
-            {isPending && allPendingIds.length > 0 && (
-              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
-                disabled={bookingTextMutation.isPending}
-                onClick={() => withSnapshot("Buchungstexte generieren", () => bookingTextMutation.mutate({ transactionIds: allPendingIds }))}>
-                <FileText className="h-3 w-3" />
-                {bookingTextMutation.isPending ? "Texte werden generiert..." : "Buchungstexte generieren"}
-              </Button>
-            )}
-            {isPending && allPendingIds.length > 0 && (
-              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
-                disabled={refreshMutation.isPending}
-                onClick={() => withSnapshot("Refresh (gelernt)", () => refreshMutation.mutate({ bankAccountId: pendingFilter }))}>
-                <RefreshCw className={`h-3 w-3 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
-                {refreshMutation.isPending ? "Aktualisiere..." : "Refresh (gelernt)"}
-              </Button>
-            )}
-            {isPending && (
-              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                disabled={detectTransfersMutation.isPending}
-                onClick={() => withSnapshot("Kontoüberträge erkennen", () => detectTransfersMutation.mutate())}>
-                <RefreshCw className={`h-3 w-3 ${detectTransfersMutation.isPending ? "animate-spin" : ""}`} />
-                {detectTransfersMutation.isPending ? "Erkenne..." : "Kontoüberträge erkennen"}
-              </Button>
-            )}
-            {/* Link to Kreditoren page */}
-            <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-purple-300 text-purple-700 hover:bg-purple-50"
-              onClick={() => window.location.href = "/zahlungen/kreditoren"}>
-              <Banknote className="h-3 w-3" />
-              Kreditorenzahlungen
-            </Button>
-            {/* Rückgängig-Button */}
-            {currentSnapshot && (
-              <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-red-300 text-red-700 hover:bg-red-50"
-                disabled={restoreSnapshotMutation.isPending}
-                onClick={() => {
-                  if (confirm(`"${currentSnapshot.actionName}" rückgängig machen? (${currentSnapshot.transactionCount} Transaktionen werden wiederhergestellt)`)) {
-                    restoreSnapshotMutation.mutate();
-                  }
-                }}>
-                <Undo2 className="h-3 w-3" />
-                {restoreSnapshotMutation.isPending ? "Stelle wieder her..." : `Rückgängig: ${currentSnapshot.actionName}`}
-              </Button>
-            )}
-            {isPending && selectedTxIds.size > 0 && readyToApprove.length > 0 && (
-              <Button size="sm" className="gap-1.5 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                disabled={bulkApproveMutation.isPending}
-                onClick={handleBulkApprove}>
-                <Check className="h-3 w-3" />
-                {bulkApproveMutation.isPending ? "Verbuche..." : `${readyToApprove.length} verbuchen`}
-              </Button>
-            )}
-          </div>
-        </div>
+        <BankImportFilterBar
+          statusFilter={statusFilter}
+          transactionCount={transactions?.length ?? 0}
+          bankAccountId={pendingFilter}
+          bankAccounts={bankAccounts}
+          pendingTransactionIds={pendingIds}
+          allPendingTransactionIds={allPendingIds}
+          selectedCount={selectedTxIds.size}
+          readyToApproveCount={readyToApprove.length}
+          snapshot={currentSnapshot}
+          isCategorizing={categorizeMutation.isPending}
+          isGeneratingBookingTexts={bookingTextMutation.isPending}
+          isRefreshingSuggestions={refreshMutation.isPending}
+          isDetectingTransfers={detectTransfersMutation.isPending}
+          isRestoringSnapshot={restoreSnapshotMutation.isPending}
+          isApprovingBulk={bulkApproveMutation.isPending}
+          onStatusChange={(status) => { setStatusFilter(status); setSelectedTxIds(new Set()); }}
+          onBankAccountChange={setPendingFilter}
+          onCategorize={() => withSnapshot("KI kategorisieren", () => categorizeMutation.mutate({ transactionIds: pendingIds }))}
+          onGenerateBookingTexts={() => withSnapshot("Buchungstexte generieren", () => bookingTextMutation.mutate({ transactionIds: allPendingIds }))}
+          onRefreshSuggestions={() => withSnapshot("Refresh (gelernt)", () => refreshMutation.mutate({ bankAccountId: pendingFilter }))}
+          onDetectTransfers={() => withSnapshot("Kontoüberträge erkennen", () => detectTransfersMutation.mutate())}
+          onRestoreSnapshot={() => {
+            if (currentSnapshot && confirm(`"${currentSnapshot.actionName}" rückgängig machen? (${currentSnapshot.transactionCount} Transaktionen werden wiederhergestellt)`)) {
+              restoreSnapshotMutation.mutate();
+            }
+          }}
+          onBulkApprove={handleBulkApprove}
+          onOpenCreditorPayments={() => { window.location.href = "/zahlungen/kreditoren"; }}
+        />
 
         <div className="overflow-x-auto">
           <table className="accounting-table">
@@ -1008,11 +922,6 @@ export default function BankImport() {
                     </td>
                     <td className="text-sm max-w-xs">
                       <div className="truncate font-medium" title={tx.description ?? ""}>{tx.description ?? "–"}</div>
-                      {(tx as any).matchedInvoiceNumber && (
-                        <div className="text-xs text-green-700 font-medium mt-0.5" title="Zahlungseingang automatisch einer QR-Rechnung zugeordnet">
-                          QR-Match: {(tx as any).matchedInvoiceNumber}
-                        </div>
-                      )}
                     </td>
                     <td className="text-sm max-w-40">
                       <div className="truncate" title={tx.counterparty ?? ""}>
@@ -1038,12 +947,6 @@ export default function BankImport() {
                     </td>
                     <td className={`text-sm text-right font-mono tabular-nums whitespace-nowrap ${amount >= 0 ? "text-green-700" : "text-red-600"}`}>
                       {amount >= 0 ? "" : "-"}{formatCHF(Math.abs(amount))}
-                      {tx.currency && tx.currency !== "CHF" && (
-                        <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-                          title="Fremdwährung: Buchung derzeit nur in CHF möglich (keine Kursumrechnung)">
-                          {tx.currency}
-                        </span>
-                      )}
                     </td>
                     <td className="text-right text-xs">
                       {txIsPending && (
@@ -1136,14 +1039,10 @@ export default function BankImport() {
                                 <Check className="h-3 w-3 mr-1" />Übertrag verbuchen
                               </Button>
                             )}
-                            {!isTransfer && debitAcc && creditAcc && (
+                            {!isTransfer && (
                               <Button size="sm" variant="default" className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700"
-                                onClick={() => approveMutation.mutate({
-                                  transactionId: tx.id,
-                                  debitAccountId: debitAcc.id,
-                                  creditAccountId: creditAcc.id,
-                                  description: tx.description ?? undefined,
-                                })}>
+                                title={debitAcc && creditAcc ? "Verbuchen" : "Konten prüfen und verbuchen"}
+                                onClick={() => openEditDialog(tx)}>
                                 <Check className="h-3 w-3 mr-1" />Verbuchen
                               </Button>
                             )}
@@ -1176,12 +1075,7 @@ export default function BankImport() {
       </div>
 
       {/* ─── Edit Transaction Dialog ─── */}
-      <Dialog open={!!editTx} onOpenChange={open => { if (!open) { setEditTx(null); setEditMode("single"); } }}>
-        <DialogContent className={editMode === "collective" ? "w-[min(98vw,60rem)] max-w-none max-h-[90vh] overflow-y-auto" : "w-[min(95vw,38rem)] max-w-none"}>
-          <DialogHeader>
-            <DialogTitle>Transaktion bearbeiten</DialogTitle>
-            <DialogDescription>Alle Felder der Transaktion anpassen</DialogDescription>
-          </DialogHeader>
+      <BankImportTransactionEditDialog open={!!editTx} editMode={editMode} onClose={() => { setEditTx(null); setEditMode("single"); }}>
           {editTx && (() => {
             const txAmount = Math.abs(parseFloat(editTx.amount));
             const isIncoming = parseFloat(editTx.amount) > 0;
@@ -1191,7 +1085,7 @@ export default function BankImport() {
             const collectiveBalanced = collectiveDiff < 0.005;
             // Find the bank account for this transaction
             const txBankAccount = bankAccounts?.find(ba => ba.bankAccount.id === editTx.bankAccountId);
-            const bankAccountLabel = txBankAccount ? `${txBankAccount.account?.number ?? "?"} ${txBankAccount.account?.name ?? txBankAccount.bankAccount.name}` : "Bankkonto";
+            const bankAccountLabel = txBankAccount ? `${txBankAccount.account?.number ?? ''} ${txBankAccount.account?.name ?? txBankAccount.bankAccount.name}`.trim() : "Bankkonto";
             const bankAccountId = txBankAccount?.account?.id ?? txBankAccount?.bankAccount.accountId;
 
             const handleCollectiveApprove = () => {
@@ -1220,302 +1114,41 @@ export default function BankImport() {
 
             return (
             <div className="space-y-4">
-              {/* Mode toggle */}
-              <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg">
-                <Button
-                  size="sm"
-                  variant={editMode === "single" ? "default" : "outline"}
-                  className="h-7 text-xs gap-1"
-                  onClick={() => setEditMode("single")}
-                >
-                  Einzelbuchung
-                </Button>
-                <Button
-                  size="sm"
-                  variant={editMode === "collective" ? "default" : "outline"}
-                  className="h-7 text-xs gap-1"
-                  onClick={() => setEditMode("collective")}
-                >
-                  <Split className="h-3 w-3" /> Sammelbuchung
-                </Button>
-                {editMode === "collective" && (
-                  <span className={`ml-auto text-xs font-mono font-bold ${collectiveBalanced ? "text-green-600" : "text-red-600"}`}>
-                    Diff. {formatCHF(collectiveDiff)}
-                  </span>
-                )}
-              </div>
+              <BankImportBookingModeToggle mode={editMode} difference={collectiveDiff} balanced={collectiveBalanced} onModeChange={setEditMode} />
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-xs">Datum</Label>
-                  <Input value={editTx.transactionDate ? new Date(editTx.transactionDate).toLocaleDateString("de-CH") : "–"} disabled className="bg-muted" />
-                </div>
-                <div>
-                  <Label className="text-xs">Betrag CHF</Label>
-                  <Input value={formatCHF(editTx.amount)} disabled className="bg-muted" />
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs">Buchungstext</Label>
-                <Input value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} placeholder="z.B. Sunrise 1. Quartal 2026" />
-              </div>
+              <BankImportTransactionBasics transactionDate={editTx.transactionDate} amount={editTx.amount} description={editForm.description} onDescriptionChange={(description) => setEditForm((current) => ({ ...current, description }))} />
 
               {editMode === "single" ? (
                 /* ─── Single booking mode ─── */
-                <>
-                  <div>
-                    <Label className="text-xs">Lieferant (Kreditor) / Kunde (Debitor)</Label>
-                    <Input value={editForm.counterparty} onChange={e => setEditForm(f => ({ ...f, counterparty: e.target.value }))} />
-                  </div>
-                  <div>
-                    <Label className="text-xs">IBAN Gegenpartei</Label>
-                    <Input value={editForm.counterpartyIban} onChange={e => setEditForm(f => ({ ...f, counterpartyIban: e.target.value }))} />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Referenz</Label>
-                    <Input value={editForm.reference} onChange={e => setEditForm(f => ({ ...f, reference: e.target.value }))} />
-                    {editForm.reference.trim() && (() => {
-                      const check = validateManualReference(editForm.reference);
-                      if (!check.valid) {
-                        return <p className="text-xs text-red-600 mt-1">✗ {check.reason}</p>;
-                      }
-                      if (check.canonical) {
-                        return (
-                          <p className="text-xs text-green-600 mt-1">
-                            ✓ Gültige {check.canonical.startsWith("RF") ? "SCOR" : "QR"}-Referenz – automatischer Zahlungsabgleich möglich
-                          </p>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label className="text-xs">Soll-Konto</Label>
-                      <Select value={editForm.debitAccountId} onValueChange={v => setEditForm(f => ({ ...f, debitAccountId: v }))}>
-                        <SelectTrigger><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
-                        <SelectContent>
-                          {accounts?.map(a => (
-                            <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Haben-Konto</Label>
-                      <Select value={editForm.creditAccountId} onValueChange={v => setEditForm(f => ({ ...f, creditAccountId: v }))}>
-                        <SelectTrigger><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
-                        <SelectContent>
-                          {accounts?.map(a => (
-                            <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </>
+                <BankImportSingleBookingFields form={editForm} accounts={accounts} onChange={(field, value) => setEditForm((current) => ({ ...current, [field]: value }))} />
               ) : (
                 /* ─── Collective booking mode ─── */
                 <>
-                  {/* Bank account line (fixed) */}
-                  <div className={`rounded-lg border-2 p-3 ${isIncoming ? "border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-700" : "border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700"}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-xs font-bold uppercase ${isIncoming ? "text-blue-700 dark:text-blue-400" : "text-amber-700 dark:text-amber-400"}`}>
-                        {isIncoming ? "SOLL (Belastung)" : "HABEN (Belastung)"}
-                      </span>
-                      <span className="text-xs text-muted-foreground">– Bankkonto</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium flex-1">{bankAccountLabel}</span>
-                      <span className="text-sm font-mono font-bold">CHF {formatCHF(txAmount)}</span>
-                    </div>
-                  </div>
+                  <BankImportCollectiveBankAccountLine isIncoming={isIncoming} bankAccountLabel={bankAccountLabel} amount={txAmount} />
 
                   {/* Counter lines */}
-                  <div className={`rounded-lg border-2 p-3 ${isIncoming ? "border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700" : "border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-700"}`}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-xs font-bold uppercase ${isIncoming ? "text-amber-700 dark:text-amber-400" : "text-blue-700 dark:text-blue-400"}`}>
-                        {isIncoming ? "HABEN (Ertrag)" : "SOLL (Aufwand)"}
-                      </span>
-                      <span className="text-xs text-muted-foreground">– Gegenpositionen</span>
-                    </div>
-                    <div className="space-y-2">
-                      {collectiveLines.map((line, idx) => (
-                        <div key={idx} className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground w-5 shrink-0">{idx + 1}.</span>
-                          <Select value={line.accountId} onValueChange={v => {
-                            const next = [...collectiveLines];
-                            next[idx] = { ...next[idx], accountId: v };
-                            setCollectiveLines(next);
-                          }}>
-                            <SelectTrigger className="h-8 text-xs flex-1 min-w-[180px]"><SelectValue placeholder="Konto wählen..." /></SelectTrigger>
-                            <SelectContent>
-                              {accounts?.map(a => (
-                                <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Input
-                            className="h-8 text-xs w-[120px]"
-                            placeholder="Text"
-                            value={line.description}
-                            onChange={e => {
-                              const next = [...collectiveLines];
-                              next[idx] = { ...next[idx], description: e.target.value };
-                              setCollectiveLines(next);
-                            }}
-                          />
-                          <Input
-                            className="h-8 text-xs w-[100px] font-mono text-right"
-                            placeholder="Betrag"
-                            value={line.amount}
-                            onChange={e => {
-                              const next = [...collectiveLines];
-                              next[idx] = { ...next[idx], amount: e.target.value };
-                              setCollectiveLines(next);
-                            }}
-                          />
-                          <Select value={line.vatRate} onValueChange={v => {
-                            const next = [...collectiveLines];
-                            next[idx] = { ...next[idx], vatRate: v === "none" ? "" : v };
-                            setCollectiveLines(next);
-                          }}>
-                            <SelectTrigger className="h-8 text-xs w-[80px]"><SelectValue placeholder="MWST" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">–</SelectItem>
-                              <SelectItem value="8.1">8.1%</SelectItem>
-                              <SelectItem value="2.6">2.6%</SelectItem>
-                              <SelectItem value="3.8">3.8%</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-8 w-8 p-0 text-muted-foreground hover:text-red-600 shrink-0"
-                            disabled={collectiveLines.length <= 1}
-                            onClick={() => setCollectiveLines(ls => ls.filter((_, i) => i !== idx))}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="mt-2 h-7 text-xs gap-1"
-                      onClick={() => setCollectiveLines(ls => [...ls, { accountId: "", amount: "", description: "", vatRate: "" }])}
-                    >
-                      <Plus className="h-3 w-3" /> Zeile hinzufügen
-                    </Button>
-                  </div>
+                  <BankImportCollectiveBookingLines
+                    lines={collectiveLines}
+                    accounts={accounts}
+                    isIncoming={isIncoming}
+                    onChange={(index, patch) => setCollectiveLines((previous) => previous.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line))}
+                    onAdd={() => setCollectiveLines((previous) => [...previous, { accountId: "", amount: "", description: "", vatRate: "" }])}
+                    onRemove={(index) => setCollectiveLines((previous) => previous.filter((_, lineIndex) => lineIndex !== index))}
+                  />
 
-                  {/* Preview table */}
-                  {collectiveLines.some(l => l.accountId && l.amount) && (
-                    <div className="border rounded-lg overflow-hidden">
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted/50">
-                          <tr>
-                            <th className="text-left p-2 font-medium">Konto</th>
-                            <th className="text-left p-2 font-medium">Text</th>
-                            <th className="text-right p-2 font-medium">Soll</th>
-                            <th className="text-right p-2 font-medium">Haben</th>
-                            <th className="text-right p-2 font-medium">Steuer</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-t">
-                            <td className="p-2 font-medium">{bankAccountLabel}</td>
-                            <td className="p-2 text-muted-foreground">{editForm.description || "–"}</td>
-                            <td className="p-2 text-right font-mono">{isIncoming ? formatCHF(txAmount) : ""}</td>
-                            <td className="p-2 text-right font-mono">{!isIncoming ? formatCHF(txAmount) : ""}</td>
-                            <td className="p-2 text-right"></td>
-                          </tr>
-                          {collectiveLines.filter(l => l.accountId && l.amount).map((l, i) => {
-                            const acc = accounts?.find(a => a.id === parseInt(l.accountId));
-                            const vatAmt = l.vatRate ? (parseFloat(l.amount) * parseFloat(l.vatRate) / 100) : 0;
-                            return (
-                              <tr key={i} className="border-t">
-                                <td className="p-2">{acc ? `${acc.number} ${acc.name}` : l.accountId}</td>
-                                <td className="p-2 text-muted-foreground">{l.description || "–"}</td>
-                                <td className="p-2 text-right font-mono">{!isIncoming ? formatCHF(parseFloat(l.amount)) : ""}</td>
-                                <td className="p-2 text-right font-mono">{isIncoming ? formatCHF(parseFloat(l.amount)) : ""}</td>
-                                <td className="p-2 text-right font-mono text-muted-foreground">{vatAmt > 0 ? formatCHF(vatAmt) : ""}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  <BankImportCollectiveBookingPreview lines={collectiveLines} accounts={accounts} bankAccountLabel={bankAccountLabel} description={editForm.description} isIncoming={isIncoming} txAmount={txAmount} />
                 </>
               )}
 
-              {editTx.aiReasoning && editMode === "single" && (
-                <div className="bg-muted/50 rounded-lg p-3">
-                  <Label className="text-xs text-muted-foreground">KI-Begründung</Label>
-                  <p className="text-sm mt-1">{editTx.aiReasoning}</p>
-                </div>
-              )}
-              {/* Matched document info */}
-              {(() => {
-                const matchedDocId = (editTx as any).matchedDocumentId;
-                if (!matchedDocId) return null;
-                const matchedDoc = allDocs?.find((d: any) => d.id === matchedDocId);
-                if (!matchedDoc) return null;
-                let docMeta: any = null;
-                try { if (matchedDoc.aiMetadata) docMeta = JSON.parse(matchedDoc.aiMetadata); } catch {}
-                return (
-                  <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-3">
-                    <div className="flex items-center gap-2 mb-1">
-                      <FileText className="h-4 w-4 text-green-600" />
-                      <Label className="text-xs font-semibold text-green-700 dark:text-green-400">Gematchte Rechnung</Label>
-                      <span className="text-xs text-green-600 ml-auto">{(editTx as any).matchScore ?? ''}% Match</span>
-                    </div>
-                    <p className="text-sm font-medium truncate">{matchedDoc.filename}</p>
-                    {docMeta && (
-                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-                        {docMeta.counterparty && <span>Gegenpartei: <span className="text-foreground font-medium">{docMeta.counterparty}</span></span>}
-                        {docMeta.totalAmount != null && <span>Betrag: <span className="text-foreground font-medium">CHF {formatCHF(Number(docMeta.totalAmount))}</span></span>}
-                        {docMeta.documentDate && <span>Datum: <span className="text-foreground font-medium">{docMeta.documentDate}</span></span>}
-                        {docMeta.vatRate != null && <span>MWST: <span className="text-foreground font-medium">{docMeta.vatRate}%</span></span>}
-                        {docMeta.description && <span className="truncate max-w-xs">{docMeta.description}</span>}
-                      </div>
-                    )}
-                    <div className="mt-2 flex gap-2 flex-wrap">
-                      {matchedDoc.s3Url && (
-                        <a href={matchedDoc.s3Url} target="_blank" rel="noopener noreferrer">
-                          <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-green-700 border-green-300">
-                            <Eye className="h-3 w-3" /> Rechnung öffnen
-                          </Button>
-                        </a>
-                      )}
-                      {/* If this is a CC transaction, offer to launch the booking proposal */}
-                      {editTx && isCreditCardTx(editTx) && (
-                        <Button size="sm" className="h-7 text-xs gap-1 bg-orange-600 hover:bg-orange-700 text-white"
-                          onClick={() => {
-                            const txAmt = Math.abs(parseFloat(editTx.amount)).toFixed(2);
-                            const stmtDate = editTx.transactionDate
-                              ? new Date(editTx.transactionDate).toISOString().split("T")[0]
-                              : new Date().toISOString().split("T")[0];
-                            setCcDialog({
-                              txId: editTx.id,
-                              counterparty: editTx.counterparty ?? "Kreditkarte",
-                              txAmount: txAmt,
-                              statementDate: stmtDate,
-                              matchedDocUrl: matchedDoc.s3Url ?? undefined,
-                            });
-                            setCcItems([]);
-                            setCcPaidAmount(txAmt);
-                            setEditTx(null);
-                          }}>
-                          <CreditCard className="h-3 w-3" /> Verbuchungsvorschlag aufrufen
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
+              {editMode === "single" && <BankImportAiReasoning reasoning={editTx.aiReasoning} />}
+              <BankImportMatchedDocumentInfo transaction={editTx} documents={allDocs} isCreditCardTransaction={isCreditCardTx} onLaunchCreditCard={(documentUrl) => {
+                const transactionAmount = Math.abs(parseFloat(editTx.amount)).toFixed(2);
+                const statementDate = editTx.transactionDate ? new Date(editTx.transactionDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0];
+                setCcDialog({ txId: editTx.id, counterparty: editTx.counterparty ?? "Kreditkarte", txAmount: transactionAmount, statementDate, matchedDocUrl: documentUrl });
+                setCcItems([]);
+                setCcPaidAmount(transactionAmount);
+                setEditTx(null);
+              }} />
               <div>
                 <Label className="text-xs">Belege</Label>
                 <div className="mt-1">
@@ -1526,12 +1159,50 @@ export default function BankImport() {
             </div>
             );
           })()}
-          <DialogFooter>
+          <BankImportTransactionActionBar>
             <Button variant="outline" onClick={() => { setEditTx(null); setEditMode("single"); }}>Abbrechen</Button>
             {editMode === "single" ? (
-              <Button onClick={saveEdit} disabled={updateTxMutation.isPending}>
-                {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
-              </Button>
+              <>
+                <Button variant="outline" onClick={saveEdit} disabled={updateTxMutation.isPending}>
+                  {updateTxMutation.isPending ? "Speichern..." : "Speichern"}
+                </Button>
+                {editTx && (() => {
+                  const debitId = editForm.debitAccountId ? parseInt(editForm.debitAccountId) : null;
+                  const creditId = editForm.creditAccountId ? parseInt(editForm.creditAccountId) : null;
+                  const canApprove = !!(debitId && creditId);
+                  return (
+                    <Button
+                      className="bg-green-600 hover:bg-green-700"
+                      disabled={!canApprove || approveMutation.isPending || updateTxMutation.isPending}
+                      title={canApprove ? "Speichern und verbuchen" : "Soll- und Haben-Konto müssen ausgefüllt sein"}
+                      onClick={() => {
+                        if (!editTx || !debitId || !creditId) return;
+                        updateTxMutation.mutate({
+                          transactionId: editTx.id,
+                          description: editForm.description || undefined,
+                          counterparty: editForm.counterparty || undefined,
+                          counterpartyIban: editForm.counterpartyIban || undefined,
+                          reference: editForm.reference || undefined,
+                          suggestedDebitAccountId: debitId,
+                          suggestedCreditAccountId: creditId,
+                        }, {
+                          onSuccess: () => {
+                            approveMutation.mutate({
+                              transactionId: editTx.id,
+                              debitAccountId: debitId,
+                              creditAccountId: creditId,
+                              description: editForm.description || editTx.description || undefined,
+                            });
+                          },
+                        });
+                      }}
+                    >
+                      <Check className="h-3.5 w-3.5 mr-1.5" />
+                      {approveMutation.isPending ? "Verbuchen..." : "Verbuchen"}
+                    </Button>
+                  );
+                })()}
+              </>
             ) : (
               <Button
                 onClick={() => {
@@ -1575,156 +1246,42 @@ export default function BankImport() {
                 {collectiveApproveMutation.isPending ? "Verbuchen..." : "Sammelbuchung verbuchen"}
               </Button>
             )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </BankImportTransactionActionBar>
+      </BankImportTransactionEditDialog>
 
-      {/* ─── Credit Card Statement Dialog ─── */}
-      <Dialog open={!!ccDialog} onOpenChange={open => { if (!open) { setCcDialog(null); setCcItems([]); setCcPaidAmount(""); } }}>
-        <DialogContent className="w-[min(98vw,72rem)] max-w-none max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{ccDialog?.matchedDocUrl ? "Verbuchungsvorschlag – Kreditkartenabrechnung" : "Kreditkartenabrechnung verbuchen"}</DialogTitle>
-            <DialogDescription>
-              {ccDialog?.matchedDocUrl
-                ? "Die verknüpfte Kreditkartenabrechnung wird automatisch analysiert. Zwei Journal-Einträge werden erstellt: (1) 1082 Durchlaufkonto / 1032 LUKB mw – effektiv bezahlter Betrag; (2) Aufwandkonten / 1082 Durchlaufkonto – Abrechnungstotal (Sammelbuchung)."
-                : "PDF hochladen → KI erkennt Positionen → zwei Journal-Einträge werden erstellt: (1) 1082 Durchlaufkonto / 1032 LUKB mw – effektiv bezahlter Betrag; (2) Aufwandkonten / 1082 Durchlaufkonto – Abrechnungstotal (Sammelbuchung)."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <input ref={ccPdfInputRef} type="file" accept=".pdf" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleCcPdfUpload(f); }} />
-
-          <div className="space-y-4">
-            {/* Betrag-Info und Feld für effektiv bezahlten Betrag */}
-            <div className="grid grid-cols-2 gap-4 p-3 bg-muted/40 rounded-lg">
-              <div>
-                <Label className="text-xs text-muted-foreground">Bankbelastung (aus Kontoauszug)</Label>
-                <div className="font-mono font-semibold text-sm mt-1">
-                  CHF {ccDialog ? formatCHF(ccDialog.txAmount) : "–"}
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs">Effektiv bezahlter Betrag</Label>
-                <div className="flex items-center gap-1 mt-1">
-                  <span className="text-xs text-muted-foreground">CHF</span>
-                  <Input
-                    className="h-8 text-sm font-mono"
-                    value={ccPaidAmount}
-                    onChange={e => setCcPaidAmount(e.target.value)}
-                    placeholder={ccDialog?.txAmount ?? "0.00"}
-                  />
-                </div>
-                {ccPaidAmount && ccDialog && parseFloat(ccPaidAmount) !== parseFloat(ccDialog.txAmount) && (
-                  <p className="text-xs text-amber-600 mt-0.5">
-                    Differenz: CHF {formatCHF(Math.abs(parseFloat(ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0).toFixed(2)) - parseFloat(ccPaidAmount)))} (Vormonatsguthaben)
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {ccDialog?.matchedDocUrl && ccItems.length === 0 && (
-              <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
-                <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />
-                <span className="text-sm text-blue-700 dark:text-blue-400">Verknüpfte Abrechnung wird automatisch analysiert...</span>
-              </div>
-            )}
-            {!ccDialog?.matchedDocUrl && (
-              <Button variant="outline" className="w-full gap-2" disabled={ccParsing}
-                onClick={() => ccPdfInputRef.current?.click()}>
-                <Upload className="h-4 w-4" />
-                {ccParsing ? "Abrechnung wird analysiert..." : "Kreditkartenabrechnung (PDF) hochladen"}
-              </Button>
-            )}
-
-            {ccItems.length > 0 && (
-              <div>
-                <h4 className="font-medium text-sm mb-2">Erkannte Positionen ({ccItems.length})</h4>
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
-                      <tr>
-                        <th className="text-left px-3 py-2">Datum</th>
-                        <th className="text-left px-3 py-2">Beschreibung</th>
-                        <th className="text-right px-3 py-2">Betrag</th>
-                        <th className="text-left px-3 py-2">Aufwandkonto</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ccItems.map((item, idx) => (
-                        <tr key={idx} className="border-t">
-                          <td className="px-3 py-2 whitespace-nowrap">{item.date}</td>
-                          <td className="px-3 py-2">{item.description}</td>
-                          <td className="px-3 py-2 text-right font-mono">{formatCHF(item.amount)}</td>
-                          <td className="px-3 py-2">
-                            <Select value={item.debitAccountId} onValueChange={v => {
-                              setCcItems(prev => prev.map((it, i) => i === idx ? { ...it, debitAccountId: v } : it));
-                            }}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Konto..." /></SelectTrigger>
-                              <SelectContent>
-                                {accounts?.filter(a => a.accountType === "expense" || a.number.startsWith("1")).map(a => (
-                                  <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-muted/30">
-                      <tr>
-                        <td colSpan={2} className="px-3 py-2 font-medium">Abrechnungstotal</td>
-                        <td className="px-3 py-2 text-right font-mono font-semibold">
-                          CHF {formatCHF(ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0))}
-                        </td>
-                        <td></td>
-                      </tr>
-                      {ccPaidAmount && parseFloat(ccPaidAmount) !== ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0) && (
-                        <tr className="text-amber-700 bg-amber-50 dark:bg-amber-950/20">
-                          <td colSpan={2} className="px-3 py-1.5 text-xs">Vormonatsguthaben (Differenz)</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-xs">
-                            CHF {formatCHF(Math.abs(ccItems.reduce((s, i) => s + parseFloat(i.amount || "0"), 0) - parseFloat(ccPaidAmount || "0")))}
-                          </td>
-                          <td></td>
-                        </tr>
-                      )}
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setCcDialog(null); setCcItems([]); setCcPaidAmount(""); }}>Abbrechen</Button>
-            {ccItems.length > 0 && (
-              <Button className="bg-green-600 hover:bg-green-700"
-                disabled={ccItems.some(i => !i.debitAccountId) || approveCcFromBankImportMutation.isPending}
-                onClick={() => {
-                  if (!ccDialog) return;
-                  approveCcFromBankImportMutation.mutate({
-                    bankTransactionId: ccDialog.txId,
-                    statementId: ccDialog.ccStatementId,
-                    statementDate: ccDialog.statementDate,
-                    counterparty: ccDialog.counterparty,
-                    paidAmount: ccPaidAmount || ccDialog.txAmount,
-                    items: ccItems.map(i => ({
-                      date: i.date,
-                      description: i.description,
-                      amount: i.amount,
-                      debitAccountId: parseInt(i.debitAccountId),
-                    })),
-                  });
-                }}>
-                <Check className="h-4 w-4 mr-1" />
-                {approveCcFromBankImportMutation.isPending ? "Wird verbucht..." : "KK-Abrechnung verbuchen (2 Buchungen)"}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BankImportCreditCardDialog
+        dialog={ccDialog}
+        items={ccItems}
+        paidAmount={ccPaidAmount}
+        parsing={ccParsing}
+        accounts={accounts}
+        isSubmitting={approveCcFromBankImportMutation.isPending}
+        onClose={() => { setCcDialog(null); setCcItems([]); setCcPaidAmount(""); }}
+        onPdfUpload={handleCcPdfUpload}
+        onPaidAmountChange={setCcPaidAmount}
+        onItemAccountChange={(index, debitAccountId) => {
+          setCcItems((previous) => previous.map((item, itemIndex) => itemIndex === index ? { ...item, debitAccountId } : item));
+        }}
+        onSubmit={() => {
+          if (!ccDialog) return;
+          approveCcFromBankImportMutation.mutate({
+            bankTransactionId: ccDialog.txId,
+            statementId: ccDialog.ccStatementId,
+            statementDate: ccDialog.statementDate,
+            counterparty: ccDialog.counterparty,
+            paidAmount: ccPaidAmount || ccDialog.txAmount,
+            items: ccItems.map((item) => ({
+              date: item.date,
+              description: item.description,
+              amount: item.amount,
+              debitAccountId: parseInt(item.debitAccountId),
+            })),
+          });
+        }}
+      />
 
       {/* ─── Invoice Preview Dialog ─── */}
-      <Dialog open={!!previewDoc} onOpenChange={open => { if (!open) setPreviewDoc(null); }}>
+      {false && <Dialog open={!!previewDoc} onOpenChange={open => { if (!open) setPreviewDoc(null); }}>
         <DialogContent className="w-[min(95vw,56rem)] max-w-none max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1809,10 +1366,11 @@ export default function BankImport() {
               <Button variant="outline" onClick={() => setPreviewDoc(null)}>Schliessen</Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog>}
+      <BankImportDocumentPreviewDialog document={previewDoc} onClose={() => setPreviewDoc(null)} />
 
       {/* Delete Import Confirmation Dialog */}
-      <Dialog open={!!deleteImportConfirm} onOpenChange={(open) => { if (!open) setDeleteImportConfirm(null); }}>
+      {false && <Dialog open={!!deleteImportConfirm} onOpenChange={(open) => { if (!open) setDeleteImportConfirm(null); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-destructive">Import rükgängig machen?</DialogTitle>
@@ -1837,7 +1395,8 @@ export default function BankImport() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog>}
+      <BankImportDeleteConfirmDialog item={deleteImportConfirm} pending={deleteImportMutation.isPending} onClose={() => setDeleteImportConfirm(null)} onConfirm={(batchId) => deleteImportMutation.mutate({ importBatchId: batchId })} />
 
     </div>
   );

@@ -10,9 +10,7 @@ import { orgProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import { auditLog, employees, payrollEntries, users } from "../drizzle/schema";
 import { eq, desc, and, gte, lte, like, sql } from "drizzle-orm";
-import { createLogger } from "./_core/logger";
-
-const logger = createLogger("dsgRouter");
+import { logger } from "./_core/logger";
 
 // ─── Audit Log Helper ─────────────────────────────────────────────────────────
 
@@ -41,7 +39,7 @@ export async function logAudit(params: {
     });
   } catch (e) {
     // Audit logging should never break the main operation
-    logger.error("[AuditLog] Failed to write:", e);
+    logger.error({ err: e, organizationId: params.organizationId, action: params.action, entityType: params.entityType }, "DSG audit log write failed");
   }
 }
 

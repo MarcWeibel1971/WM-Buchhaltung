@@ -1,0 +1,3 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+describe("CompanyVatSettingsCard",()=>{it("separates VAT and fiscal-year fields",()=>{const component=readFileSync(new URL("../client/src/components/CompanyVatSettingsCard.tsx",import.meta.url),"utf8");const settings=readFileSync(new URL("../client/src/pages/Settings.tsx",import.meta.url),"utf8");expect(component).toContain("Bewilligter Pauschalsteuersatz");expect(component).toContain("Bewilligte Tätigkeit");expect(component).toContain("Geschäftsjahr Beginn");expect(settings).toContain('import { CompanyVatSettingsCard } from "@/components/CompanyVatSettingsCard"');expect(settings).toContain("<CompanyVatSettingsCard editing={editing} value={val} onValueChange={set} />");});});

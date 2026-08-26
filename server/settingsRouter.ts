@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { orgProcedure, router } from "./_core/trpc";
-import { getDb } from "./db";
+import { assertFiscalYearOpen, getDb } from "./db";
 import {
   companySettings, insuranceSettings, employees, bankAccounts, bankTransactions, bookingRules, accounts,
   openingBalances, journalEntries, journalLines, fiscalYears, templates
@@ -27,6 +27,8 @@ const companySettingsInput = z.object({
   vatNumber: z.string().max(30).optional(),
   vatMethod: z.enum(["effective", "saldo", "pauschal"]).optional(),
   vatSaldoRate: z.string().max(10).optional(),
+  vatPauschalRate: z.string().max(10).optional(),
+  vatPauschalActivity: z.string().max(100).optional(),
   vatPeriod: z.enum(["quarterly", "semi-annual"]).optional(),
   fiscalYearStartMonth: z.number().int().min(1).max(12).optional(),
   phone: z.string().max(30).optional(),
@@ -118,6 +120,8 @@ export const settingsRouter = router({
         vatNumber: null,
         vatMethod: "effective" as const,
         vatSaldoRate: "0",
+        vatPauschalRate: null,
+        vatPauschalActivity: null,
         vatPeriod: "quarterly" as const,
         fiscalYearStartMonth: 1,
         phone: null,
@@ -154,6 +158,8 @@ export const settingsRouter = router({
           vatNumber: input.vatNumber,
           vatMethod: input.vatMethod,
           vatSaldoRate: input.vatSaldoRate,
+          vatPauschalRate: input.vatPauschalRate,
+          vatPauschalActivity: input.vatPauschalActivity,
           vatPeriod: input.vatPeriod,
           fiscalYearStartMonth: input.fiscalYearStartMonth,
           phone: input.phone,
@@ -176,6 +182,8 @@ export const settingsRouter = router({
             vatNumber: input.vatNumber,
             vatMethod: input.vatMethod,
             vatSaldoRate: input.vatSaldoRate,
+            vatPauschalRate: input.vatPauschalRate,
+            vatPauschalActivity: input.vatPauschalActivity,
             vatPeriod: input.vatPeriod,
             fiscalYearStartMonth: input.fiscalYearStartMonth,
             phone: input.phone,
@@ -654,6 +662,7 @@ export const settingsRouter = router({
       const nonZeroBalances = input.balances.filter(b => b.balance !== 0);
       if (nonZeroBalances.length > 0) {
         const startDate = `${input.fiscalYear}-01-01`;
+        await assertFiscalYearOpen(ctx.organizationId, startDate);
         const [newEntry] = await db.insert(journalEntries).values({
           organizationId: ctx.organizationId,
           bookingDate: startDate,

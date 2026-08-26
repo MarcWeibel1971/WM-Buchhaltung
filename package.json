@@ -10,7 +10,9 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit generate && drizzle-kit migrate"
+    "test:coverage": "vitest run --coverage",
+    "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "validate:ech0217": "bash scripts/validateEch0217Fixtures.sh"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
@@ -80,7 +82,6 @@
     "nodemailer": "^8.0.5",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
-    "pdf2pic": "^3.2.0",
     "pdfkit": "^0.18.0",
     "pino": "^10.3.1",
     "react": "^19.2.1",
@@ -115,6 +116,7 @@
     "@types/react-dom": "^19.2.1",
     "@types/three": "^0.184.0",
     "@vitejs/plugin-react": "^5.0.4",
+    "@vitest/coverage-v8": "^2.1.9",
     "add": "^2.0.6",
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.4",

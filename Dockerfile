@@ -44,8 +44,8 @@ RUN pnpm prune --prod
 # ─── Stage 2: Runtime ────────────────────────────────────────────────────────
 FROM node:20-alpine AS runtime
 
-# tini als PID 1 für sauberes Signal-Handling (SIGTERM von Docker/K8s).
-# poppler-utils (pdftoppm) für PDF-zu-Bild-Konvertierung (Nemotron KI-Analyse).
+# Runtime-Werkzeuge: tini für Signal-Handling, wget für Healthchecks und
+# poppler-utils für die serverseitige Analyse hochgeladener PDF-Belege.
 RUN apk add --no-cache tini wget poppler-utils
 
 WORKDIR /app

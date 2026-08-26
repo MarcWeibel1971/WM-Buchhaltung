@@ -125,34 +125,3 @@ export function installCrashHandlers() {
     logger.error({ reason }, "unhandledRejection");
   });
 }
-
-/**
- * Console-kompatible Log-Signatur: msg-first mit beliebigen Zusatzargumenten
- * (pino hängt sie zur Laufzeit an) ODER obj-first für strukturierte Logs.
- * pino v10 typisiert msg-Literale strikt (Printf-Parsing), was eine 1:1-
- * Migration von console.* verunmöglicht – dieser Typ lockert das bewusst.
- * Für neuen Code ist die strukturierte Form log.info({ feld }, "msg") vorzuziehen.
- */
-type CompatLogFn = {
-  (msg: string, ...args: unknown[]): void;
-  (obj: object, msg?: string, ...args: unknown[]): void;
-};
-
-export interface ModuleLogger {
-  fatal: CompatLogFn;
-  error: CompatLogFn;
-  warn: CompatLogFn;
-  info: CompatLogFn;
-  debug: CompatLogFn;
-  trace: CompatLogFn;
-}
-
-/**
- * Modul-Logger: Child-Logger mit festem `module`-Feld, damit sich Logzeilen
- * im Aggregator nach Komponente filtern lassen (z. B. module="routers").
- *
- * Verwendung: const logger = createLogger("meinModul");
- */
-export function createLogger(module: string): ModuleLogger {
-  return logger.child({ module }) as unknown as ModuleLogger;
-}

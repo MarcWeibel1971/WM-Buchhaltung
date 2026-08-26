@@ -152,6 +152,14 @@ export default function Kreditoren() {
 
   const selectedInvoices = displayedInvoices.filter(inv => selectedIds.has(inv.id));
   const totalAmount = selectedInvoices.reduce((s, inv) => s + inv.totalAmount, 0);
+  const downloadOpenCreditorsCsv = () => {
+    const rows = ["Kreditor;Rechnungsdatum;Fälligkeitsdatum;Betrag;Währung;Referenz;Beschreibung"];
+    for (const invoice of unpaidInvoices) rows.push([invoice.counterparty, invoice.documentDate, invoice.dueDate, invoice.totalAmount.toFixed(2), invoice.currency, invoice.referenceNumber, invoice.description].map(value => `\"${String(value ?? "").replaceAll("\"", "\"\"")}\"`).join(";"));
+    const blob = new Blob(["\uFEFF" + rows.join("\n") + "\n"], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const link = document.createElement("a");
+    link.href = url; link.download = `Offene_Posten_Kreditoren_${fiscalYear}.csv`; link.click(); URL.revokeObjectURL(url);
+    toast.success(`${unpaidInvoices.length} offene Kreditorenposten exportiert`);
+  };
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -222,79 +230,88 @@ export default function Kreditoren() {
   };
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
+    <div className="p-4 lg:p-6 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Kreditorenzahlungen</h1>
-          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Banknote className="h-6 w-6 text-primary" />
+            Kreditorenzahlungen
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">
             ISO 20022 Zahlungsdatei (pain.001) aus offenen Eingangsrechnungen erstellen
           </p>
         </div>
       </div>
 
       {/* Settings bar */}
-      <div className="klax-card p-4">
-        <div className="flex flex-wrap gap-4 items-end">
-          <div className="space-y-1.5">
-            <Label className="text-[11px]" style={{ color: "var(--ink-3)" }}>Belastungskonto</Label>
-            <Select value={selectedBankAccountId} onValueChange={setSelectedBankAccountId}>
-              <SelectTrigger className="w-72">
-                <SelectValue placeholder="Bankkonto wählen..." />
-              </SelectTrigger>
-              <SelectContent>
-                {(bankAccs ?? []).filter((b: any) => b.bankAccount.iban && b.bankAccount.isActive).map((b: any) => (
-                  <SelectItem key={b.bankAccount.id} value={String(b.bankAccount.id)}>
-                    <div className="flex items-center gap-2">
-                      <Building2 className="h-3.5 w-3.5" style={{ color: "var(--ink-3)" }} />
-                      <span>{b.bankAccount.name}</span>
-                      <span className="text-[11px] mono" style={{ color: "var(--ink-3)" }}>{b.bankAccount.iban}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <Card>
+        <CardContent className="pt-4 pb-4">
+          <div className="flex flex-wrap gap-4 items-end">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Belastungskonto</Label>
+              <Select value={selectedBankAccountId} onValueChange={setSelectedBankAccountId}>
+                <SelectTrigger className="w-72">
+                  <SelectValue placeholder="Bankkonto wählen..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {(bankAccs ?? []).filter((b: any) => b.bankAccount.iban && b.bankAccount.isActive).map((b: any) => (
+                    <SelectItem key={b.bankAccount.id} value={String(b.bankAccount.id)}>
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span>{b.bankAccount.name}</span>
+                        <span className="text-xs text-muted-foreground font-mono">{b.bankAccount.iban}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Ausführungsdatum</Label>
+              <Input type="date" value={execDate} onChange={e => setExecDate(e.target.value)} className="w-44" />
+            </div>
+            <div className="flex gap-2 items-center ml-auto">
+              <Badge variant="outline" className="text-green-700 border-green-300">
+                <FileCheck className="h-3 w-3 mr-1" /> {paidInvoices.length} bezahlt
+              </Badge>
+              <Badge variant="outline" className="text-red-700 border-red-300">
+                <FileX className="h-3 w-3 mr-1" /> {unpaidInvoices.length} offen
+              </Badge>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={downloadOpenCreditorsCsv}>
+                <Download className="h-3 w-3" /> Offene Posten CSV
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs"
+                onClick={() => setShowPaid(!showPaid)}>
+                {showPaid ? "Nur offene" : "Alle anzeigen"}
+              </Button>
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-[11px]" style={{ color: "var(--ink-3)" }}>Ausführungsdatum</Label>
-            <Input type="date" value={execDate} onChange={e => setExecDate(e.target.value)} className="w-44" />
-          </div>
-          <div className="flex gap-2 items-center ml-auto">
-            <span className="pill pill--pos">
-              <FileCheck className="h-3 w-3" /> {paidInvoices.length} bezahlt
-            </span>
-            <span className="pill pill--warn">
-              <FileX className="h-3 w-3" /> {unpaidInvoices.length} offen
-            </span>
-            <Button size="sm" variant="ghost" className="h-7 text-xs"
-              onClick={() => setShowPaid(!showPaid)}>
-              {showPaid ? "Nur offene" : "Alle anzeigen"}
-            </Button>
-          </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Invoice table */}
-      <div className="klax-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="k-table">
-            <thead>
-              <tr>
-                <th className="w-8">
-                  <Checkbox
-                    checked={displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).length > 0 && displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).every(inv => selectedIds.has(inv.id))}
-                    onCheckedChange={(checked) => toggleAll(!!checked)}
-                  />
-                </th>
-                <th>Kreditor</th>
-                <th>IBAN</th>
-                <th>Ort / Land</th>
-                <th>Rechnungsdatum</th>
-                <th>Fällig am</th>
-                <th className="text-right">Betrag</th>
-                <th>Referenz</th>
-                <th className="text-center">Status</th>
-              </tr>
-            </thead>
+      <Card>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="p-3 text-left w-8">
+                    <Checkbox
+                      checked={displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).length > 0 && displayedInvoices.filter(inv => !inv.isPaid && inv.counterpartyIban).every(inv => selectedIds.has(inv.id))}
+                      onCheckedChange={(checked) => toggleAll(!!checked)}
+                    />
+                  </th>
+                  <th className="p-3 text-left">Kreditor</th>
+                  <th className="p-3 text-left">IBAN</th>
+                  <th className="p-3 text-left">Ort / Land</th>
+                  <th className="p-3 text-left">Rechnungsdatum</th>
+                  <th className="p-3 text-left">Fällig am</th>
+                  <th className="p-3 text-right">Betrag</th>
+                  <th className="p-3 text-left">Referenz</th>
+                  <th className="p-3 text-center">Status</th>
+                </tr>
+              </thead>
               <tbody>
                 {displayedInvoices.length === 0 ? (
                   <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Keine Eingangsrechnungen gefunden</td></tr>
@@ -422,7 +439,8 @@ export default function Kreditoren() {
               </tbody>
             </table>
           </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Footer with totals and export button */}
       <div className="flex justify-between items-center">
@@ -448,10 +466,10 @@ export default function Kreditoren() {
             <div>
               <CardTitle className="text-base flex items-center gap-2">
                 <FileUp className="h-5 w-5 text-primary" />
-                CAMT.054 Zahlungsbestätigung importieren
+                CAMT.054 Zahlungsbestätigungen importieren
               </CardTitle>
               <CardDescription className="mt-1">
-                Bank-Zahlungsbestätigungen importieren und automatisch mit exportierten pain.001-Dateien abgleichen
+                Bank-Zahlungsbestätigungen importieren: Ausgänge werden mit pain.001-Dateien, Eingänge via QR-Referenz mit Debitorenrechnungen abgeglichen.
               </CardDescription>
             </div>
             <Button
@@ -500,7 +518,7 @@ export default function Kreditoren() {
                     </Badge>
                   )}
                   <span className="text-xs text-muted-foreground">
-                    {camtResults.totalEntries} Einträge total, {camtResults.debitEntries} Belastungen
+                    {camtResults.totalEntries} Einträge total, {camtResults.debitEntries} Belastungen, {camtResults.creditEntries ?? 0} Gutschriften
                   </span>
                 </div>
 
@@ -510,10 +528,10 @@ export default function Kreditoren() {
                       <thead className="bg-muted/50">
                         <tr>
                           <th className="p-2 text-left text-xs">Status</th>
-                          <th className="p-2 text-left text-xs">Gläubiger</th>
+                          <th className="p-2 text-left text-xs">Gegenpartei / Rechnung</th>
                           <th className="p-2 text-right text-xs">Betrag</th>
                           <th className="p-2 text-left text-xs">Buchungsdatum</th>
-                          <th className="p-2 text-left text-xs">EndToEndId</th>
+                          <th className="p-2 text-left text-xs">Referenz</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -526,7 +544,7 @@ export default function Kreditoren() {
                                 <XCircle className="h-4 w-4 text-amber-500" />
                               )}
                             </td>
-                            <td className="p-2 text-xs">{r.creditorName || "–"}</td>
+                            <td className="p-2 text-xs">{r.invoiceNumber ? `Rechnung ${r.invoiceNumber}` : (r.creditorName || "–")}</td>
                             <td className="p-2 text-right font-mono text-xs">CHF {formatCHF(r.amount)}</td>
                             <td className="p-2 text-xs">{r.bookingDate ? new Date(r.bookingDate).toLocaleDateString("de-CH") : "–"}</td>
                             <td className="p-2 text-xs text-muted-foreground font-mono truncate max-w-32" title={r.endToEndId}>{r.endToEndId || "–"}</td>

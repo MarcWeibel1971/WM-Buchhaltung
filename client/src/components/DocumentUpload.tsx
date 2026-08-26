@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Upload, FileText, Image, X, Loader2, Paperclip, Eye, Camera, CheckCircle2, AlertCircle, Files, Sparkles, Brain } from "lucide-react";
+import { Upload, FileText, Image, X, Loader2, Paperclip, Eye, Camera, CheckCircle2, AlertCircle, Files } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
@@ -69,22 +69,8 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [fileQueue, setFileQueue] = useState<FileUploadState[]>([]);
-  const [nemotronResult, setNemotronResult] = useState<any>(null);
-  const [analyzingDocId, setAnalyzingDocId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-
-  const analyzeWithNemotron = trpc.documents.analyzeImageWithNemotron.useMutation({
-    onSuccess: (data) => {
-      setNemotronResult(data);
-      setAnalyzingDocId(null);
-      toast.success(`🧠 Nemotron: ${data.counterparty || 'Beleg'} – CHF ${data.totalAmount?.toFixed(2) ?? '?'} erkannt`);
-    },
-    onError: (e) => {
-      setAnalyzingDocId(null);
-      toast.error('Nemotron-Analyse fehlgeschlagen: ' + e.message);
-    },
-  });
 
   const uploadSingleFile = useCallback(async (fileState: FileUploadState): Promise<UploadedDocument | null> => {
     const formData = new FormData();
@@ -304,33 +290,6 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
         Foto aufnehmen
       </Button>
 
-      {/* Nemotron-Analyseergebnis */}
-      {nemotronResult && (
-        <div className="rounded-lg border border-purple-200 bg-purple-50 p-3 space-y-2 text-xs">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-semibold text-purple-800">
-              <Brain className="w-3.5 h-3.5" />
-              Nemotron-Analyse
-              <Badge variant="outline" className="text-xs border-purple-300 text-purple-700">{nemotronResult.confidence}% Konfidenz</Badge>
-            </div>
-            <button onClick={() => setNemotronResult(null)} className="text-purple-400 hover:text-purple-600">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-purple-900">
-            {nemotronResult.counterparty && <><span className="text-purple-600">Lieferant:</span><span className="font-medium">{nemotronResult.counterparty}</span></>}
-            {nemotronResult.documentDate && <><span className="text-purple-600">Datum:</span><span className="font-medium">{nemotronResult.documentDate}</span></>}
-            {nemotronResult.totalAmount && <><span className="text-purple-600">Betrag:</span><span className="font-medium">CHF {nemotronResult.totalAmount.toFixed(2)}</span></>}
-            {nemotronResult.vatAmount && <><span className="text-purple-600">MWST:</span><span className="font-medium">CHF {nemotronResult.vatAmount.toFixed(2)} ({nemotronResult.vatRate}%)</span></>}
-            {nemotronResult.invoiceNumber && <><span className="text-purple-600">Rechnungs-Nr.:</span><span className="font-medium">{nemotronResult.invoiceNumber}</span></>}
-            {nemotronResult.suggestedDebitAccount && <><span className="text-purple-600">Aufwandskonto:</span><span className="font-medium">{nemotronResult.suggestedDebitAccount}</span></>}
-          </div>
-          {nemotronResult.description && (
-            <p className="text-purple-700 italic">{nemotronResult.description}</p>
-          )}
-        </div>
-      )}
-
       {/* Upload queue with thumbnails */}
       {fileQueue.length > 0 && (
         <div className="space-y-2">
@@ -382,22 +341,6 @@ export function DocumentUpload({ journalEntryId, bankTransactionId, compact = fa
                   )}
                 </div>
 
-                {/* Nemotron-Button für Bilder */}
-                {fs.status === "success" && fs.document && fs.file.type.startsWith("image/") && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 flex-shrink-0 text-purple-600 hover:text-purple-800"
-                    title="Mit Nemotron analysieren"
-                    disabled={analyzingDocId === fs.document.id || analyzeWithNemotron.isPending}
-                    onClick={() => {
-                      setAnalyzingDocId(fs.document!.id);
-                      analyzeWithNemotron.mutate({ imageUrl: fs.document!.s3Url, documentId: fs.document!.id });
-                    }}
-                  >
-                    {analyzingDocId === fs.document.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Brain className="w-3 h-3" />}
-                  </Button>
-                )}
                 {/* Remove button */}
                 {(fs.status === "error" || fs.status === "success") && (
                   <Button

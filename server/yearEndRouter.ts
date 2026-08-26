@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router, orgProcedure } from "./_core/trpc";
-import { getDb, allocateEntryNumber } from "./db";
+import { assertFiscalYearOpen, getDb, allocateEntryNumber } from "./db";
 import {
   fiscalYears,
   yearEndBookings,
@@ -323,6 +323,8 @@ export const yearEndRouter = router({
       if (!booking) throw new Error("Buchung nicht gefunden");
       if (booking.status !== "suggested") throw new Error("Buchung bereits verarbeitet");
 
+      await assertFiscalYearOpen(ctx.organizationId, `${booking.fiscalYear}-12-31`);
+
       const entryNumber = await allocateEntryNumber(ctx.organizationId, booking.fiscalYear);
       const [entry] = await db.insert(journalEntries).values({
         organizationId: ctx.organizationId,
@@ -378,6 +380,7 @@ export const yearEndRouter = router({
         )
       );
 
+      await assertFiscalYearOpen(ctx.organizationId, `${input.year}-12-31`);
       let approved = 0;
       for (const booking of pending) {
         const entryNumber = await allocateEntryNumber(ctx.organizationId, input.year);
@@ -429,6 +432,7 @@ export const yearEndRouter = router({
         )
       );
 
+      await assertFiscalYearOpen(ctx.organizationId, `${nextYear}-01-01`);
       let reversed = 0;
       for (const booking of approvedBookings) {
         const entryNumber = await allocateEntryNumber(ctx.organizationId, nextYear);

@@ -1,0 +1,3 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+describe("BankImportDeleteConfirmDialog",()=>{it("separates destructive import confirmation",()=>{const component=readFileSync(new URL("../client/src/components/BankImportDeleteConfirmDialog.tsx",import.meta.url),"utf8");const page=readFileSync(new URL("../client/src/pages/BankImport.tsx",import.meta.url),"utf8");expect(component).toContain("Import rükgängig machen?");expect(component).toContain("onConfirm(item.batchId)");expect(page).toContain('import { BankImportDeleteConfirmDialog } from "@/components/BankImportDeleteConfirmDialog"');expect(page).toContain("<BankImportDeleteConfirmDialog item={deleteImportConfirm}");});});

@@ -1,8 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { useMemo } from "react";
-import { BarChart3, Download, TrendingUp, TrendingDown, Sparkles, AlertTriangle, CheckCircle2, Info, TrendingUp as TrendUp } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend } from "recharts";
+import { BarChart3, Download, TrendingUp, TrendingDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -76,32 +74,6 @@ function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
 }
 
-// ─── KI-Insights-Komponente ─────────────────────────────────────────────────
-type InsightLevel = 'positive' | 'warning' | 'info';
-interface Insight { level: InsightLevel; text: string; }
-
-function KIInsights({ insights }: { insights: Insight[] }) {
-  if (!insights.length) return null;
-  return (
-    <div className="klax-card p-4 mt-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Sparkles className="h-4 w-4" style={{ color: 'var(--klax-accent)' }} />
-        <span className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--klax-accent)' }}>KI-Insights</span>
-      </div>
-      <div className="space-y-2">
-        {insights.map((ins, i) => (
-          <div key={i} className="flex items-start gap-2.5 text-[12.5px]">
-            {ins.level === 'positive' && <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" style={{ color: 'var(--pos)' }} />}
-            {ins.level === 'warning' && <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" style={{ color: 'var(--neg)' }} />}
-            {ins.level === 'info' && <Info className="h-4 w-4 mt-0.5 shrink-0" style={{ color: 'var(--ink-3)' }} />}
-            <span style={{ color: 'var(--ink-2)' }}>{ins.text}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function AccountRow({ account, balance, indent = 0 }: { account: any; balance: number; indent?: number }) {
   if (Math.abs(balance) < 0.01) return null;
   return (
@@ -114,112 +86,6 @@ function AccountRow({ account, balance, indent = 0 }: { account: any; balance: n
         {formatCHF(Math.abs(balance))}
       </td>
     </tr>
-  );
-}
-
-// ─── Cashflow-Forecast-Komponente ──────────────────────────────────────────
-function CashflowForecast() {
-  const { data, isLoading } = trpc.reports.cashflowForecast.useQuery();
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-48">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: 'var(--klax-accent)' }} />
-      </div>
-    );
-  }
-
-  if (!data) return null;
-
-  const minBalance = Math.min(...data.weeks.map(w => w.balance));
-  const maxBalance = Math.max(...data.weeks.map(w => w.balance));
-  const criticalWeeks = data.weeks.filter(w => w.balance < 0).length;
-
-  return (
-    <div className="space-y-4">
-      {/* KPI-Kacheln */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="klax-card p-4">
-          <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: 'var(--ink-3)' }}>Aktueller Bankbestand</div>
-          <div className={`text-xl font-bold mono ${data.currentBalance >= 0 ? '' : 'text-red-600'}`}>
-            CHF {formatCHF(data.currentBalance)}
-          </div>
-        </div>
-        <div className="klax-card p-4">
-          <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: 'var(--ink-3)' }}>Min. Bestand (13 Wo.)</div>
-          <div className={`text-xl font-bold mono ${minBalance >= 0 ? '' : 'text-red-600'}`}>
-            CHF {formatCHF(minBalance)}
-          </div>
-        </div>
-        <div className="klax-card p-4">
-          <div className="text-[11px] uppercase tracking-wider mb-1" style={{ color: 'var(--ink-3)' }}>Kritische Wochen</div>
-          <div className={`text-xl font-bold ${criticalWeeks > 0 ? 'text-red-600' : 'text-green-600'}`}>
-            {criticalWeeks} / 13
-          </div>
-        </div>
-      </div>
-
-      {criticalWeeks > 0 && (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>In <strong>{criticalWeeks} Woche{criticalWeeks > 1 ? 'n' : ''}</strong> wird der Bankbestand negativ. Bitte Liquidität prüfen.</span>
-        </div>
-      )}
-
-      {/* Balkendiagramm */}
-      <div className="klax-card p-4">
-        <div className="flex items-center gap-2 mb-4">
-          <BarChart3 className="h-4 w-4" style={{ color: 'var(--klax-accent)' }} />
-          <span className="text-sm font-semibold">13-Wochen Cashflow-Forecast</span>
-          <span className="text-xs text-muted-foreground ml-auto">Ø Wochenausgaben: CHF {formatCHF(data.weeklyExpenseBase)}</span>
-        </div>
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={data.weeks} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--hair)" />
-            <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="var(--ink-3)" />
-            <YAxis tick={{ fontSize: 10 }} stroke="var(--ink-3)" tickFormatter={v => `${Math.round(v / 1000)}k`} />
-            <Tooltip
-              formatter={(value: number, name: string) => [
-                `CHF ${formatCHF(value)}`,
-                name === 'inflow' ? 'Einnahmen' : name === 'outflow' ? 'Ausgaben' : 'Bestand'
-              ]}
-              contentStyle={{ fontSize: 12, background: 'var(--surface)', border: '1px solid var(--hair)' }}
-            />
-            <Legend formatter={v => v === 'inflow' ? 'Einnahmen' : v === 'outflow' ? 'Ausgaben' : 'Bestand'} />
-            <ReferenceLine y={0} stroke="var(--neg)" strokeDasharray="4 2" />
-            <Bar dataKey="inflow" fill="#22c55e" opacity={0.8} radius={[3, 3, 0, 0]} />
-            <Bar dataKey="outflow" fill="#ef4444" opacity={0.8} radius={[3, 3, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Bestandsverlauf */}
-      <div className="klax-card p-4">
-        <div className="text-sm font-semibold mb-3">Bestandsverlauf</div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr style={{ color: 'var(--ink-3)' }}>
-                <th className="text-left py-1 pr-3">Woche</th>
-                <th className="text-right py-1 pr-3">Einnahmen</th>
-                <th className="text-right py-1 pr-3">Ausgaben</th>
-                <th className="text-right py-1">Bestand</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.weeks.map(w => (
-                <tr key={w.week} className={`border-t ${w.balance < 0 ? 'bg-red-50' : ''}`} style={{ borderColor: 'var(--hair)' }}>
-                  <td className="py-1.5 pr-3 font-medium">{w.label}</td>
-                  <td className="text-right py-1.5 pr-3 text-green-600 mono">{w.inflow > 0 ? `+${formatCHF(w.inflow)}` : '-'}</td>
-                  <td className="text-right py-1.5 pr-3 text-red-600 mono">{w.outflow > 0 ? `-${formatCHF(w.outflow)}` : '-'}</td>
-                  <td className={`text-right py-1.5 mono font-semibold ${w.balance < 0 ? 'text-red-600' : ''}`}>{formatCHF(w.balance)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -245,72 +111,12 @@ export default function Reports() {
   const totalExpensesPrev = isPrev?.expenses.reduce((s, e) => s + e.balance, 0) ?? 0;
   const profitPrev = totalRevenuePrev - totalExpensesPrev;
 
-  // KI-Insights berechnen
-  const insights = useMemo(() => {
-    const result: Array<{ level: 'positive' | 'warning' | 'info'; text: string }> = [];
-    if (!bs || !is) return result;
-
-    // 1. Eigenkapitalquote
-    if (totalAssets > 0) {
-      const ekQuote = (totalEquity / totalAssets) * 100;
-      if (ekQuote >= 40) {
-        result.push({ level: 'positive', text: `Eigenkapitalquote ${ekQuote.toFixed(1)}% – solide Kapitalstruktur (Richtwert ≥30%).` });
-      } else if (ekQuote >= 20) {
-        result.push({ level: 'info', text: `Eigenkapitalquote ${ekQuote.toFixed(1)}% – im mittleren Bereich. Richtwert für KMU: ≥30%.` });
-      } else {
-        result.push({ level: 'warning', text: `Eigenkapitalquote ${ekQuote.toFixed(1)}% – unter 20%. Fremdfinanzierung dominiert.` });
-      }
-    }
-
-    // 2. Umsatzentwicklung vs. Vorjahr
-    if (totalRevenuePrev > 0 && totalRevenue > 0) {
-      const revGrowth = ((totalRevenue - totalRevenuePrev) / totalRevenuePrev) * 100;
-      if (revGrowth > 5) {
-        result.push({ level: 'positive', text: `Umsatz +${revGrowth.toFixed(1)}% vs. Vorjahr – positives Wachstum.` });
-      } else if (revGrowth < -5) {
-        result.push({ level: 'warning', text: `Umsatz ${revGrowth.toFixed(1)}% vs. Vorjahr – Rückgang prüfen.` });
-      } else {
-        result.push({ level: 'info', text: `Umsatz stabil (${revGrowth > 0 ? '+' : ''}${revGrowth.toFixed(1)}% vs. Vorjahr).` });
-      }
-    }
-
-    // 3. EBIT-Marge
-    if (totalRevenue > 0) {
-      const margin = (profit / totalRevenue) * 100;
-      if (margin >= 10) {
-        result.push({ level: 'positive', text: `Gewinnmarge ${margin.toFixed(1)}% – überdurchschnittlich für Dienstleister.` });
-      } else if (margin >= 0) {
-        result.push({ level: 'info', text: `Gewinnmarge ${margin.toFixed(1)}% – positiv aber Optimierungspotenzial vorhanden.` });
-      } else {
-        result.push({ level: 'warning', text: `Verlust ${Math.abs(margin).toFixed(1)}% der Erträge – Aufwandpositionen prüfen.` });
-      }
-    }
-
-    // 4. Liquidität (Kasse + Bank vs. kurzfristige Verbindlichkeiten)
-    const liquid = bs.assets
-      .filter(a => a.account.number.startsWith('10') || a.account.number.startsWith('11'))
-      .reduce((s, a) => s + a.balance, 0);
-    const shortTermLiab = bs.liabilities
-      .filter(a => a.account.number.startsWith('20'))
-      .reduce((s, a) => s + a.balance, 0);
-    if (liquid > 0 && shortTermLiab > 0) {
-      const liquidRatio = (liquid / shortTermLiab) * 100;
-      if (liquidRatio >= 100) {
-        result.push({ level: 'positive', text: `Liquidität 1. Grades ${liquidRatio.toFixed(0)}% – kurzfristige Verbindlichkeiten gedeckt.` });
-      } else {
-        result.push({ level: 'warning', text: `Liquidität 1. Grades ${liquidRatio.toFixed(0)}% – flüssige Mittel decken kurzfristige Verbindlichkeiten nur teilweise.` });
-      }
-    }
-
-    return result.slice(0, 4); // Max 4 Insights
-  }, [bs, is, totalAssets, totalEquity, totalRevenue, totalRevenuePrev, totalExpenses, profit]);
-
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
+    <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Berichte</h2>
-          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>Erfolgsrechnung, Bilanz und Konten</p>
+          <h2 className="text-xl font-bold">Berichte</h2>
+          <p className="text-sm text-muted-foreground">Erfolgsrechnung, Bilanz und Konten</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="gap-2" onClick={() => {
@@ -332,48 +138,44 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* KPI Summary (KLAX Tiles) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="klax-card p-4">
-          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Bilanzsumme</div>
-          <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>{formatCHF(totalAssets)}</div>
+      {/* KPI Summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Bilanzsumme</div>
+          <div className="text-xl font-bold font-mono">CHF {formatCHF(totalAssets)}</div>
           {totalAssetsPrev > 0 && (
-            <div className="text-[11px] mt-1" style={{ color: "var(--ink-4)" }}>Vorjahr <span className="mono">{formatCHF(totalAssetsPrev)}</span></div>
+            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(totalAssetsPrev)}</div>
           )}
         </div>
-        <div className="klax-card p-4">
-          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Ertrag</div>
-          <div className="display text-[22px] font-medium mt-1.5 amt-pos">{formatCHF(totalRevenue)}</div>
+        <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Ertrag</div>
+          <div className="text-xl font-bold font-mono amount-positive">CHF {formatCHF(totalRevenue)}</div>
           {totalRevenuePrev > 0 && (
-            <div className="text-[11px] mt-1" style={{ color: "var(--ink-4)" }}>Vorjahr <span className="mono">{formatCHF(totalRevenuePrev)}</span></div>
+            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(totalRevenuePrev)}</div>
           )}
         </div>
-        <div className="klax-card p-4">
-          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>Aufwand</div>
-          <div className="display text-[22px] font-medium mt-1.5 amt-neg">{formatCHF(totalExpenses)}</div>
+        <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Aufwand</div>
+          <div className="text-xl font-bold font-mono amount-negative">CHF {formatCHF(totalExpenses)}</div>
           {totalExpensesPrev > 0 && (
-            <div className="text-[11px] mt-1" style={{ color: "var(--ink-4)" }}>Vorjahr <span className="mono">{formatCHF(totalExpensesPrev)}</span></div>
+            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(totalExpensesPrev)}</div>
           )}
         </div>
-        <div className="klax-card p-4" style={{ background: "var(--klax-accent-soft)", borderColor: "var(--klax-accent-line)" }}>
-          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--klax-accent)" }}>Ergebnis</div>
-          <div className="display mono text-[22px] font-medium mt-1.5" style={{ color: profit >= 0 ? "var(--pos)" : "var(--neg)" }}>
-            {formatCHF(profit)}
+        <div className={`bg-card rounded-xl border p-4 shadow-sm ${profit >= 0 ? "border-green-200" : "border-red-200"}`}>
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Ergebnis</div>
+          <div className={`text-xl font-bold font-mono ${profit >= 0 ? "amount-positive" : "amount-negative"}`}>
+            CHF {formatCHF(profit)}
           </div>
           {profitPrev !== 0 && (
-            <div className="text-[11px] mt-1" style={{ color: "var(--ink-3)" }}>Vorjahr <span className="mono">{formatCHF(profitPrev)}</span></div>
+            <div className="text-xs text-muted-foreground mt-1">Vorjahr: {formatCHF(profitPrev)}</div>
           )}
         </div>
       </div>
-
-      {/* KI-Insights */}
-      <KIInsights insights={insights} />
 
       <Tabs defaultValue="income-statement">
         <TabsList>
           <TabsTrigger value="income-statement">Erfolgsrechnung</TabsTrigger>
           <TabsTrigger value="balance-sheet">Bilanz</TabsTrigger>
-          <TabsTrigger value="cashflow">Cashflow-Forecast</TabsTrigger>
           <TabsTrigger value="accounts">Konten</TabsTrigger>
           <TabsTrigger value="journal">Journal</TabsTrigger>
         </TabsList>
@@ -543,11 +345,6 @@ export default function Reports() {
               </table>
             </div>
           </div>
-        </TabsContent>
-
-        {/* Cashflow-Forecast */}
-        <TabsContent value="cashflow">
-          <CashflowForecast />
         </TabsContent>
 
         {/* Konten */}

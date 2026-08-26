@@ -1,0 +1,1 @@
+ALTER TABLE `company_settings` ADD `vatPauschalRate` decimal(5,2) DEFAULT '0.00';

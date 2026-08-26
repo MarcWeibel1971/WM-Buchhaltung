@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "a21b3f43-dd87-4939-9cf6-d7239f61f3ab",
+  "id": "957b0169-5d24-4a59-bdaa-615d65b5840f",
   "prevId": "6163a257-0e55-4f1d-bba2-b3552bd3317d",
   "tables": {
     "accounts": {
@@ -2695,34 +2695,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "closingText": {
-          "name": "closingText",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "greeting": {
-          "name": "greeting",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "signatory": {
-          "name": "signatory",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "signatoryTitle": {
-          "name": "signatoryTitle",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "subtotal": {
           "name": "subtotal",
           "type": "decimal(15,2)",
@@ -2964,6 +2936,13 @@
         "approvedAt": {
           "name": "approvedAt",
           "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "createdBy": {
+          "name": "createdBy",
+          "type": "int",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -3316,6 +3295,14 @@
           "notNull": false,
           "autoincrement": false,
           "default": 1
+        },
+        "requiresDualApproval": {
+          "name": "requiresDualApproval",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "phone": {
           "name": "phone",

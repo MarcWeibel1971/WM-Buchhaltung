@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,13 +22,7 @@ interface LineItem {
 
 export default function QrBillGenerator() {
   const [, navigate] = useLocation();
-  // ─── Edit-Modus: bestehenden Entwurf über ?id=<invoiceId> laden ───
-  const editId = (() => {
-    const raw = new URLSearchParams(window.location.search).get("id");
-    const n = raw ? parseInt(raw, 10) : NaN;
-    return Number.isFinite(n) && n > 0 ? n : null;
-  })();
-  const [savedInvoiceId, setSavedInvoiceId] = useState<number | null>(editId);
+  const [savedInvoiceId, setSavedInvoiceId] = useState<number | null>(null);
   const { data: qrSettings, isLoading: qrLoading } = trpc.qrBill.getQrSettings.useQuery();
   const { data: companySettings } = trpc.settings.getCompanySettings.useQuery();
   const { data: customersList } = trpc.customers.list.useQuery();
@@ -121,50 +115,6 @@ export default function QrBillGenerator() {
     { enabled: includeServiceDetails && selectedCustomerId !== null }
   );
 
-  // ─── Edit-Modus: Entwurf laden und Formular vorbefüllen ───
-  const { data: editInvoice } = trpc.invoices.getById.useQuery(
-    { id: editId ?? 0 },
-    { enabled: editId !== null }
-  );
-  const editPrefilled = useRef(false);
-  useEffect(() => {
-    if (!editInvoice || editPrefilled.current) return;
-    editPrefilled.current = true;
-    if (editInvoice.status !== "draft") {
-      toast.error("Nur Entwürfe können bearbeitet werden. Diese Rechnung ist bereits verbucht.");
-      return;
-    }
-    if (editInvoice.customerId) setSelectedCustomerId(editInvoice.customerId);
-    const c = editInvoice.customer as any;
-    if (c) {
-      const displayName = c.lastName && c.firstName ? `${c.firstName} ${c.lastName}` : c.company || c.name;
-      setRecipientName(displayName ?? "");
-      setRecipientStreet(c.street || "");
-      setRecipientZip(c.zipCode || "");
-      setRecipientCity(c.city || "");
-    }
-    setInvoiceDate(editInvoice.invoiceDate);
-    setInvoiceSubject(editInvoice.subject || "");
-    setIntroText(editInvoice.introText || "");
-    setClosingText(editInvoice.closingText || "");
-    setGreeting(editInvoice.greeting || "Herzliche Grüsse");
-    setSignerName(editInvoice.signatory || "");
-    setSignerTitle(editInvoice.signatoryTitle || "");
-    setPaymentDays(String(editInvoice.paymentTermDays ?? 30));
-    setCurrency((editInvoice.currency as "CHF" | "EUR") ?? "CHF");
-    const items = (editInvoice.items ?? []) as any[];
-    if (items.length > 0) {
-      setLineItems(items.map((it: any, i: number) => ({
-        id: String(i + 1),
-        description: it.description ?? "",
-        amount: String(it.lineSubtotal ?? it.unitPrice ?? ""),
-      })));
-      const rate = parseFloat(items[0].vatRate ?? "0");
-      if (!isNaN(rate) && rate > 0) setVatRate(String(rate));
-    }
-    toast.info("Entwurf geladen – Änderungen werden beim Speichern übernommen.");
-  }, [editInvoice]);
-
   // ─── Computed Values ───────────────────────────────────────────────────────
   const subtotal = useMemo(() => {
     return lineItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
@@ -249,10 +199,6 @@ export default function QrBillGenerator() {
     paymentTermDays: parseInt(paymentDays) || 30,
     subject: invoiceSubject || undefined,
     introText: introText || undefined,
-    closingText: closingText || undefined,
-    greeting: greeting || undefined,
-    signatory: signerName || undefined,
-    signatoryTitle: signerTitle || undefined,
     currency,
     items: lineItems
       .filter(i => i.description && parseFloat(i.amount) > 0)
@@ -352,16 +298,14 @@ export default function QrBillGenerator() {
   };
 
   return (
-    <div className="px-6 lg:px-8 py-6 max-w-[1100px] mx-auto space-y-5">
+    <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <div>
-        <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>QR-Rechnung erstellen</h1>
-        <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
-          Professionelle Rechnung mit Swiss QR-Zahlungsteil oder einfacher QR-Einzahlungsschein.
-          {editId !== null && (
-            <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-              Entwurf #{editId} bearbeiten
-            </span>
-          )}
+        <h1 className="text-2xl font-bold flex items-center gap-3">
+          <QrCode className="h-7 w-7 text-primary" />
+          QR-Rechnung erstellen
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Erstellen Sie eine professionelle Rechnung mit QR-Zahlungsteil oder einen einfachen QR-Einzahlungsschein.
         </p>
       </div>
 
@@ -378,20 +322,22 @@ export default function QrBillGenerator() {
         </TabsList>
 
         {/* ─── Invoice Template Tab ─────────────────────────────────────────── */}
-        <TabsContent value="invoice" className="space-y-5 mt-6">
+        <TabsContent value="invoice" className="space-y-6 mt-6">
           {/* Creditor info (read-only from settings) */}
-          <div className="klax-card--soft p-4">
-            <div className="k-label mb-2">Absender (aus Firmeneinstellungen)</div>
-            <div className="text-[13px]" style={{ color: "var(--ink)" }}>
+          <Card className="bg-muted/30">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Absender (aus Firmeneinstellungen)</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm">
               <p className="font-semibold">{companySettings?.companyName}</p>
               {companySettings?.street && <p>{companySettings.street}</p>}
               <p>{companySettings?.zipCode} {companySettings?.city}</p>
               {companySettings?.phone && <p>Tel: {companySettings.phone}</p>}
               {companySettings?.email && <p>{companySettings.email}</p>}
-              {companySettings?.uid && <p className="text-[11px] mt-1" style={{ color: "var(--ink-3)" }}>MWST-Nr. {companySettings.uid}</p>}
-              <p className="text-[11px] mt-1 mono" style={{ color: "var(--ink-3)" }}>IBAN: {qrSettings.iban}</p>
-            </div>
-          </div>
+              {companySettings?.uid && <p className="text-xs mt-1">MWST-Nr. {companySettings.uid}</p>}
+              <p className="text-xs mt-1 font-mono">IBAN: {qrSettings.iban}</p>
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Recipient */}

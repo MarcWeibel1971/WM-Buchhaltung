@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +24,6 @@ import {
   GripVertical, ChevronRight, ChevronDown, Upload, Eye, EyeOff,
   ShieldCheck, FileText, Download, UserX, ClipboardList,
   ArrowUpDown, FileSpreadsheet, LayoutTemplate, Truck, UserCheck, FileStack,
-  Bell, Wallet,
   CreditCard, ExternalLink, CheckCircle, Crown, Undo2, Bot, Bolt, QrCode,
 } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -38,52 +36,63 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { readSpreadsheetObjects, readSpreadsheetRows } from "@/lib/readSpreadsheet";
 import { useMemo, useState as useReactState, useCallback } from "react";
 import { toast } from "sonner";
+import { readSpreadsheetRecords, readSpreadsheetRows } from "@/lib/spreadsheet";
 import UsersTab from "./UsersTab";
 import ServicesTab from "./ServicesTab";
 import QrSettingsTab from "./QrSettingsTab";
-import PosSettingsTab from "./PosSettingsTab";
-import EbicsSettingsTab from "./EbicsSettingsTab";
-import GlobalRules from "./GlobalRules";
+import { SettingsNavigation } from "@/components/SettingsNavigation";
+import { CustomerImportDialog } from "@/components/CustomerImportDialog";
+import { CustomerServiceDialog } from "@/components/CustomerServiceDialog";
+import { CustomerFormDialog } from "@/components/CustomerFormDialog";
+import { CustomersTabLayout } from "@/components/CustomersTabLayout";
+import { CustomersList } from "@/components/CustomersList";
+import { CustomersToolbar } from "@/components/CustomersToolbar";
+import { SupplierImportDialog } from "@/components/SupplierImportDialog";
+import { SupplierFormDialog } from "@/components/SupplierFormDialog";
+import { SupplierDocumentImportResult } from "@/components/SupplierDocumentImportResult";
+import { SuppliersToolbar } from "@/components/SuppliersToolbar";
+import { SuppliersList } from "@/components/SuppliersList";
+import { SupplierFormFields } from "@/components/SupplierFormFields";
+import { SupplierPaymentFields } from "@/components/SupplierPaymentFields";
+import { parseCustomerImportRows } from "@/lib/customerImportParser";
+import { buildCustomerPayload } from "@/lib/customerFormData";
+import { customerFormStateFromRecord, emptyCustomerFormState } from "@/lib/customerFormState";
+import { buildCustomerServicePayload } from "@/lib/customerServiceData";
+import { ChartOfAccountsImportDialog } from "@/components/ChartOfAccountsImportDialog";
+import { OpeningBalancesImportDialog, type OpeningBalanceImportItem } from "@/components/OpeningBalancesImportDialog";
+import { CompanyLogoUpload } from "@/components/CompanyLogoUpload";
+import { CompanyApprovalCard } from "@/components/CompanyApprovalCard";
+import { CompanyContactCard } from "@/components/CompanyContactCard";
+import { CompanyAddressCard } from "@/components/CompanyAddressCard";
+import { CompanyDetailsCard } from "@/components/CompanyDetailsCard";
+import { CompanyVatSettingsCard } from "@/components/CompanyVatSettingsCard";
 
-// ─── Tab-Definitionen ────────────────────────────────────────────────────────
-// Jeder Tab hat einen scope:
-//   "personal" → /einstellungen (für alle Rollen)
-//   "admin"    → /admin (nur Admin-Rolle, organisationsweit)
+// ─── Tab definitions ──────────────────────────────────────────────────────────
 
 const TABS = [
-  // Persönlich / Workspace
-  { id: "company", label: "Unternehmen", icon: Building2, scope: "personal" },
-  { id: "bank", label: "Bankkonten", icon: Landmark, scope: "personal" },
-  { id: "employees", label: "Mitarbeiter", icon: Users, scope: "personal" },
-  { id: "insurance", label: "Versicherungen", icon: Shield, scope: "personal" },
-  { id: "services", label: "Dienstleistungen", icon: ClipboardList, scope: "personal" },
-  { id: "templates", label: "Vorlagen", icon: FileStack, scope: "personal" },
-  { id: "qr", label: "QR-Rechnung", icon: QrCode, scope: "personal" },
-  { id: "pos", label: "POS / Kartenzahlung", icon: CreditCard, scope: "personal" },
-  { id: "ebics", label: "EBICS Banking", icon: Landmark, scope: "personal" },
-  { id: "avatar", label: "Avatar-Chatbot", icon: Bot, scope: "personal" },
-
-  // Organisationsweit / Admin
-  { id: "users", label: "Benutzer & Rollen", icon: Users, scope: "admin" },
-  { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree, scope: "admin" },
-  { id: "rules", label: "Buchungsregeln", icon: BookOpen, scope: "admin" },
-  { id: "globalRules", label: "KI-Regeln", icon: Bot, scope: "admin" },
-  { id: "opening", label: "Eröffnungssalden", icon: Scale, scope: "admin" },
-  { id: "depreciation", label: "Abschreibungen", icon: TrendingDown, scope: "admin" },
-  { id: "suppliers", label: "Lieferanten", icon: Truck, scope: "admin" },
-  { id: "customers", label: "Kunden", icon: UserCheck, scope: "admin" },
-  { id: "reminders", label: "Mahnwesen", icon: Bell, scope: "admin" },
-  { id: "accountMappings", label: "Standard-Konten", icon: Wallet, scope: "admin" },
-  { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt, scope: "admin" },
-  { id: "dsg", label: "Datenschutz & Audit", icon: ShieldCheck, scope: "admin" },
-  { id: "subscription", label: "Abonnement & Plan", icon: CreditCard, scope: "admin" },
+  { id: "company", label: "Unternehmen", icon: Building2 },
+  { id: "users", label: "Benutzer", icon: Users },
+  { id: "bank", label: "Bankkonten", icon: Landmark },
+  { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt },
+  { id: "chartOfAccounts", label: "Kontenplan", icon: ListTree },
+  { id: "employees", label: "Mitarbeiter", icon: Users },
+  { id: "insurance", label: "Versicherungen", icon: Shield },
+  { id: "rules", label: "Buchungsregeln", icon: BookOpen },
+  { id: "opening", label: "Eröffnungssalden", icon: Scale },
+  { id: "depreciation", label: "Abschreibungen", icon: TrendingDown },
+  { id: "suppliers", label: "Lieferanten", icon: Truck },
+  { id: "customers", label: "Kunden", icon: UserCheck },
+  { id: "services", label: "Dienstleistungen", icon: ClipboardList },
+  { id: "templates", label: "Vorlagen", icon: FileStack },
+  { id: "dsg", label: "Datenschutz (DSG)", icon: ShieldCheck },
+  { id: "subscription", label: "Abonnement", icon: CreditCard },
+  { id: "avatar", label: "Avatar-Chatbot", icon: Bot },
+  { id: "qr", label: "QR-Rechnung", icon: QrCode },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
-export type SettingsScope = "personal" | "admin";
 
 // ─── Insurance type labels ────────────────────────────────────────────────────
 
@@ -105,133 +114,49 @@ const INSURANCE_COLORS: Record<string, string> = {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-// Slug-Mapping: erlaubt sprechende URL-Slugs zusätzlich zu den internen Tab-IDs.
-const SLUG_TO_TAB: Record<string, TabId> = {
-  unternehmen: "company",
-  profil: "company",
-  bankkonten: "bank",
-  bank: "bank",
-  mitarbeiter: "employees",
-  versicherungen: "insurance",
-  dienstleistungen: "services",
-  vorlagen: "templates",
-  qr: "qr",
-  pos: "pos",
-  ebics: "ebics",
-  avatar: "avatar",
-
-  benutzer: "users",
-  rollen: "users",
-  kontenplan: "chartOfAccounts",
-  buchungsregeln: "rules",
-  "ki-regeln": "globalRules",
-  "global-rules": "globalRules",
-  eroeffnungssalden: "opening",
-  abschreibungen: "depreciation",
-  lieferanten: "suppliers",
-  kunden: "customers",
-  "import-automatisierung": "importAutomation",
-  datenschutz: "dsg",
-  audit: "dsg",
-  abonnement: "subscription",
-  plan: "subscription",
-};
-
-function readTabFromUrl(scope: SettingsScope): TabId {
-  const params = new URLSearchParams(window.location.search);
-  const tabParam = params.get("tab");
-  if (tabParam) {
-    const direct = TABS.find(t => t.id === tabParam && t.scope === scope);
-    if (direct) return direct.id as TabId;
-    const mapped = SLUG_TO_TAB[tabParam];
-    if (mapped && TABS.some(t => t.id === mapped && t.scope === scope)) return mapped;
-  }
-  const pathSegment = window.location.pathname.split("/").pop();
-  if (pathSegment) {
-    const mapped = SLUG_TO_TAB[pathSegment];
-    if (mapped && TABS.some(t => t.id === mapped && t.scope === scope)) return mapped;
-  }
-  // Fallback: erster Tab des Scopes
-  const first = TABS.find(t => t.scope === scope);
-  return (first?.id ?? "company") as TabId;
-}
-
-interface SettingsContainerProps {
-  scope?: SettingsScope;
-  basePath?: string;
-}
-
-/**
- * Generischer Container für Einstellungen (persönlich) und Admin (organisationsweit).
- * Beide nutzen die gleiche Tab-Mechanik mit URL-State über ?tab=...
- */
-export default function Settings({ scope = "personal", basePath = "/einstellungen" }: SettingsContainerProps) {
-  const [, setLocation] = useLocation();
-  const [activeTab, setActiveTab] = useState<TabId>(() => readTabFromUrl(scope));
-
-  // URL synchronisieren, wenn Tab gewechselt wird
-  const switchTab = (id: TabId) => {
-    setActiveTab(id);
-    setLocation(`${basePath}?tab=${id}`, { replace: false } as any);
-  };
-
-  // Bei direktem URL-Wechsel (z.B. via Redirect) Tab synchronisieren
-  useEffect(() => {
-    const onPop = () => setActiveTab(readTabFromUrl(scope));
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [scope]);
-
-  const visibleTabs = TABS.filter(t => t.scope === scope);
-  const headline = scope === "admin" ? "Admin" : "Einstellungen";
-  const subline = scope === "admin"
-    ? "Organisationsweite Verwaltung"
-    : "Persönliche & Workspace-Einstellungen";
-
+export default function Settings() {
+  // Support ?tab=subscription for Stripe redirect + /einstellungen/:tab path segments
+  const initialTab = (() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab && TABS.some(t => t.id === tab)) return tab as TabId;
+    // Support /einstellungen/bankkonten → tab "bank"
+    const pathSegment = window.location.pathname.split("/").pop();
+    const pathTabMap: Record<string, TabId> = {
+      bankkonten: "bank",
+      kontenplan: "chartOfAccounts",
+      mitarbeiter: "employees",
+      versicherungen: "insurance",
+      buchungsregeln: "rules",
+      eroeffnungssalden: "opening",
+      abschreibungen: "depreciation",
+      lieferanten: "suppliers",
+      kunden: "customers",
+      vorlagen: "templates",
+      datenschutz: "dsg",
+      abonnement: "subscription",
+    };
+    if (pathSegment && pathTabMap[pathSegment]) return pathTabMap[pathSegment];
+    return "company" as TabId;
+  })();
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
   return (
-    <div className="flex h-full" style={{ background: "var(--paper)" }}>
-      {/* Sub-Navigation (KLAX) */}
-      <aside
-        className="w-56 p-3 flex flex-col gap-0.5 shrink-0"
-        style={{ borderRight: "1px solid var(--hair)", background: "var(--paper)" }}
-      >
-        <div style={{ paddingTop: 4, paddingBottom: 8 }}>
-          <h2 className="sb-group" style={{ marginBottom: 2 }}>{headline}</h2>
-          <div className="text-[10.5px]" style={{ color: "var(--ink-4)" }}>{subline}</div>
-        </div>
-        {visibleTabs.map(tab => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => switchTab(tab.id as TabId)}
-              className={`sb-item ${active ? "sb-item--active" : ""}`}
-              style={{ width: "100%", textAlign: "left" }}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="flex-1 truncate">{tab.label}</span>
-            </button>
-          );
-        })}
-      </aside>
+    <div className="flex h-full">
+      <SettingsNavigation items={TABS} activeItem={activeTab} onSelect={setActiveTab} />
 
       {/* Content */}
-      <main className="flex-1 overflow-auto p-6 lg:p-8">
+      <main className="flex-1 overflow-auto p-6">
         {activeTab === "company" && <CompanyTab />}
         {activeTab === "bank" && <BankTab />}
         {activeTab === "chartOfAccounts" && <ChartOfAccountsTab />}
         {activeTab === "employees" && <EmployeesTab />}
         {activeTab === "insurance" && <InsuranceTab />}
         {activeTab === "rules" && <BookingRulesTab />}
-        {activeTab === "globalRules" && <GlobalRules />}
         {activeTab === "opening" && <OpeningBalancesTab />}
         {activeTab === "depreciation" && <DepreciationTab />}
         {activeTab === "suppliers" && <SuppliersTab />}
         {activeTab === "customers" && <CustomersTab />}
         {activeTab === "templates" && <TemplatesTab />}
-        {activeTab === "reminders" && <RemindersTab />}
-        {activeTab === "accountMappings" && <AccountMappingsTab />}
         {activeTab === "dsg" && <DsgTab />}
         {activeTab === "subscription" && <SubscriptionTab />}
         {activeTab === "avatar" && <AvatarSettingsTab />}
@@ -239,81 +164,25 @@ export default function Settings({ scope = "personal", basePath = "/einstellunge
         {activeTab === "users" && <UsersTab />}
         {activeTab === "services" && <ServicesTab />}
         {activeTab === "qr" && <QrSettingsTab />}
-        {activeTab === "pos" && <PosSettingsTab />}
-        {activeTab === "ebics" && <EbicsSettingsTab />}
       </main>
-    </div>
-  );
-}
-
-// ─── Company Logo Upload ───────────────────────────────────────────────────────────
-
-function CompanyLogoUpload({ logoUrl, onUploaded }: { logoUrl: string | null; onUploaded: () => void }) {
-  const uploadMut = trpc.settings.uploadCompanyLogo.useMutation({
-    onSuccess: () => { toast.success("Logo hochgeladen"); onUploaded(); },
-    onError: (e) => toast.error(`Logo-Upload fehlgeschlagen: ${e.message}`),
-  });
-  const deleteMut = trpc.settings.deleteCompanyLogo.useMutation({
-    onSuccess: () => { toast.success("Logo entfernt"); onUploaded(); },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast.error('Bitte ein Bild auswählen (PNG, JPG, SVG)');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Datei zu gross (max. 5 MB)');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = (reader.result as string).split(',')[1];
-      uploadMut.mutate({ base64, filename: file.name, mimeType: file.type });
-    };
-    reader.readAsDataURL(file);
-    // Reset input so the same file can be re-selected
-    e.target.value = '';
-  };
-
-  return (
-    <div className="flex items-center gap-6">
-      <div className="w-40 h-20 border-2 border-dashed rounded-lg flex items-center justify-center bg-muted/30 overflow-hidden">
-        {logoUrl ? (
-          <img src={logoUrl} alt="Firmenlogo" className="max-w-full max-h-full object-contain p-2" />
-        ) : (
-          <span className="text-muted-foreground text-xs text-center px-2">Kein Logo</span>
-        )}
-      </div>
-      <div className="flex flex-col gap-2">
-        <label className="cursor-pointer">
-          <input type="file" accept="image/*" className="hidden" onChange={handleFileSelect} disabled={uploadMut.isPending} />
-          <Button variant="outline" size="sm" asChild disabled={uploadMut.isPending}>
-            <span>
-              {uploadMut.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-              {logoUrl ? 'Logo ändern' : 'Logo hochladen'}
-            </span>
-          </Button>
-        </label>
-        {logoUrl && (
-          <Button variant="ghost" size="sm" onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending} className="text-destructive hover:text-destructive">
-            <Trash2 className="h-4 w-4 mr-2" /> Entfernen
-          </Button>
-        )}
-      </div>
     </div>
   );
 }
 
 // ─── Company Tab ──────────────────────────────────────────────────────────────────
 
-export function CompanyTab() {
+function CompanyTab() {
   const { data, isLoading, refetch } = trpc.settings.getCompanySettings.useQuery();
+  const { data: organization, refetch: refetchOrganization } = trpc.organizations.getCurrent.useQuery();
   const upsert = trpc.settings.upsertCompanySettings.useMutation({
     onSuccess: () => { toast.success("Unternehmensdaten wurden aktualisiert."); refetch(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateOrganization = trpc.organizations.update.useMutation({
+    onSuccess: () => {
+      toast.success("Freigaberegel wurde aktualisiert.");
+      refetchOrganization();
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -337,6 +206,8 @@ export function CompanyTab() {
       vatNumber: (current as Record<string, unknown>).vatNumber as string ?? "",
       vatMethod: (current as Record<string, unknown>).vatMethod as string ?? "effective",
       vatSaldoRate: (current as Record<string, unknown>).vatSaldoRate as string ?? "6.20",
+      vatPauschalRate: (current as Record<string, unknown>).vatPauschalRate as string ?? "",
+      vatPauschalActivity: (current as Record<string, unknown>).vatPauschalActivity as string ?? "",
       vatPeriod: (current as Record<string, unknown>).vatPeriod as string ?? "quarterly",
       fiscalYearStartMonth: String((current as Record<string, unknown>).fiscalYearStartMonth ?? 1),
       phone: (current as Record<string, unknown>).phone as string ?? "",
@@ -360,6 +231,8 @@ export function CompanyTab() {
       vatNumber: form.vatNumber || undefined,
       vatMethod: (form.vatMethod as "effective" | "saldo" | "pauschal") || undefined,
       vatSaldoRate: form.vatSaldoRate || undefined,
+      vatPauschalRate: form.vatPauschalRate || undefined,
+      vatPauschalActivity: form.vatPauschalActivity || undefined,
       vatPeriod: (form.vatPeriod as "quarterly" | "semi-annual") || undefined,
       fiscalYearStartMonth: form.fiscalYearStartMonth ? parseInt(form.fiscalYearStartMonth) : undefined,
       phone: form.phone || undefined,
@@ -373,11 +246,11 @@ export function CompanyTab() {
   if (isLoading) return <div className="text-muted-foreground">Lädt...</div>;
 
   return (
-    <div className="max-w-3xl space-y-5">
+    <div className="max-w-2xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Unternehmensdaten</h1>
-          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>Firmenstammdaten, MWST und Geschäftsjahr</p>
+          <h1 className="text-2xl font-bold">Unternehmensdaten</h1>
+          <p className="text-muted-foreground text-sm mt-1">Firmenstammdaten, MWST und Geschäftsjahr</p>
         </div>
         {!editing ? (
           <Button onClick={startEdit} variant="outline" size="sm">
@@ -403,78 +276,17 @@ export function CompanyTab() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Firmenangaben</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-2 gap-4">
-          <div className="col-span-2">
-            <Label>Firmenname</Label>
-            {editing ? <Input value={val("companyName")} onChange={e => set("companyName", e.target.value)} className="mt-1" />
-              : <p className="mt-1 font-medium">{val("companyName") || "—"}</p>}
-          </div>
-          <div>
-            <Label>Rechtsform</Label>
-            {editing ? (
-              <Select value={val("legalForm")} onValueChange={v => set("legalForm", v)}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="AG">AG</SelectItem>
-                  <SelectItem value="GmbH">GmbH</SelectItem>
-                  <SelectItem value="Einzelfirma">Einzelfirma</SelectItem>
-                  <SelectItem value="Kollektivgesellschaft">Kollektivgesellschaft</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : <p className="mt-1">{val("legalForm") || "—"}</p>}
-          </div>
-          <div>
-            <Label>Handelsregisternummer</Label>
-            {editing ? <Input value={val("hrNumber")} onChange={e => set("hrNumber", e.target.value)} className="mt-1" placeholder="CHE-xxx.xxx.xxx" />
-              : <p className="mt-1">{val("hrNumber") || "—"}</p>}
-          </div>
-          <div>
-            <Label>UID</Label>
-            {editing ? <Input value={val("uid")} onChange={e => set("uid", e.target.value)} className="mt-1" placeholder="CHE-xxx.xxx.xxx" />
-              : <p className="mt-1">{val("uid") || "—"}</p>}
-          </div>
-          <div>
-            <Label>MWST-Nummer</Label>
-            {editing ? <Input value={val("vatNumber")} onChange={e => set("vatNumber", e.target.value)} className="mt-1" placeholder="CHE-xxx.xxx.xxx MWST" />
-              : <p className="mt-1">{val("vatNumber") || "—"}</p>}
-          </div>
-        </CardContent>
-      </Card>
+      <CompanyApprovalCard
+        requiresDualApproval={organization?.requiresDualApproval ?? false}
+        isPending={updateOrganization.isPending}
+        onChange={(requiresDualApproval) => updateOrganization.mutate({ requiresDualApproval })}
+      />
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Adresse</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-2 gap-4">
-          <div className="col-span-2">
-            <Label>Strasse</Label>
-            {editing ? <Input value={val("street")} onChange={e => set("street", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("street") || "—"}</p>}
-          </div>
-          <div>
-            <Label>PLZ</Label>
-            {editing ? <Input value={val("zipCode")} onChange={e => set("zipCode", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("zipCode") || "—"}</p>}
-          </div>
-          <div>
-            <Label>Ort</Label>
-            {editing ? <Input value={val("city")} onChange={e => set("city", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("city") || "—"}</p>}
-          </div>
-          <div>
-            <Label>Kanton</Label>
-            {editing ? <Input value={val("canton")} onChange={e => set("canton", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("canton") || "—"}</p>}
-          </div>
-          <div>
-            <Label>Land</Label>
-            {editing ? <Input value={val("country")} onChange={e => set("country", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("country") || "—"}</p>}
-          </div>
-        </CardContent>
-      </Card>
+      <CompanyDetailsCard editing={editing} value={val} onValueChange={set} />
 
-      <Card>
+      <CompanyAddressCard editing={editing} value={val} onValueChange={set} />
+
+      {false && <Card>
         <CardHeader><CardTitle className="text-base">MWST &amp; Geschäftsjahr</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
           <div>
@@ -497,6 +309,20 @@ export function CompanyTab() {
                 <Input className="mt-1" value={val("vatSaldoRate")} onChange={e => set("vatSaldoRate", e.target.value)} placeholder="6.20" />
               ) : <p className="mt-1">{val("vatSaldoRate") || "6.20"}%</p>}
             </div>
+          )}
+          {val("vatMethod") === "pauschal" && (
+            <>
+              <div>
+                <Label>Bewilligter Pauschalsteuersatz (%)</Label>
+                {editing ? <Input className="mt-1" value={val("vatPauschalRate")} onChange={e => set("vatPauschalRate", e.target.value)} placeholder="3.5" />
+                  : <p className="mt-1">{val("vatPauschalRate") ? `${val("vatPauschalRate")}%` : "—"}</p>}
+              </div>
+              <div>
+                <Label>Bewilligte Tätigkeit</Label>
+                {editing ? <Input className="mt-1" value={val("vatPauschalActivity")} onChange={e => set("vatPauschalActivity", e.target.value)} placeholder="Gemäss ESTV-Bewilligung" />
+                  : <p className="mt-1">{val("vatPauschalActivity") || "—"}</p>}
+              </div>
+            </>
           )}
           <div>
             <Label>Abrechnungsperiode</Label>
@@ -524,35 +350,16 @@ export function CompanyTab() {
             ) : <p className="mt-1">{["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"][parseInt(val("fiscalYearStartMonth") || "1") - 1] || "Januar"}</p>}
           </div>
         </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Kontakt</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-2 gap-4">
-          <div>
-            <Label>Telefon</Label>
-            {editing ? <Input value={val("phone")} onChange={e => set("phone", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("phone") || "—"}</p>}
-          </div>
-          <div>
-            <Label>E-Mail</Label>
-            {editing ? <Input value={val("email")} onChange={e => set("email", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("email") || "—"}</p>}
-          </div>
-          <div className="col-span-2">
-            <Label>Website</Label>
-            {editing ? <Input value={val("website")} onChange={e => set("website", e.target.value)} className="mt-1" />
-              : <p className="mt-1">{val("website") || "—"}</p>}
-          </div>
-        </CardContent>
-      </Card>
+      </Card>}
+      <CompanyVatSettingsCard editing={editing} value={val} onValueChange={set} />
+      <CompanyContactCard editing={editing} value={val} onValueChange={set} />
     </div>
   );
 }
 
 // ─── Bank Tab ─────────────────────────────────────────────────────────────────
 
-export function BankTab() {
+function BankTab() {
   const utils = trpc.useUtils();
   const { data: bankAccounts, isLoading, refetch } = trpc.settings.getBankAccounts.useQuery();
   const updateMut = trpc.settings.updateBankAccount.useMutation({
@@ -727,7 +534,7 @@ export function BankTab() {
 
 // ─── Employees Tab ────────────────────────────────────────────────────────────
 
-export function EmployeesTab() {
+function EmployeesTab() {
   const { data: emps, isLoading, refetch } = trpc.settings.getEmployees.useQuery();
   const { data: allAccounts } = trpc.accounts.list.useQuery();
   // Only salary-relevant accounts (4xxx Personalaufwand, 2xxx Verbindlichkeiten)
@@ -959,7 +766,7 @@ export function EmployeesTab() {
 
 // ─── Insurance Tab ────────────────────────────────────────────────────────────
 
-export function InsuranceTab() {
+function InsuranceTab() {
   const { data: settings, isLoading, refetch } = trpc.settings.getInsuranceSettings.useQuery();
   const upsert = trpc.settings.upsertInsuranceSetting.useMutation({
     onSuccess: () => { toast.success("Gespeichert"); refetch(); setDialogOpen(false); },
@@ -1201,7 +1008,7 @@ export function InsuranceTab() {
 
 // ─── Booking Rules Tab ────────────────────────────────────────────────────────
 
-export function BookingRulesTab() {
+function BookingRulesTab() {
   const { data: rules, isLoading, refetch } = trpc.settings.getBookingRules.useQuery();
   const toggle = trpc.settings.toggleBookingRule.useMutation({
     onSuccess: () => refetch(),
@@ -1392,7 +1199,7 @@ function SortableOBRow({ row, value, onChange }: {
   );
 }
 
-export function OpeningBalancesTab() {
+function OpeningBalancesTab() {
   const { fiscalYear } = useFiscalYear();
   const [editYear, setEditYear] = useState(fiscalYear);
   const [localBalances, setLocalBalances] = useState<Record<number, string>>({});
@@ -1798,8 +1605,30 @@ export function OpeningBalancesTab() {
         </DialogContent>
       </Dialog>
 
-      {/* Import Dialog */}
-      <Dialog open={showImport} onOpenChange={open => { setShowImport(open); if (!open) setImportPreview([]); }}>
+      <OpeningBalancesImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        rows={rows}
+        onApply={(items: OpeningBalanceImportItem[]) => {
+          const newBalances = { ...localBalances };
+          let matched = 0;
+          for (const item of items) {
+            const account = rows?.find((row) => row.accountNumber === item.number);
+            if (account) {
+              newBalances[account.accountId] = String(item.balance);
+              matched += 1;
+            }
+          }
+          setLocalBalances(newBalances);
+          setIsDirty(true);
+          setShowImport(false);
+          toast.success(`${matched} von ${items.length} Salden übernommen. Bitte speichern.`);
+          if (matched < items.length) toast.warning(`${items.length - matched} Konten nicht im Kontenplan gefunden (Nummer prüfen).`);
+        }}
+      />
+
+      {/* Legacy Inline-Dialog: durch OpeningBalancesImportDialog ersetzt. */}
+      {false && (<Dialog open={showImport} onOpenChange={open => { setShowImport(open); if (!open) setImportPreview([]); }}>
         <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Eröffnungssalden importieren</DialogTitle>
@@ -1838,7 +1667,7 @@ export function OpeningBalancesTab() {
                       <FileText className="h-4 w-4 mr-2" /> PDF / Bild hochladen (KI)
                     </Button>
                   </div>
-                  <input ref={importFileRef} type="file" accept=".csv,.xlsx" className="hidden"
+                  <input ref={importFileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
                   <input ref={importPdfFileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) handleImportFile(f); e.target.value = ""; }} />
@@ -1928,7 +1757,7 @@ export function OpeningBalancesTab() {
             )}
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog>)}
     </div>
   );
 }
@@ -1941,7 +1770,7 @@ const METHOD_LABELS: Record<string, string> = {
   degressive: "Degressiv",
 };
 
-export function DepreciationTab() {
+function DepreciationTab() {
   const { data: settings, isLoading, refetch } = trpc.yearEnd.listDepreciationSettings.useQuery();
   const { data: allAccounts } = trpc.accounts.list.useQuery();
   const createMut = trpc.yearEnd.createDepreciationSetting.useMutation({
@@ -2337,7 +2166,7 @@ type UndoAction =
   | { type: "deleteAccount"; accountData: { number: string; name: string; accountType: string; normalBalance: string; category?: string; subCategory?: string; isBankAccount?: boolean; isVatRelevant?: boolean; defaultVatRate?: string | null }; accountLabel: string }
   | { type: "createAccount"; id: number; accountLabel: string };
 
-export function ChartOfAccountsTab() {
+function ChartOfAccountsTab() {
   const { data: allAccounts, isLoading, refetch } = trpc.settings.getAllAccounts.useQuery();
   const utils = trpc.useUtils();
 
@@ -2396,8 +2225,6 @@ export function ChartOfAccountsTab() {
   const bulkImportMut = trpc.settings.bulkImportAccounts.useMutation({
     onSuccess: (data) => {
       toast.success(`Import: ${data.created} erstellt, ${data.updated} aktualisiert, ${data.skipped} übersprungen`);
-      refetch();
-      setShowImport(false);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -2413,16 +2240,9 @@ export function ChartOfAccountsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showKmuConfirm, setShowKmuConfirm] = useState(false);
-  const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
-  const [importPreview, setImportPreview] = useState<Array<{number: string; name: string; accountType: string; category?: string; subCategory?: string}>>([]);
   const [dragEnabled, setDragEnabled] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showInactive, setShowInactive] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const pdfInputRef = useRef<HTMLInputElement>(null);
-  const [isPdfParsing, setIsPdfParsing] = useState(false);
-  const [selectedImportIds, setSelectedImportIds] = useState<Set<number>>(new Set());
-  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
 
   // DnD sensors
   const sensors = useSensors(
@@ -2987,7 +2807,14 @@ export function ChartOfAccountsTab() {
         </div>
       )}
 
-      {/* Import Dialog */}
+      <ChartOfAccountsImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        bulkImportMut={bulkImportMut}
+        onImportSuccess={() => refetch()}
+      />
+
+      {/* Legacy-Implementierung des Importdialogs; produktiv wird ausschließlich ChartOfAccountsImportDialog verwendet.
       <Dialog open={showImport} onOpenChange={setShowImport}>
         <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
           <DialogHeader>
@@ -2999,7 +2826,7 @@ export function ChartOfAccountsTab() {
               Bei Excel/CSV werden die Spalten "Nummer" und "Name" automatisch erkannt.
               Bei PDF wird der Kontenplan per KI extrahiert.
             </p>
-            {/* PDF progress indicator */}
+            {/* PDF progress indicator * /}
             {isPdfParsing && (
               <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
                 <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
@@ -3020,13 +2847,13 @@ export function ChartOfAccountsTab() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".xlsx,.csv"
+                accept=".xlsx,.xls,.csv"
                 className="hidden"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
                   try {
-                    const rows = await readSpreadsheetObjects(file) as Record<string, any>[];
+                    const rows = await readSpreadsheetRecords(file);
                     // Helper: find column value by trying multiple header variants (with/without *)
                     const getCol = (r: Record<string, any>, ...keys: string[]) => {
                       for (const k of keys) {
@@ -3232,7 +3059,7 @@ export function ChartOfAccountsTab() {
             )}
             {importPreview.length > 0 && (
               <div className="space-y-2">
-                {/* Select all / deselect all toolbar */}
+                {/* Select all / deselect all toolbar * /}
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-3">
                     <input
@@ -3265,7 +3092,7 @@ export function ChartOfAccountsTab() {
                     >Keine</button>
                   </div>
                 </div>
-                {/* Preview table – tall, scrollable */}
+                {/* Preview table – tall, scrollable * /}
                 <div className="border rounded-lg overflow-y-auto" style={{ maxHeight: "55vh" }}>
                   <Table>
                     <TableHeader className="sticky top-0 bg-card z-10">
@@ -3329,6 +3156,7 @@ export function ChartOfAccountsTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      */}
 
       {/* KMU Template Confirm Dialog */}
       <Dialog open={showKmuConfirm} onOpenChange={setShowKmuConfirm}>
@@ -3422,7 +3250,7 @@ function SortableAccountList({ accounts, dragEnabled, onDragEnd, children }: {
 
 // ─── DSG (Datenschutz) Tab ───────────────────────────────────────────────────
 
-export function DsgTab() {
+function DsgTab() {
   const [activeSection, setActiveSection] = useReactState<"audit" | "export" | "privacy">("audit");
 
   return (
@@ -3810,7 +3638,7 @@ function PrivacySection() {
 
 // ─── Suppliers (Lieferanten) Tab ─────────────────────────────────────────────
 
-export function SuppliersTab() {
+function SuppliersTab() {
   const [search, setSearch] = useReactState("");
   const [showInactive, setShowInactive] = useReactState(false);
   const [showDialog, setShowDialog] = useReactState(false);
@@ -3934,7 +3762,7 @@ export function SuppliersTab() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const rows = await readSpreadsheetObjects(file) as Record<string, any>[];
+      const rows = await readSpreadsheetRecords(file);
       const parsed = rows.map((r: Record<string, any>) => {
         const name = String(r["Name"] ?? r["Firma"] ?? r["Lieferant"] ?? r["name"] ?? r["company"] ?? "").trim();
         const street = String(r["Strasse"] ?? r["Adresse"] ?? r["street"] ?? r["address"] ?? "").trim() || undefined;
@@ -3960,63 +3788,13 @@ export function SuppliersTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Lieferanten-Stammdaten</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Lieferanten mit IBAN, Zahlungsfristen und Kontaktdaten für ISO 20022 Zahlungen
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => importFromDocsMut.mutate()} disabled={importFromDocsMut.isPending}>
-            {importFromDocsMut.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
-            Aus Rechnungen
-          </Button>
-          <Button variant="outline" onClick={() => { setShowImportDialog(true); setImportPreview([]); }}>
-            <Upload className="h-4 w-4 mr-2" /> CSV/Excel Import
-          </Button>
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4 mr-2" /> Neuer Lieferant
-          </Button>
-        </div>
-      </div>
+      <SuppliersToolbar search={search} onSearchChange={setSearch} showInactive={showInactive} onShowInactiveChange={setShowInactive} onImportFromDocuments={() => importFromDocsMut.mutate()} isImportingFromDocuments={importFromDocsMut.isPending} onImport={() => { setShowImportDialog(true); setImportPreview([]); }} onCreate={openCreate} />
 
-      {/* Import from documents result */}
-      {importFromDocsMut.data && (
-        <Card className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800">
-          <CardContent className="py-3 px-4">
-            <div className="flex items-center gap-2 text-sm">
-              <Check className="h-4 w-4 text-green-600" />
-              <span className="font-medium">Rechnungs-Import abgeschlossen:</span>
-              <span>{importFromDocsMut.data.created} neu erstellt, {importFromDocsMut.data.linked} verknüpft, {importFromDocsMut.data.skipped} übersprungen</span>
-              <span className="text-muted-foreground">({importFromDocsMut.data.total} Rechnungen geprüft)</span>
-            </div>
-            {importFromDocsMut.data.details.length > 0 && (
-              <div className="mt-2 max-h-32 overflow-y-auto">
-                {importFromDocsMut.data.details.map((d, i) => (
-                  <div key={i} className="text-xs text-muted-foreground">
-                    {d.supplierName} – {d.action}
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      <SupplierDocumentImportResult result={importFromDocsMut.data} />
 
-      <div className="flex items-center gap-4">
-        <Input
-          placeholder="Suche nach Name, Ort oder IBAN..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="max-w-sm"
-        />
-        <div className="flex items-center gap-2">
-          <Switch checked={showInactive} onCheckedChange={setShowInactive} />
-          <Label className="text-sm text-muted-foreground">Inaktive anzeigen</Label>
-        </div>
-      </div>
+      <SuppliersList suppliers={suppliersList ?? []} onEdit={openEdit} onDeactivate={(supplier) => { if (confirm(`Lieferant "${supplier.name}" wirklich deaktivieren?`)) deleteMut.mutate({ id: supplier.id }); }} />
 
+      <div className="hidden">
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -4082,103 +3860,33 @@ export function SuppliersTab() {
           </Table>
         </CardContent>
       </Card>
+      </div>
 
       {/* Create/Edit Dialog */}
-      <Dialog open={showDialog} onOpenChange={(open) => { if (!open) { setShowDialog(false); resetForm(); } }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editSupplier ? "Lieferant bearbeiten" : "Neuer Lieferant"}</DialogTitle>
-          </DialogHeader>
+      <SupplierFormDialog
+        open={showDialog}
+        onOpenChange={(open) => { if (!open) { setShowDialog(false); resetForm(); } }}
+        isEditing={Boolean(editSupplier)}
+        onCancel={() => { setShowDialog(false); resetForm(); }}
+        onSave={handleSave}
+        isPending={createMut.isPending || updateMut.isPending}
+      >
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Name *</Label>
-                <Input value={formName} onChange={e => setFormName(e.target.value)} placeholder="z.B. AXA Versicherungen AG" />
-              </div>
-              <div>
-                <Label>Kontaktperson</Label>
-                <Input value={formContact} onChange={e => setFormContact(e.target.value)} placeholder="Max Mustermann" />
-              </div>
-            </div>
-            <div>
-              <Label>Strasse</Label>
-              <Input value={formStreet} onChange={e => setFormStreet(e.target.value)} placeholder="Musterstrasse 1" />
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <Label>PLZ</Label>
-                <Input value={formZip} onChange={e => setFormZip(e.target.value)} placeholder="6000" />
-              </div>
-              <div>
-                <Label>Ort</Label>
-                <Input value={formCity} onChange={e => setFormCity(e.target.value)} placeholder="Luzern" />
-              </div>
-              <div>
-                <Label>Land</Label>
-                <Input value={formCountry} onChange={e => setFormCountry(e.target.value)} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>IBAN</Label>
-                <Input value={formIban} onChange={e => setFormIban(e.target.value)} placeholder="CH93 0076 2011 6238 5295 7" className="font-mono" />
-              </div>
-              <div>
-                <Label>BIC / SWIFT</Label>
-                <Input value={formBic} onChange={e => setFormBic(e.target.value)} placeholder="UBSWCHZH80A" className="font-mono" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>E-Mail</Label>
-                <Input value={formEmail} onChange={e => setFormEmail(e.target.value)} type="email" placeholder="info@lieferant.ch" />
-              </div>
-              <div>
-                <Label>Telefon</Label>
-                <Input value={formPhone} onChange={e => setFormPhone(e.target.value)} placeholder="+41 41 000 00 00" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Zahlungsfrist (Tage)</Label>
-                <Input value={formPaymentDays} onChange={e => setFormPaymentDays(e.target.value)} type="number" />
-              </div>
-              <div>
-                <Label>Standard-Aufwandkonto</Label>
-                <Select value={formAccountId} onValueChange={setFormAccountId}>
-                  <SelectTrigger><SelectValue placeholder="Konto wählen" /></SelectTrigger>
-                  <SelectContent>
-                    {expenseAccounts.map(a => (
-                      <SelectItem key={a.id} value={String(a.id)}>{a.number} {a.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <Label>Match-Pattern (für Bankimport)</Label>
-              <Input value={formMatchPattern} onChange={e => setFormMatchPattern(e.target.value)} placeholder="z.B. AXA, Mobility, Swisscom" />
-              <p className="text-xs text-muted-foreground mt-1">
-                Komma-getrennte Begriffe, die in Bankimport-Transaktionen automatisch diesem Lieferanten zugeordnet werden.
-              </p>
-            </div>
-            <div>
-              <Label>Notizen</Label>
-              <Textarea value={formNotes} onChange={e => setFormNotes(e.target.value)} rows={3} placeholder="Interne Notizen..." />
-            </div>
+            <SupplierFormFields name={formName} onNameChange={setFormName} contact={formContact} onContactChange={setFormContact} street={formStreet} onStreetChange={setFormStreet} zip={formZip} onZipChange={setFormZip} city={formCity} onCityChange={setFormCity} country={formCountry} onCountryChange={setFormCountry} iban={formIban} onIbanChange={setFormIban} bic={formBic} onBicChange={setFormBic} email={formEmail} onEmailChange={setFormEmail} phone={formPhone} onPhoneChange={setFormPhone} />
+            <SupplierPaymentFields paymentDays={formPaymentDays} onPaymentDaysChange={setFormPaymentDays} accountId={formAccountId} onAccountIdChange={setFormAccountId} accounts={expenseAccounts} matchPattern={formMatchPattern} onMatchPatternChange={setFormMatchPattern} notes={formNotes} onNotesChange={setFormNotes} />
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowDialog(false); resetForm(); }}>Abbrechen</Button>
-            <Button onClick={handleSave} disabled={createMut.isPending || updateMut.isPending}>
-              {(createMut.isPending || updateMut.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {editSupplier ? "Speichern" : "Erstellen"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </SupplierFormDialog>
 
       {/* CSV/Excel Import Dialog */}
-      <Dialog open={showImportDialog} onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}>
+      <SupplierImportDialog
+        open={showImportDialog}
+        onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}
+        onFileChange={handleImportFile}
+        onImport={() => importFromListMut.mutate({ suppliers: importPreview })}
+        preview={importPreview}
+        isPending={importFromListMut.isPending}
+      />
+      <Dialog open={false} onOpenChange={() => undefined}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Lieferanten importieren (CSV/Excel)</DialogTitle>
@@ -4192,7 +3900,7 @@ export function SuppliersTab() {
             <div className="flex gap-2">
               <input
                 type="file"
-                accept=".xlsx,.csv"
+                accept=".xlsx,.xls,.csv"
                 className="hidden"
                 id="supplier-import-file"
                 onChange={handleImportFile}
@@ -4253,7 +3961,7 @@ export function SuppliersTab() {
 
 // ─── Customers (Kunden) Tab ──────────────────────────────────────────────────
 
-export function CustomersTab() {
+function CustomersTab() {
   const [search, setSearch] = useReactState("");
   const [showDialog, setShowDialog] = useReactState(false);
   const [editCustomer, setEditCustomer] = useReactState<any>(null);
@@ -4297,12 +4005,15 @@ export function CustomersTab() {
     [accountsList]
   );
 
+  const finishCustomerDialog = (message: string) => { toast.success(message); refetch(); setShowDialog(false); resetCustForm(); };
+  const finishServiceDialog = (message: string) => { toast.success(message); refetch(); setShowServiceDialog(false); resetServiceForm(); };
+
   const createCust = trpc.customers.create.useMutation({
-    onSuccess: () => { toast.success("Kunde erstellt"); refetch(); setShowDialog(false); resetCustForm(); },
+    onSuccess: () => finishCustomerDialog("Kunde erstellt"),
     onError: (e) => toast.error(e.message),
   });
   const updateCust = trpc.customers.update.useMutation({
-    onSuccess: () => { toast.success("Kunde aktualisiert"); refetch(); setShowDialog(false); resetCustForm(); },
+    onSuccess: () => finishCustomerDialog("Kunde aktualisiert"),
     onError: (e) => toast.error(e.message),
   });
   const deleteCust = trpc.customers.delete.useMutation({
@@ -4311,11 +4022,11 @@ export function CustomersTab() {
   });
 
   const addService = trpc.customers.addService.useMutation({
-    onSuccess: () => { toast.success("Dienstleistung hinzugefügt"); refetch(); setShowServiceDialog(false); resetServiceForm(); },
+    onSuccess: () => finishServiceDialog("Dienstleistung hinzugefügt"),
     onError: (e) => toast.error(e.message),
   });
   const updateService = trpc.customers.updateService.useMutation({
-    onSuccess: () => { toast.success("Dienstleistung aktualisiert"); refetch(); setShowServiceDialog(false); resetServiceForm(); },
+    onSuccess: () => finishServiceDialog("Dienstleistung aktualisiert"),
     onError: (e) => toast.error(e.message),
   });
   const deleteService = trpc.customers.deleteService.useMutation({
@@ -4333,12 +4044,15 @@ export function CustomersTab() {
   });
 
   function resetCustForm() {
-    setCCustNr(""); setCFirstName(""); setCLastName(""); setCCompany("");
-    setCSpouseFirstName(""); setCSpouseLastName(""); setCMaritalStatus("");
-    setCBirthDate(""); setCSpouseBirthDate("");
-    setCStreet(""); setCZip(""); setCCity("");
-    setCCountry("Schweiz"); setCEmail(""); setCPhone(""); setCSalutation(""); setCNotes("");
+    applyCustomerFormState(emptyCustomerFormState());
     setEditCustomer(null);
+  }
+
+  function applyCustomerFormState(state: ReturnType<typeof emptyCustomerFormState>) {
+    setCCustNr(state.customerNumber); setCFirstName(state.firstName); setCLastName(state.lastName); setCCompany(state.company);
+    setCSpouseFirstName(state.spouseFirstName); setCSpouseLastName(state.spouseLastName); setCMaritalStatus(state.maritalStatus);
+    setCBirthDate(state.birthDate); setCSpouseBirthDate(state.spouseBirthDate); setCStreet(state.street); setCZip(state.zipCode); setCCity(state.city);
+    setCCountry(state.country); setCEmail(state.email); setCPhone(state.phone); setCSalutation(state.salutation); setCNotes(state.notes);
   }
 
   function resetServiceForm() {
@@ -4349,38 +4063,13 @@ export function CustomersTab() {
 
   function openEditCust(c: any) {
     setEditCustomer(c);
-    setCCustNr(c.customerNumber || "");
-    setCFirstName(c.firstName || ""); setCLastName(c.lastName || "");
-    setCCompany(c.company || "");
-    setCSpouseFirstName(c.spouseFirstName || ""); setCSpouseLastName(c.spouseLastName || "");
-    setCMaritalStatus(c.maritalStatus || "");
-    setCBirthDate(c.birthDate || ""); setCSpouseBirthDate(c.spouseBirthDate || "");
-    setCStreet(c.street || "");
-    setCZip(c.zipCode || ""); setCCity(c.city || ""); setCCountry(c.country || "Schweiz");
-    setCEmail(c.email || ""); setCPhone(c.phone || ""); setCSalutation(c.salutation || "");
-    setCNotes(c.notes || "");
+    applyCustomerFormState(customerFormStateFromRecord(c));
     setShowDialog(true);
   }
 
   function handleSaveCust() {
     if (!cLastName.trim()) { toast.error("Nachname ist erforderlich"); return; }
-    const displayName = [cLastName.trim(), cFirstName.trim()].filter(Boolean).join(" ");
-    const data = {
-      name: displayName,
-      customerNumber: cCustNr || undefined,
-      firstName: cFirstName.trim() || undefined,
-      lastName: cLastName.trim() || undefined,
-      company: cCompany || undefined,
-      spouseFirstName: cSpouseFirstName || undefined,
-      spouseLastName: cSpouseLastName || undefined,
-      maritalStatus: cMaritalStatus || undefined,
-      birthDate: cBirthDate || undefined,
-      spouseBirthDate: cSpouseBirthDate || undefined,
-      street: cStreet || undefined,
-      zipCode: cZip || undefined, city: cCity || undefined, country: cCountry || undefined,
-      email: cEmail || undefined, phone: cPhone || undefined, salutation: cSalutation || undefined,
-      notes: cNotes || undefined,
-    };
+    const data = buildCustomerPayload({ customerNumber: cCustNr, firstName: cFirstName, lastName: cLastName, company: cCompany, spouseFirstName: cSpouseFirstName, spouseLastName: cSpouseLastName, maritalStatus: cMaritalStatus, birthDate: cBirthDate, spouseBirthDate: cSpouseBirthDate, street: cStreet, zipCode: cZip, city: cCity, country: cCountry, email: cEmail, phone: cPhone, salutation: cSalutation, notes: cNotes });
     if (editCustomer) {
       updateCust.mutate({ id: editCustomer.id, ...data });
     } else {
@@ -4392,8 +4081,14 @@ export function CustomersTab() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      // Liest .xlsx (ExcelJS) und .csv (UTF-8/Latin-1-Fallback) als Roh-Matrix
-      const rawRows = await readSpreadsheetRows(file) as any[];
+      // Read as raw rows to handle both standard headers and positional formats.
+      const rawRows = await readSpreadsheetRows(file);
+
+      const parsedFromModule = parseCustomerImportRows(rawRows);
+      setImportPreview(parsedFromModule);
+      toast.success(`${parsedFromModule.length} Kunden aus Datei gelesen`);
+      e.target.value = "";
+      return;
 
       // Detect if file has standard headers (Name/Firma/etc.) in first non-empty row
       const headerRowIdx = rawRows.findIndex(r => r.some((c: any) => {
@@ -4410,7 +4105,7 @@ export function CustomersTab() {
         parsed = dataRows.map((r: any[]) => {
           const get = (...keys: string[]) => {
             for (const k of keys) {
-              const idx = headers.findIndex((h: any) => h.toLowerCase() === k.toLowerCase());
+              const idx = headers.findIndex(h => h.toLowerCase() === k.toLowerCase());
               if (idx >= 0 && r[idx] != null && String(r[idx]).trim()) return String(r[idx]).trim();
             }
             return '';
@@ -4432,12 +4127,12 @@ export function CustomersTab() {
         // Positional import: detect column with Kunden-Nr. (numeric) and Name+Ort (text with comma)
         // Format: col[1] = Kunden-Nr. (number), col[2] = "Name, Ort" (text)
         // Filter rows where col[1] is a valid customer number (1-9000) and col[2] has content
-        const customerRows = rawRows.filter(r =>
-          typeof r[1] === 'number' && r[1] > 0 && r[1] < 9000 &&
-          String(r[2] ?? '').trim().length > 2
-        );
+        const customerRows = rawRows.filter(r => {
+          const customerNumber = Number(r[1]);
+          return Number.isFinite(customerNumber) && customerNumber > 0 && customerNumber < 9000 && String(r[2] ?? '').trim().length > 2;
+        });
         // Deduplicate by Kunden-Nr.
-        const seen = new Set<number>();
+        const seen = new Set<string>();
         const uniqueRows = customerRows.filter(r => {
           if (seen.has(r[1])) return false;
           seen.add(r[1]);
@@ -4480,13 +4175,7 @@ export function CustomersTab() {
 
   function handleSaveService() {
     if (!sDesc.trim() || !sAccountId) { toast.error("Beschreibung und Ertragskonto sind erforderlich"); return; }
-    const data = {
-      customerId: selectedCustomerId!,
-      description: sDesc.trim(),
-      revenueAccountId: parseInt(sAccountId),
-      hourlyRate: sHourlyRate ? parseFloat(sHourlyRate) : undefined,
-      isDefault: sIsDefault,
-    };
+    const data = buildCustomerServicePayload({ customerId: selectedCustomerId!, description: sDesc, revenueAccountId: sAccountId, hourlyRate: sHourlyRate, isDefault: sIsDefault });
     if (editService) {
       updateService.mutate({ id: editService.id, ...data });
     } else {
@@ -4495,7 +4184,15 @@ export function CustomersTab() {
   }
 
   return (
+    <CustomersTabLayout toolbar={null}>
     <div className="space-y-6">
+      <CustomersToolbar
+        search={search}
+        onSearchChange={setSearch}
+        onImport={() => { setShowImportDialog(true); setImportPreview([]); }}
+        onCreate={openCreateCust}
+      />
+      <div className="hidden">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Kunden-Stammdaten</h1>
@@ -4519,8 +4216,17 @@ export function CustomersTab() {
         onChange={e => setSearch(e.target.value)}
         className="max-w-sm"
       />
+      </div>
 
-      <div className="space-y-3">
+      <CustomersList
+        customers={customersList ?? []}
+        onEdit={openEditCust}
+        onDeactivate={(customer) => deleteCust.mutate({ id: customer.id })}
+        onAddService={openAddService}
+        onEditService={openEditService}
+        onDeactivateService={(service) => deleteService.mutate({ id: service.id })}
+      />
+      <div className="hidden">
         {(!customersList || customersList.length === 0) ? (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
@@ -4629,11 +4335,14 @@ export function CustomersTab() {
       </div>
 
       {/* Customer Dialog */}
-      <Dialog open={showDialog} onOpenChange={(open) => { if (!open) { setShowDialog(false); resetCustForm(); } }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editCustomer ? "Kunde bearbeiten" : "Neuer Kunde"}</DialogTitle>
-          </DialogHeader>
+      <CustomerFormDialog
+        open={showDialog}
+        onOpenChange={(open) => { if (!open) { setShowDialog(false); resetCustForm(); } }}
+        isEditing={Boolean(editCustomer)}
+        onCancel={() => { setShowDialog(false); resetCustForm(); }}
+        onSave={handleSaveCust}
+        isPending={createCust.isPending || updateCust.isPending}
+      >
           <div className="grid gap-4 py-4">
             {/* Row 1: Kunden-Nr, Nachname, Vorname, Firma */}
             <div className="grid grid-cols-12 gap-3">
@@ -4731,18 +4440,20 @@ export function CustomersTab() {
               <Textarea value={cNotes} onChange={e => setCNotes(e.target.value)} rows={3} />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowDialog(false); resetCustForm(); }}>Abbrechen</Button>
-            <Button onClick={handleSaveCust} disabled={createCust.isPending || updateCust.isPending}>
-              {(createCust.isPending || updateCust.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {editCustomer ? "Speichern" : "Erstellen"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </CustomerFormDialog>
 
       {/* CSV/Excel Import Dialog */}
-      <Dialog open={showImportDialog} onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}>
+      <CustomerImportDialog
+        open={showImportDialog}
+        onOpenChange={(open) => { if (!open) { setShowImportDialog(false); setImportPreview([]); } }}
+        fileRef={customerImportFileRef}
+        onFileChange={handleImportFile}
+        onImport={() => importFromListMut.mutate({ customers: importPreview })}
+        preview={importPreview}
+        isPending={importFromListMut.isPending}
+      />
+      {/* Legacy-Importdialog: aktiv ist CustomerImportDialog. */}
+      <Dialog open={false} onOpenChange={() => undefined}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Kunden importieren (CSV/Excel)</DialogTitle>
@@ -4756,7 +4467,7 @@ export function CustomersTab() {
             <div className="flex gap-2">
               <input
                 type="file"
-                accept=".xlsx,.csv"
+                accept=".xlsx,.xls,.csv"
                 className="hidden"
                 ref={customerImportFileRef}
                 onChange={handleImportFile}
@@ -4810,8 +4521,25 @@ export function CustomersTab() {
         </DialogContent>
       </Dialog>
 
-      {/* Service Dialog */}
-      <Dialog open={showServiceDialog} onOpenChange={(open) => { if (!open) { setShowServiceDialog(false); resetServiceForm(); } }}>
+      <CustomerServiceDialog
+        open={showServiceDialog}
+        onOpenChange={(open) => { if (!open) { setShowServiceDialog(false); resetServiceForm(); } }}
+        isEditing={Boolean(editService)}
+        description={sDesc}
+        onDescriptionChange={setSDesc}
+        accountId={sAccountId}
+        onAccountIdChange={setSAccountId}
+        hourlyRate={sHourlyRate}
+        onHourlyRateChange={setSHourlyRate}
+        isDefault={sIsDefault}
+        onDefaultChange={setSIsDefault}
+        accounts={revenueAccounts}
+        onSave={handleSaveService}
+        isPending={addService.isPending || updateService.isPending}
+        onCancel={() => { setShowServiceDialog(false); resetServiceForm(); }}
+      />
+      {/* Legacy-Dienstleistungsdialog: aktiv ist CustomerServiceDialog. */}
+      <Dialog open={false} onOpenChange={() => undefined}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editService ? "Dienstleistung bearbeiten" : "Neue Dienstleistung"}</DialogTitle>
@@ -4850,12 +4578,13 @@ export function CustomersTab() {
         </DialogContent>
       </Dialog>
     </div>
+    </CustomersTabLayout>
   );
 }
 
 // ─── Templates (Vorlagen) Tab ────────────────────────────────────────────────
 
-export function TemplatesTab() {
+function TemplatesTab() {
   const [showUpload, setShowUpload] = useReactState(false);
   const [uploadName, setUploadName] = useReactState("");
   const [uploadType, setUploadType] = useReactState("invoice");
@@ -5004,325 +4733,6 @@ export function TemplatesTab() {
   );
 }
 
-// ─── Reminders / Mahn-Policy Tab (Phase 3b) ────────────────────────────────
-
-function RemindersTab() {
-  const utils = trpc.useUtils();
-  const policyQuery = trpc.reminders.getPolicy.useQuery();
-
-  const [form, setForm] = useState({
-    level1Days: 15, level1Fee: 0,  level1Grace: 10,
-    level2Days: 30, level2Fee: 20, level2Grace: 10,
-    level3Days: 60, level3Fee: 40, level3Grace: 7,
-  });
-
-  useEffect(() => {
-    if (!policyQuery.data) return;
-    const p = policyQuery.data;
-    setForm({
-      level1Days: p.level1.minDaysOverdue, level1Fee: p.level1.feeAmount, level1Grace: p.level1.gracePeriodDays,
-      level2Days: p.level2.minDaysOverdue, level2Fee: p.level2.feeAmount, level2Grace: p.level2.gracePeriodDays,
-      level3Days: p.level3.minDaysOverdue, level3Fee: p.level3.feeAmount, level3Grace: p.level3.gracePeriodDays,
-    });
-  }, [policyQuery.data]);
-
-  const updateMut = trpc.reminders.updatePolicy.useMutation({
-    onSuccess: () => {
-      toast.success("Mahn-Policy gespeichert");
-      utils.reminders.getPolicy.invalidate();
-      utils.reminders.openPositions.invalidate();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const isAscending = form.level1Days <= form.level2Days && form.level2Days <= form.level3Days;
-
-  const handleSave = () => {
-    if (!isAscending) {
-      toast.error("Schwellwerte müssen aufsteigend sein: Stufe 1 ≤ Stufe 2 ≤ Stufe 3");
-      return;
-    }
-    updateMut.mutate(form);
-  };
-
-  if (policyQuery.isLoading) {
-    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Lade Policy…</div>;
-  }
-
-  const LEVELS: Array<{ key: 1 | 2 | 3; title: string; subtitle: string }> = [
-    { key: 1, title: "Zahlungserinnerung", subtitle: "Freundlicher Hinweis, in der Regel ohne Gebühr." },
-    { key: 2, title: "1. Mahnung", subtitle: "Erste formelle Mahnung mit Gebühr." },
-    { key: 3, title: "2. Mahnung", subtitle: "Letzte Mahnung – häufig mit höherer Gebühr und kurzer Nachfrist." },
-  ];
-
-  const setField = (key: keyof typeof form, value: number) =>
-    setForm(f => ({ ...f, [key]: Number.isFinite(value) ? value : 0 }));
-
-  return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold">Mahnwesen</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Schwellwerte und Gebühren für das 3-stufige Mahnwesen. Die Einstellungen gelten für alle
-          Rechnungen dieser Organisation. Bestehende Mahnungen bleiben unverändert.
-        </p>
-      </div>
-
-      {!isAscending && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-          <div>
-            Die Schwellwerte müssen aufsteigend sein: <strong>Stufe 1 ≤ Stufe 2 ≤ Stufe 3</strong>.
-          </div>
-        </div>
-      )}
-
-      {LEVELS.map(lvl => {
-        const daysKey  = `level${lvl.key}Days`  as const;
-        const feeKey   = `level${lvl.key}Fee`   as const;
-        const graceKey = `level${lvl.key}Grace` as const;
-        return (
-          <Card key={lvl.key}>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Badge variant="outline">Stufe {lvl.key}</Badge>
-                {lvl.title}
-              </CardTitle>
-              <CardDescription>{lvl.subtitle}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <Label htmlFor={daysKey}>Ab Tagen überfällig</Label>
-                  <Input
-                    id={daysKey}
-                    type="number"
-                    min={0}
-                    max={365}
-                    value={form[daysKey]}
-                    onChange={e => setField(daysKey, parseInt(e.target.value, 10))}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Anzahl Tage nach Fälligkeit, ab der diese Stufe ausgelöst werden darf.
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor={feeKey}>Mahngebühr (CHF)</Label>
-                  <Input
-                    id={feeKey}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={form[feeKey]}
-                    onChange={e => setField(feeKey, parseFloat(e.target.value))}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Wird zur Gesamtforderung addiert (Stufe 1 meist 0).
-                  </p>
-                </div>
-                <div>
-                  <Label htmlFor={graceKey}>Nachfrist (Tage)</Label>
-                  <Input
-                    id={graceKey}
-                    type="number"
-                    min={0}
-                    max={90}
-                    value={form[graceKey]}
-                    onChange={e => setField(graceKey, parseInt(e.target.value, 10))}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Neue Zahlungsfrist ab Mahndatum.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
-
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="outline"
-          onClick={() => {
-            if (!policyQuery.data) return;
-            const p = policyQuery.data;
-            setForm({
-              level1Days: p.level1.minDaysOverdue, level1Fee: p.level1.feeAmount, level1Grace: p.level1.gracePeriodDays,
-              level2Days: p.level2.minDaysOverdue, level2Fee: p.level2.feeAmount, level2Grace: p.level2.gracePeriodDays,
-              level3Days: p.level3.minDaysOverdue, level3Fee: p.level3.feeAmount, level3Grace: p.level3.gracePeriodDays,
-            });
-          }}
-          disabled={updateMut.isPending}
-        >
-          Zurücksetzen
-        </Button>
-        <Button onClick={handleSave} disabled={updateMut.isPending || !isAscending}>
-          {updateMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-          Speichern
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Account Mappings Tab (Phase 3c) ────────────────────────────────────────
-// Konfiguration der organisationsweiten Standard-Konten für Lohn- und
-// Kreditkarten-Buchungen. Ersetzt die bisherigen Hardcodes (1032/1082/4000).
-
-function AccountMappingsTab() {
-  const utils = trpc.useUtils();
-  const orgQuery = trpc.organizations.getCurrent.useQuery();
-  const accountsQuery = trpc.accounts.list.useQuery();
-
-  const [form, setForm] = useState<{
-    defaultBankAccountId: number | null;
-    creditCardClearingAccountId: number | null;
-    defaultSalaryExpenseAccountId: number | null;
-  }>({
-    defaultBankAccountId: null,
-    creditCardClearingAccountId: null,
-    defaultSalaryExpenseAccountId: null,
-  });
-
-  useEffect(() => {
-    if (!orgQuery.data) return;
-    const o = orgQuery.data as any;
-    setForm({
-      defaultBankAccountId: o.defaultBankAccountId ?? null,
-      creditCardClearingAccountId: o.creditCardClearingAccountId ?? null,
-      defaultSalaryExpenseAccountId: o.defaultSalaryExpenseAccountId ?? null,
-    });
-  }, [orgQuery.data]);
-
-  const updateMut = trpc.organizations.update.useMutation({
-    onSuccess: () => {
-      toast.success("Konto-Mapping gespeichert");
-      utils.organizations.getCurrent.invalidate();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  if (orgQuery.isLoading || accountsQuery.isLoading) {
-    return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Lade…</div>;
-  }
-
-  const accounts = accountsQuery.data ?? [];
-  const bankAccounts = accounts.filter((a: any) => a.isBankAccount || String(a.number).startsWith("10"));
-  const assetAccounts = accounts.filter((a: any) => a.accountType === "asset");
-  const expenseAccounts = accounts.filter((a: any) => a.accountType === "expense");
-
-  const SelectAcc = ({
-    value, onChange, options, placeholder,
-  }: {
-    value: number | null;
-    onChange: (v: number | null) => void;
-    options: Array<{ id: number; number: string; name: string }>;
-    placeholder: string;
-  }) => (
-    <Select
-      value={value == null ? "__none__" : String(value)}
-      onValueChange={(v) => onChange(v === "__none__" ? null : parseInt(v, 10))}
-    >
-      <SelectTrigger>
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__none__">— (Fallback verwenden)</SelectItem>
-        {options.map(a => (
-          <SelectItem key={a.id} value={String(a.id)}>
-            {a.number} – {a.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-
-  const handleSave = () => {
-    updateMut.mutate({
-      defaultBankAccountId: form.defaultBankAccountId,
-      creditCardClearingAccountId: form.creditCardClearingAccountId,
-      defaultSalaryExpenseAccountId: form.defaultSalaryExpenseAccountId,
-    });
-  };
-
-  return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold">Standard-Konten</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Organisationsweite Standardzuordnungen für Lohn- und Kreditkarten-Buchungen.
-          Wenn kein Konto zugewiesen ist, versucht die App auf die historischen
-          Kontonummern (1032 / 1082 / 4000) zurückzugreifen.
-        </p>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Standard-Bankkonto</CardTitle>
-          <CardDescription>
-            Wird als Zahlkonto für Lohn und als Gegenkonto bei
-            Kreditkarten-Belastungen verwendet (vormals hardcodiert 1032 LUKB).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <SelectAcc
-            value={form.defaultBankAccountId}
-            onChange={(v) => setForm(f => ({ ...f, defaultBankAccountId: v }))}
-            options={bankAccounts.length > 0 ? bankAccounts : assetAccounts}
-            placeholder="Bitte Bankkonto wählen"
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Kreditkarten-Durchlaufkonto</CardTitle>
-          <CardDescription>
-            Sammelkonto für Kreditkarten-Abrechnungen. Wird zwischen Monats-
-            Sammelbelastung und den einzelnen Aufwandspositionen verwendet
-            (vormals hardcodiert 1082 VISA Durchlauf).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <SelectAcc
-            value={form.creditCardClearingAccountId}
-            onChange={(v) => setForm(f => ({ ...f, creditCardClearingAccountId: v }))}
-            options={assetAccounts}
-            placeholder="Bitte Durchlaufkonto wählen"
-          />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Standard-Lohnkonto (Brutto)</CardTitle>
-          <CardDescription>
-            Default-Aufwandskonto für Bruttolohn, wenn der Mitarbeiter kein
-            eigenes Gross-Lohnkonto hinterlegt hat (vormals hardcodiert 4000).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <SelectAcc
-            value={form.defaultSalaryExpenseAccountId}
-            onChange={(v) => setForm(f => ({ ...f, defaultSalaryExpenseAccountId: v }))}
-            options={expenseAccounts}
-            placeholder="Bitte Aufwandskonto wählen"
-          />
-        </CardContent>
-      </Card>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => orgQuery.refetch()} disabled={updateMut.isPending}>
-          Zurücksetzen
-        </Button>
-        <Button onClick={handleSave} disabled={updateMut.isPending}>
-          {updateMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-          Speichern
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 // ─── Subscription Tab ─────────────────────────────────────────────────────────
 
@@ -5357,7 +4767,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   none: { label: "Kein Abo", color: "bg-gray-100 text-gray-800" },
 };
 
-export function SubscriptionTab() {
+function SubscriptionTab() {
   const subQuery = trpc.stripe.getSubscription.useQuery();
   const createCheckout = trpc.stripe.createCheckout.useMutation();
   const createPortal = trpc.stripe.createPortal.useMutation();
@@ -5383,7 +4793,7 @@ export function SubscriptionTab() {
   const handleManageSubscription = async () => {
     try {
       const { url } = await createPortal.mutateAsync({
-        returnUrl: `${window.location.origin}/admin?tab=subscription`,
+        returnUrl: `${window.location.origin}/settings?tab=subscription`,
       });
       if (url) window.location.href = url;
     } catch (err: any) {
@@ -5528,7 +4938,7 @@ export function SubscriptionTab() {
 
 // ─── Avatar Settings Tab ──────────────────────────────────────────────────────
 
-export function AvatarSettingsTab() {
+function AvatarSettingsTab() {
   const { data: settings, isLoading } = trpc.avatarSettings.get.useQuery();
   const utils = trpc.useUtils();
   const saveMutation = trpc.avatarSettings.save.useMutation({
@@ -5664,7 +5074,7 @@ export function AvatarSettingsTab() {
 
 // ─── Import Automation Tab ────────────────────────────────────────────────────
 
-export function ImportAutomationTab() {
+function ImportAutomationTab() {
   const { data: settings, isLoading } = trpc.importAutomation.get.useQuery();
   const utils = trpc.useUtils();
   const saveMutation = trpc.importAutomation.save.useMutation({

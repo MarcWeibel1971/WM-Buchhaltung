@@ -1,44 +1,43 @@
-import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { useMemo } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Link } from "wouter";
 import {
-  FileText, Building2, CheckSquare, Receipt,
-  ArrowRight, Upload, Sparkles, CheckCircle,
-  Link2, Eye, Inbox as InboxIcon, AlertCircle,
+  FileText, Building2, CheckSquare, Receipt, Clock,
+  ArrowRight, Upload, Sparkles, TrendingUp, TrendingDown,
+  AlertCircle, CheckCircle, Link2, Eye, Wallet,
+  CreditCard, BarChart3, CalendarClock
 } from "lucide-react";
-import { Pill } from "@/components/klax/Pill";
-import { AICallout } from "@/components/klax/AICallout";
-import { LineChart, Line, ResponsiveContainer, Tooltip } from "recharts";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", minimumFractionDigits: 2 }).format(val);
 }
 
-type TaskKey = "all" | "newDocs" | "pendingEntries" | "unmatchedBankTx" | "openInvoices";
-
 export default function Dashboard() {
   const { fiscalYear: year } = useFiscalYear();
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<TaskKey>("all");
 
+  const { data: stats } = trpc.reports.dashboard.useQuery({ fiscalYear: year });
   const { data: incomeStatement } = trpc.reports.incomeStatement.useQuery({ fiscalYear: year });
-  const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 50 });
+  const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 5 });
   const { data: pendingBank } = trpc.bankImport.getPendingTransactions.useQuery({});
   const { data: allDocs } = trpc.documents.list.useQuery({ fiscalYear: year });
   const { data: company } = trpc.settings.getCompanySettings.useQuery();
-  const { data: monthlyData } = trpc.reports.monthlyAggregates.useQuery({ months: 6 });
-  const { data: bankBalanceData } = trpc.accounts.getBankBalance.useQuery({ fiscalYear: year });
 
-  const totalRevenue = useMemo(() =>
-    incomeStatement?.revenues?.reduce((s, r) => s + r.balance, 0) ?? 0,
-    [incomeStatement]);
-  const totalExpenses = useMemo(() =>
-    incomeStatement?.expenses?.reduce((s, e) => s + e.balance, 0) ?? 0,
-    [incomeStatement]);
+  const totalRevenue = useMemo(() => {
+    if (!incomeStatement?.revenues) return 0;
+    return incomeStatement.revenues.reduce((s, r) => s + r.balance, 0);
+  }, [incomeStatement]);
+
+  const totalExpenses = useMemo(() => {
+    if (!incomeStatement?.expenses) return 0;
+    return incomeStatement.expenses.reduce((s, e) => s + e.balance, 0);
+  }, [incomeStatement]);
+
   const profit = totalRevenue - totalExpenses;
 
+  // Compute task counts
   const pendingEntries = pendingJournal?.entries?.length ?? 0;
   const pendingBankTx = pendingBank?.length ?? 0;
   const unmatchedBankTx = pendingBank?.filter(tx => !tx.matchedDocumentId)?.length ?? 0;
@@ -48,388 +47,359 @@ export default function Dashboard() {
   const totalDocs = allDocs?.length ?? 0;
   const autoRate = totalDocs > 0 ? Math.round((aiProcessedDocs / totalDocs) * 100) : 0;
   const matchRate = totalDocs > 0 ? Math.round((matchedDocs / totalDocs) * 100) : 0;
-  const openInvoices = 0;
 
-  const firstName = (user?.name ?? "").split(" ")[0] || "dir";
-  const companyName = company?.companyName ?? "Meine Firma";
-  const kw = getKW(new Date());
-
-  // Aufgaben-Hub: konsolidierte Tabs (ehemalige Tiles + Filter-Rail)
-  const tasks: { key: TaskKey; icon: any; label: string; count: number; href: string; description: string }[] = [
-    { key: "newDocs", icon: FileText, label: "Neue Belege", count: newDocs, href: "/workflow?tab=docs&filter=new", description: "Warten auf KI-Analyse" },
-    { key: "pendingEntries", icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/journal", description: "Buchungsvorschläge bereit" },
-    { key: "unmatchedBankTx", icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/workflow?tab=bank&filter=unmatched", description: "Ohne zugeordneten Beleg" },
-    { key: "openInvoices", icon: Receipt, label: "Offene Rechnungen", count: openInvoices, href: "/rechnungen?tab=open", description: "Fällige Zahlungen" },
-  ];
-
-  const totalActive = tasks.reduce((s, t) => s + t.count, 0);
-  const visibleTasks = activeTab === "all"
-    ? tasks
-    : tasks.filter(t => t.key === activeTab);
-
-  const sparkData = useMemo(() => {
-    if (!monthlyData?.length) return [];
-    return monthlyData.map(m => ({
-      name: m.month.slice(5),
-      revenue: m.revenue,
-      expenses: m.expenses,
-      profit: m.profit,
-    }));
-  }, [monthlyData]);
+  const todoItems = [
+    { icon: FileText, label: "Neue Belege", count: newDocs, href: "/belege?filter=new", color: "oklch(0.65 0.20 250)" },
+    { icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/freigaben", color: "oklch(0.65 0.18 145)" },
+    { icon: Building2, label: "Ungematchte Banktx", count: unmatchedBankTx, href: "/bank?tab=unmatched", color: "oklch(0.70 0.15 60)" },
+  ].filter(t => t.count > 0);
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1280px] mx-auto">
-      {/* Greeting + Quick-Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+      {/* Header with primary CTAs */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="display text-[26px] font-medium" style={{ color: "var(--ink)" }}>
-            Guten Tag, {firstName}.
-          </h2>
-          <p className="text-[13px] mt-1" style={{ color: "var(--ink-3)" }}>
-            {companyName} · GJ {year} · KW {kw}
-          </p>
+          <h2 className="text-xl font-bold text-foreground">Dashboard</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">{company?.companyName ?? "Meine Firma"} · GJ {year}</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <Link href="/workflow?action=upload">
-            <button className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-medium"
-              style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)", boxShadow: "var(--shadow-1)" }}>
-              <Upload className="h-3.5 w-3.5" /> Beleg hochladen
-            </button>
+        <div className="flex gap-2">
+          <Link href="/belege">
+            <Button size="sm" className="gap-1.5 text-xs">
+              <Upload className="h-3.5 w-3.5" />
+              Beleg hochladen
+            </Button>
           </Link>
-          <Link href="/rechnungen/neu">
-            <button className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-medium"
-              style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)", boxShadow: "var(--shadow-1)" }}>
-              <Receipt className="h-3.5 w-3.5" /> Rechnung erstellen
-            </button>
+          <Link href="/bank?tab=import">
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs">
+              <Building2 className="h-3.5 w-3.5" />
+              Bank importieren
+            </Button>
+          </Link>
+          <Link href="/rechnungen">
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs">
+              <Receipt className="h-3.5 w-3.5" />
+              Rechnung erstellen
+            </Button>
           </Link>
         </div>
       </div>
 
-      {/* Kompakte KI-Hero Card */}
-      <div
-        className="rounded-[14px] p-5 relative overflow-hidden"
-        style={{
-          background: "linear-gradient(135deg, var(--paper) 0%, #F6F2EB 100%)",
-          border: "1px solid var(--hair)",
-          boxShadow: "var(--shadow-1)",
-        }}
-      >
-        <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-2">
-              <span
-                className="w-6 h-6 rounded-md flex items-center justify-center"
-                style={{ background: "linear-gradient(135deg, var(--ai) 0%, #6B5AA8 100%)", color: "#fff" }}
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-              </span>
-              <span className="k-label" style={{ color: "var(--ai)" }}>
-                KLAX hat für dich vorbereitet
-              </span>
-            </div>
-            <p className="text-[15px] leading-snug" style={{ color: "var(--ink)" }}>
-              {totalActive > 0 ? (
-                <>
-                  <strong className="font-semibold">{totalActive}</strong> offene Aufgaben warten auf dich.
-                  {aiProcessedDocs > 0 && <> Davon wurden <strong className="font-semibold">{aiProcessedDocs}</strong> automatisch erkannt.</>}
-                </>
-              ) : (
-                <>Alles erledigt. Keine offenen Aufgaben.</>
-              )}
-            </p>
-          </div>
-
-          {/* Kompakter KPI-Block */}
-          <div className="grid grid-cols-3 gap-4 w-full lg:w-auto lg:flex-shrink-0">
-            <div className="min-w-[78px]">
-              <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
-                {autoRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span>
-              </div>
-              <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Automatisierung</div>
-            </div>
-            <div className="min-w-[78px]">
-              <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
-                {matchRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span>
-              </div>
-              <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Match-Quote</div>
-            </div>
-            <div className="min-w-[78px]">
-              <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
-                {aiProcessedDocs}
-              </div>
-              <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Verarbeitet</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Aufgaben-Hub: Filter-Rail + Task-Liste */}
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
-        {/* Filter-Rail (links) */}
-        <aside className="space-y-4">
-          <div className="klax-card p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <InboxIcon className="h-4 w-4" style={{ color: "var(--ink-3)" }} />
-              <h3 className="k-label">Heute zu erledigen</h3>
-            </div>
-            <div className="space-y-1">
-              <button
-                onClick={() => setActiveTab("all")}
-                className={`sb-item w-full text-left ${activeTab === "all" ? "sb-item--active" : ""}`}
-              >
-                <CheckSquare className="h-3.5 w-3.5" />
-                <span className="flex-1 text-[13px]">Alle</span>
-                {totalActive > 0 && (
-                  <span
-                    className="text-[10.5px] px-1.5 py-0.5 rounded-full font-medium mono"
-                    style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
-                  >
-                    {totalActive}
-                  </span>
-                )}
-              </button>
-              {tasks.map(t => (
-                <button
-                  key={t.key}
-                  onClick={() => setActiveTab(t.key)}
-                  className={`sb-item w-full text-left ${activeTab === t.key ? "sb-item--active" : ""}`}
-                >
-                  <t.icon className="h-3.5 w-3.5" />
-                  <span className="flex-1 text-[13px]">{t.label}</span>
-                  {t.count > 0 && (
-                    <span
-                      className="text-[10.5px] px-1.5 py-0.5 rounded-full font-medium mono"
-                      style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)" }}
-                    >
-                      {t.count}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="klax-card p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Sparkles className="h-4 w-4" style={{ color: "var(--ai)" }} />
-              <h3 className="k-label">KI-Pipeline</h3>
-            </div>
-            <div className="space-y-3">
-              <PipelineRow label="Automatisch erkannt" value={aiProcessedDocs} icon={<Sparkles className="h-3 w-3" />} tone="ai" />
-              <PipelineRow label="Gematcht" value={matchedDocs} icon={<Link2 className="h-3 w-3" />} tone="pos" />
-              <PipelineRow label="Zur Prüfung" value={pendingEntries} icon={<Eye className="h-3 w-3" />} tone="warn" />
-            </div>
-          </div>
-        </aside>
-
-        {/* Task-Liste (rechts) */}
-        <div className="min-w-0 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="display text-[18px] font-medium" style={{ color: "var(--ink)" }}>
-              {activeTab === "all" ? "Alle Aufgaben" : tasks.find(t => t.key === activeTab)?.label}
-            </h3>
-            <span className="text-[12px]" style={{ color: "var(--ink-3)" }}>
-              {totalActive > 0 ? `${totalActive} offen` : "alles erledigt"}
-            </span>
-          </div>
-
-          {visibleTasks.some(t => t.count > 0) ? (
-            <div className="space-y-2">
-              {visibleTasks.filter(t => t.count > 0).map(task => (
-                <Link key={task.key} href={task.href}>
-                  <div className="klax-card p-4 cursor-pointer group transition-shadow hover:shadow-[var(--shadow-2)]">
-                    <div className="flex items-center gap-4">
-                      <div
-                        className="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0"
-                        style={{ background: "var(--surface-2)", color: "var(--ink-2)" }}
-                      >
-                        <task.icon className="h-4 w-4" />
+      {/* Block 1: HEUTE ZU ERLEDIGEN */}
+      {todoItems.length > 0 ? (
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Heute zu erledigen</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {todoItems.map((item) => (
+              <Link key={item.href} href={item.href}>
+                <Card className="border-border hover:border-primary/30 transition-all cursor-pointer group shadow-sm h-full">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: `${item.color} / 0.12)`.replace(")", "") }}>
+                        <item.icon className="h-4 w-4" style={{ color: item.color }} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[14px] font-medium" style={{ color: "var(--ink)" }}>
-                            {task.label}
-                          </span>
-                          <Pill variant="accent">{task.count}</Pill>
-                        </div>
-                        <p className="text-[12px] mt-0.5" style={{ color: "var(--ink-3)" }}>
-                          {task.description}
-                        </p>
+                        <div className="text-xl font-bold text-foreground">{item.count}</div>
+                        <p className="text-xs text-muted-foreground">{item.label}</p>
                       </div>
-                      <ArrowRight
-                        className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity"
-                        style={{ color: "var(--ink-3)" }}
-                      />
+                      <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
                     </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="klax-card p-10 text-center">
-              <CheckCircle className="h-10 w-10 mx-auto mb-3" style={{ color: "var(--pos)" }} />
-              <h3 className="display text-[18px] font-medium mb-1" style={{ color: "var(--ink)" }}>
-                Alles erledigt.
-              </h3>
-              <p className="text-[13px] max-w-md mx-auto" style={{ color: "var(--ink-3)" }}>
-                Alle Vorschläge sind verbucht und alle Transaktionen zugeordnet.
-              </p>
-              <div className="flex gap-2 justify-center mt-5">
-                <Link href="/workflow?action=upload">
-                  <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
-                    style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
-                    <Upload className="h-3.5 w-3.5" /> Beleg hochladen
-                  </button>
-                </Link>
-                <Link href="/workflow?action=bank-import">
-                  <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
-                    style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
-                    <Building2 className="h-3.5 w-3.5" /> Bank importieren
-                  </button>
-                </Link>
-              </div>
-            </div>
-          )}
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <Card className="border-border shadow-sm bg-green-50/50 dark:bg-green-950/10">
+          <CardContent className="py-6 text-center">
+            <CheckCircle className="h-8 w-8 text-green-500 mx-auto mb-2" />
+            <p className="text-sm font-medium text-foreground">Alles erledigt!</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Keine offenen Aufgaben. Neue Belege oder Banktransaktionen erscheinen hier automatisch.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Block 2: KI HAT FÜR DICH VORBEREITET */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+          KI hat für dich vorbereitet
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-4 text-center">
+              <div className="text-2xl font-bold text-foreground">{aiProcessedDocs}</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Automatisch erkannt</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-4 text-center">
+              <div className="text-2xl font-bold text-foreground">{matchedDocs}</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Gematcht</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-4 text-center">
+              <div className="text-2xl font-bold text-foreground">{autoRate}%</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Automatisierungsquote</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-4 text-center">
+              <div className="text-2xl font-bold text-foreground">{matchRate}%</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Match-Quote</p>
+            </CardContent>
+          </Card>
         </div>
       </div>
 
-      {/* Finanzstatus */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="k-label">Finanzstatus {year}</h3>
-          <Link href="/berichte">
-            <span className="text-[12px] cursor-pointer hover:underline" style={{ color: "var(--klax-accent)" }}>
-              Berichte öffnen →
-            </span>
-          </Link>
-        </div>
-        <div className="klax-card p-5">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
-            <KpiStat label="Bankbestand" value={formatCHF(bankBalanceData?.balance ?? 0)} tone={(bankBalanceData?.balance ?? 0) >= 0 ? "pos" : "neg"} />
-            <KpiStat label="Ertrag YTD" value={formatCHF(totalRevenue)} tone="pos" />
-            <KpiStat label="Aufwand YTD" value={formatCHF(totalExpenses)} tone="neg" />
-          </div>
-
-          <div style={{ borderTop: "1px solid var(--hair)", paddingTop: 12 }}>
-            {sparkData.length > 0 ? (
-              <>
-                <ResponsiveContainer width="100%" height={80}>
-                  <LineChart data={sparkData} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
-                    <Tooltip
-                      contentStyle={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--hair)', background: 'var(--surface)' }}
-                      formatter={(val: number, name: string) => [
-                        new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', minimumFractionDigits: 0 }).format(val),
-                        name === 'revenue' ? 'Ertrag' : name === 'expenses' ? 'Aufwand' : 'Gewinn'
-                      ]}
-                      labelFormatter={(label) => `Monat ${label}`}
-                    />
-                    <Line type="monotone" dataKey="revenue" stroke="var(--pos)" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="expenses" stroke="var(--neg)" strokeWidth={2} dot={false} strokeDasharray="4 2" />
-                  </LineChart>
-                </ResponsiveContainer>
-                <div className="flex items-center gap-4 mt-2 text-[11px]" style={{ color: 'var(--ink-3)' }}>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block w-5 h-0.5 rounded" style={{ background: 'var(--pos)' }} /> Ertrag
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block w-5 h-0.5 rounded" style={{ background: 'var(--neg)' }} /> Aufwand
-                  </span>
-                  <span className="ml-auto text-[10px]" style={{ color: 'var(--ink-4)' }}>Letzte 6 Monate</span>
-                </div>
-              </>
+      {/* Block 3: BELEGE + BANK */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Belege Status */}
+        <Card className="border-border shadow-sm">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-500" />
+                Belege
+              </CardTitle>
+              <Link href="/belege">
+                <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
+                  Alle <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {totalDocs === 0 ? (
+              <div className="flex flex-col items-center py-6 text-center">
+                <Upload className="h-8 w-8 text-muted-foreground/40 mb-2" />
+                <p className="text-sm text-muted-foreground">Lade Rechnungen, Spesen oder Kreditkartenabrechnungen hoch, damit die KI sie automatisch vorbereitet.</p>
+                <Link href="/belege">
+                  <Button size="sm" className="mt-3 gap-1.5 text-xs">
+                    <Upload className="h-3.5 w-3.5" />
+                    Beleg hochladen
+                  </Button>
+                </Link>
+              </div>
             ) : (
-              <div className="flex items-center justify-center h-20 text-[12px]" style={{ color: 'var(--ink-4)' }}>
-                Noch keine Buchungsdaten für Sparklines verfügbar.
+              <div className="space-y-2">
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-xs text-muted-foreground">Neu / Unverarbeitet</span>
+                  <span className="text-sm font-semibold">{newDocs}</span>
+                </div>
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-xs text-muted-foreground">Von KI verarbeitet</span>
+                  <span className="text-sm font-semibold">{aiProcessedDocs}</span>
+                </div>
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-xs text-muted-foreground">Gematcht</span>
+                  <span className="text-sm font-semibold">{matchedDocs}</span>
+                </div>
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-xs text-muted-foreground">Total Belege</span>
+                  <span className="text-sm font-bold">{totalDocs}</span>
+                </div>
               </div>
             )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
+
+        {/* Bank Status */}
+        <Card className="border-border shadow-sm">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-emerald-500" />
+                Bank
+              </CardTitle>
+              <Link href="/bank">
+                <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
+                  Alle <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {pendingBankTx === 0 ? (
+              <div className="flex flex-col items-center py-6 text-center">
+                <CheckCircle className="h-8 w-8 text-green-500 mb-2" />
+                <p className="text-sm text-muted-foreground">Alle Bankbewegungen zugeordnet. Importiere neue Transaktionen, um sie automatisch matchen zu lassen.</p>
+                <Link href="/bank?tab=import">
+                  <Button size="sm" variant="outline" className="mt-3 gap-1.5 text-xs">
+                    <Building2 className="h-3.5 w-3.5" />
+                    Bank importieren
+                  </Button>
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {pendingBank?.slice(0, 4).map((tx) => {
+                  const amount = parseFloat(tx.amount as string);
+                  return (
+                    <div key={tx.id} className="flex items-center justify-between py-1.5 border-b border-border/30 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{tx.description || tx.counterparty || "Transaktion"}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {new Date(tx.transactionDate as any).toLocaleDateString("de-CH")}
+                        </p>
+                      </div>
+                      <span className={`text-xs font-semibold ml-2 ${amount >= 0 ? "text-green-600" : "text-red-500"}`}>
+                        {formatCHF(amount)}
+                      </span>
+                    </div>
+                  );
+                })}
+                {pendingBankTx > 4 && (
+                  <Link href="/bank">
+                    <p className="text-xs text-primary text-center pt-1 cursor-pointer hover:underline">
+                      +{pendingBankTx - 4} weitere Transaktionen
+                    </p>
+                  </Link>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Aktivität + Fristen */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="klax-card p-5 lg:col-span-2">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="k-label">Aktivität</h3>
-            <Link href="/journal">
-              <span className="text-[12px] cursor-pointer" style={{ color: "var(--klax-accent)" }}>
-                Alle anzeigen →
-              </span>
-            </Link>
-          </div>
-          {pendingJournal?.entries?.length ? (
-            <ul className="space-y-2.5">
-              {pendingJournal.entries.slice(0, 5).map(entry => (
-                <li key={entry.id} className="flex items-center gap-3 py-1.5" style={{ borderBottom: "1px solid var(--hair)" }}>
-                  <span className="text-[11px] mono" style={{ color: "var(--ink-4)" }}>
-                    {new Date(entry.bookingDate as any).toLocaleDateString("de-CH")}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] truncate" style={{ color: "var(--ink)" }}>{entry.description}</div>
-                    <div className="text-[11px]" style={{ color: "var(--ink-3)" }}>#{entry.entryNumber}</div>
+      {/* Block 4: FREIGABEN + RECHNUNGEN */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Buchungen */}
+        <Card className="border-border shadow-sm">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <CheckSquare className="h-4 w-4 text-amber-500" />
+                Buchungen
+              </CardTitle>
+              <Link href="/freigaben">
+                <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
+                  Alle <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {pendingEntries === 0 ? (
+              <div className="flex flex-col items-center py-6 text-center">
+                <CheckCircle className="h-8 w-8 text-green-500 mb-2" />
+                <p className="text-sm text-muted-foreground">Alle Vorschläge wurden verbucht. Neue Belege oder Banktransaktionen erscheinen hier automatisch.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {pendingJournal?.entries?.map((entry) => (
+                  <div key={entry.id} className="flex items-center justify-between py-1.5 border-b border-border/30 last:border-0">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{entry.description}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {new Date(entry.bookingDate as any).toLocaleDateString("de-CH")} · {entry.entryNumber}
+                      </p>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium ml-2 flex-shrink-0">
+                      {entry.source}
+                    </span>
                   </div>
-                  <Pill variant="ai" icon={<Sparkles className="h-2.5 w-2.5" />}>{entry.source}</Pill>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[13px]" style={{ color: "var(--ink-3)" }}>
-              Keine Aktivität. Neue Belege und Banktransaktionen erscheinen hier.
-            </p>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="klax-card p-5">
-          <h3 className="k-label mb-3">Fristen & Hinweise</h3>
-          <AICallout title="Empfehlung">
-            MWST-Abrechnung Q{Math.floor(new Date().getMonth() / 3) + 1} prüfen.
-            Klax schlägt vor, die Belege zu konsolidieren.
-          </AICallout>
-          <div className="mt-4 flex items-center gap-2 text-[12px]" style={{ color: "var(--ink-3)" }}>
-            <AlertCircle className="h-3.5 w-3.5" />
-            <span>Keine überfälligen Fristen.</span>
-          </div>
+        {/* Rechnungen / Debitoren */}
+        <Card className="border-border shadow-sm">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Receipt className="h-4 w-4 text-violet-500" />
+                Rechnungen
+              </CardTitle>
+              <Link href="/rechnungen">
+                <Button variant="ghost" size="sm" className="text-xs gap-1 h-7">
+                  Alle <ArrowRight className="h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-col items-center py-6 text-center">
+              <Receipt className="h-8 w-8 text-muted-foreground/40 mb-2" />
+              <p className="text-sm text-muted-foreground">Erstelle Ausgangsrechnungen und verfolge Zahlungseingänge.</p>
+              <Link href="/rechnungen">
+                <Button size="sm" variant="outline" className="mt-3 gap-1.5 text-xs">
+                  <Receipt className="h-3.5 w-3.5" />
+                  Rechnung erstellen
+                </Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Block 5: FINANZSTATUS */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Finanzstatus {year}</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-3 text-center">
+              <Wallet className="h-4 w-4 text-blue-500 mx-auto mb-1" />
+              <div className="text-sm font-bold text-foreground">{formatCHF(totalRevenue - totalExpenses)}</div>
+              <p className="text-[10px] text-muted-foreground">Liquidität</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-3 text-center">
+              <TrendingUp className="h-4 w-4 text-green-500 mx-auto mb-1" />
+              <div className="text-sm font-bold text-green-600">{formatCHF(totalRevenue)}</div>
+              <p className="text-[10px] text-muted-foreground">Ertrag</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-3 text-center">
+              <TrendingDown className="h-4 w-4 text-red-500 mx-auto mb-1" />
+              <div className="text-sm font-bold text-red-500">{formatCHF(totalExpenses)}</div>
+              <p className="text-[10px] text-muted-foreground">Aufwand</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-3 text-center">
+              {profit >= 0
+                ? <TrendingUp className="h-4 w-4 text-green-500 mx-auto mb-1" />
+                : <TrendingDown className="h-4 w-4 text-red-500 mx-auto mb-1" />}
+              <div className={`text-sm font-bold ${profit >= 0 ? "text-green-600" : "text-red-500"}`}>{formatCHF(profit)}</div>
+              <p className="text-[10px] text-muted-foreground">Ergebnis</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-3 text-center">
+              <AlertCircle className="h-4 w-4 text-amber-500 mx-auto mb-1" />
+              <div className="text-sm font-bold text-foreground">{formatCHF(0)}</div>
+              <p className="text-[10px] text-muted-foreground">Off. Forderungen</p>
+            </CardContent>
+          </Card>
+          <Card className="border-border shadow-sm">
+            <CardContent className="p-3 text-center">
+              <CreditCard className="h-4 w-4 text-orange-500 mx-auto mb-1" />
+              <div className="text-sm font-bold text-foreground">{formatCHF(0)}</div>
+              <p className="text-[10px] text-muted-foreground">Off. Verbindlichk.</p>
+            </CardContent>
+          </Card>
         </div>
+      </div>
+
+      {/* Block 6: FRISTEN & HINWEISE */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Fristen & Hinweise</h3>
+        <Card className="border-border shadow-sm">
+          <CardContent className="py-4 px-5">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <CalendarClock className="h-4 w-4 flex-shrink-0" />
+              <span>Keine anstehenden Fristen. MWST-Abrechnung und Periodenabschluss werden hier angezeigt, sobald sie fällig sind.</span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
-}
-
-function KpiStat({ label, value, tone }: { label: string; value: string; tone: "pos" | "neg" | "neutral" }) {
-  const color = tone === "pos" ? "var(--pos)" : tone === "neg" ? "var(--neg)" : "var(--ink)";
-  return (
-    <div>
-      <div className="text-[11px] mb-1" style={{ color: "var(--ink-3)" }}>{label}</div>
-      <div className="display text-[22px] mono font-medium" style={{ color }}>{value}</div>
-    </div>
-  );
-}
-
-function PipelineRow({ label, value, icon, tone }: { label: string; value: number; icon: React.ReactNode; tone: "ai" | "pos" | "warn" }) {
-  const color = tone === "ai" ? "var(--ai)" : tone === "pos" ? "var(--pos)" : "var(--warn)";
-  const bg = tone === "ai" ? "var(--ai-soft)" : tone === "pos" ? "var(--pos-soft)" : "var(--warn-soft)";
-  return (
-    <div className="flex items-center gap-2.5">
-      <span
-        className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
-        style={{ background: bg, color }}
-      >
-        {icon}
-      </span>
-      <span className="flex-1 text-[12.5px]" style={{ color: "var(--ink-2)" }}>
-        {label}
-      </span>
-      <span className="mono text-[13px] font-medium" style={{ color: "var(--ink)" }}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function getKW(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const day = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }

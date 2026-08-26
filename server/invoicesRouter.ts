@@ -31,20 +31,17 @@ import { SwissQRBill } from "swissqrbill/pdf";
 import type { Data } from "swissqrbill/types";
 import { storagePut } from "./storage";
 import { sendEmail } from "./emailService";
+import { buildDebitorOpenItemsCsv } from "./openItemsExport";
 import {
   getDb,
   allocateInvoiceNumber,
   createJournalEntry,
   approveJournalEntry,
-  applyInvoicePayment,
 } from "./db";
-import {
-  generateQRReference,
-  formatQRReference as formatQRRef,
-} from "../shared/qrReference";
-import { createLogger } from "./_core/logger";
-
-const logger = createLogger("invoicesRouter");
+import { assertSupportedAccountingCurrency } from "./accountingCurrency";
+import { generateQrReference } from "../shared/qrReference";
+import { logger } from "./_core/logger";
+import { formatCHF, formatQRRef } from "./paymentFormatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,12 +81,6 @@ const invoiceItemInput = z.object({
 });
 
 // ─── PDF-Renderer ───────────────────────────────────────────────────────────
-
-/** CHF-Format mit Apostroph als Tausendertrenner: 1234.56 → "1'234.56" */
-function formatCHF(n: number): string {
-  const [int, dec] = n.toFixed(2).split(".");
-  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, "'")}.${dec}`;
-}
 
 /**
  * Rendert eine vollständige PDF-Rechnung mit Briefkopf, Positions-Tabelle,
@@ -250,38 +241,10 @@ async function renderInvoicePdf(params: {
   pdfDoc.text(`Zahlbar innert ${invoice.paymentTermDays} Tagen bis ${dueStr}.`, leftM, yPos, { width: contentW });
   yPos = pdfDoc.y + 16;
 
-  // ── Schlusstext (closingText) ──
-  if (invoice.closingText) {
-    pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
-    pdfDoc.text(invoice.closingText, leftM, yPos, { width: contentW });
-    yPos = pdfDoc.y + 16;
-  }
-
-  // ── Fusszeile (footerText) ──
+  // ── Fusszeile ──
   if (invoice.footerText) {
     pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
     pdfDoc.text(invoice.footerText, leftM, yPos, { width: contentW });
-    yPos = pdfDoc.y + 16;
-  }
-
-  // ── Grussformel + Unterzeichner ──
-  if (invoice.greeting || invoice.signatory) {
-    if (invoice.greeting) {
-      pdfDoc.fillColor("#000000").fontSize(10).font("Helvetica");
-      pdfDoc.text(invoice.greeting, leftM, yPos, { width: contentW });
-      yPos = pdfDoc.y + 6;
-    }
-    pdfDoc.text(org.companyName, leftM, yPos, { width: contentW });
-    yPos = pdfDoc.y + 16;
-    if (invoice.signatory) {
-      pdfDoc.text(invoice.signatory, leftM, yPos, { width: contentW });
-      yPos = pdfDoc.y + 2;
-    }
-    if (invoice.signatoryTitle) {
-      pdfDoc.fillColor("#666666").fontSize(9);
-      pdfDoc.text(invoice.signatoryTitle, leftM, yPos, { width: contentW });
-      yPos = pdfDoc.y + 8;
-    }
   }
 
   // ── QR-Einzahlungsschein (falls IBAN konfiguriert und CHF/EUR) ──
@@ -313,7 +276,7 @@ async function renderInvoicePdf(params: {
     // Referenz: QRR nur mit QR-IBAN, sonst SCOR, oder invoice.qrReference wenn gesetzt
     const effectiveRefType = isQrIban ? (qr.referenceType || "QRR") : "SCOR";
     if (effectiveRefType === "QRR" && isQrIban) {
-      const ref = invoice.qrReference || generateQRReference(invoice.id, invoice.fiscalYear ?? invoiceDate.getFullYear());
+      const ref = invoice.qrReference || generateQrReference(invoice.id, invoice.fiscalYear ?? invoiceDate.getFullYear());
       data.reference = formatQRRef(ref);
     } else if (effectiveRefType === "SCOR") {
       const refBody = String(invoice.id).padStart(11, "0");
@@ -396,6 +359,22 @@ export const invoicesRouter = router({
       });
     }),
 
+  exportOpenItemsCsv: orgProcedure
+    .input(z.object({ fiscalYear: z.number().optional() }).optional())
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const today = new Date().toISOString().slice(0, 10);
+      const conditions = [eq(invoices.organizationId, ctx.organizationId), inArray(invoices.status, ["sent", "partially_paid"])];
+      if (input?.fiscalYear) conditions.push(eq(invoices.fiscalYear, input.fiscalYear));
+      const rows = await db.select({ invoice: invoices, customerName: customers.name, customerCompany: customers.company }).from(invoices).leftJoin(customers, eq(invoices.customerId, customers.id)).where(and(...conditions)).orderBy(asc(invoices.dueDate));
+      const items = rows.map(({ invoice, customerName, customerCompany }) => {
+        const isOverdue = invoice.dueDate < today;
+        return { invoiceNumber: invoice.invoiceNumber, customerName: customerCompany ?? customerName ?? "—", invoiceDate: invoice.invoiceDate, dueDate: invoice.dueDate, total: invoice.total, paidAmount: invoice.paidAmount, currency: invoice.currency, isOverdue, daysOverdue: isOverdue ? Math.floor((Date.parse(today) - Date.parse(invoice.dueDate)) / 86_400_000) : 0 };
+      });
+      return { filename: `Offene_Posten_Debitoren${input?.fiscalYear ? `_${input.fiscalYear}` : ""}.csv`, csv: buildDebitorOpenItemsCsv(items), count: items.length };
+    }),
+
   // ─── GET BY ID (mit Positionen) ───────────────────────────────────────────
   getById: orgProcedure
     .input(z.object({ id: z.number() }))
@@ -443,10 +422,6 @@ export const invoicesRouter = router({
       })).min(1),
       vatRate: z.number().min(0).max(100).default(0),
       notes: z.string().optional(),
-      closingText: z.string().optional(),
-      greeting: z.string().optional(),
-      signatory: z.string().optional(),
-      signatoryTitle: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
@@ -490,10 +465,6 @@ export const invoicesRouter = router({
           subject: input.subject ?? null,
           introText: input.introText ?? null,
           footerText: input.footerText ?? null,
-          closingText: input.closingText ?? null,
-          greeting: input.greeting ?? null,
-          signatory: input.signatory ?? null,
-          signatoryTitle: input.signatoryTitle ?? null,
           currency: input.currency,
           subtotal: subtotal.toFixed(2),
           vatTotal: vatTotal.toFixed(2),
@@ -517,10 +488,6 @@ export const invoicesRouter = router({
           subject: input.subject ?? null,
           introText: input.introText ?? null,
           footerText: input.footerText ?? null,
-          closingText: input.closingText ?? null,
-          greeting: input.greeting ?? null,
-          signatory: input.signatory ?? null,
-          signatoryTitle: input.signatoryTitle ?? null,
           currency: input.currency,
           subtotal: subtotal.toFixed(2),
           vatTotal: vatTotal.toFixed(2),
@@ -751,6 +718,11 @@ export const invoicesRouter = router({
       if (invoice.status !== "draft") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Nur Entwürfe können verbucht werden." });
       }
+      try {
+        assertSupportedAccountingCurrency(invoice.currency);
+      } catch (error) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Fremdwährung kann nicht verbucht werden." });
+      }
 
       // Positionen laden
       const items = await db.select().from(invoiceItems)
@@ -788,7 +760,7 @@ export const invoicesRouter = router({
       // Belegnummer + QR-Referenz vergeben
       const fiscalYear = invoice.fiscalYear ?? new Date(invoice.invoiceDate).getFullYear();
       const invoiceNumber = await allocateInvoiceNumber(ctx.organizationId, fiscalYear);
-      const qrReference = generateQRReference(invoice.id, fiscalYear);
+      const qrReference = generateQrReference(invoice.id, fiscalYear);
 
       // Journal-Entry Zeilen zusammenbauen
       // Debit: 1100 Debitoren (Total)
@@ -870,12 +842,28 @@ export const invoicesRouter = router({
         });
       }
 
-      // Kernlogik zentralisiert in db.applyInvoicePayment (wird auch vom
-      // automatischen Debitoren-Abgleich via QR-Referenz verwendet)
-      const result = await applyInvoicePayment(ctx.organizationId, input.id, input.amount, input.paidDate);
-      if (!result) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const total = parseFloat(inv.total as string);
+      const paidSoFar = parseFloat(inv.paidAmount as string);
+      const newPaid = round2(paidSoFar + input.amount);
+      const openAmount = round2(total - newPaid);
 
-      return { success: true, status: result.status, openAmount: result.openAmount };
+      // Epsilon für Fliesskomma-Toleranz (1 Rappen)
+      let newStatus: "sent" | "partially_paid" | "paid" = inv.status as any;
+      let paidDate: string | null = inv.paidDate;
+      if (openAmount <= 0.01) {
+        newStatus = "paid";
+        paidDate = input.paidDate;
+      } else if (newPaid > 0.01) {
+        newStatus = "partially_paid";
+      }
+
+      await db.update(invoices).set({
+        paidAmount: newPaid.toFixed(2),
+        status: newStatus,
+        paidDate,
+      }).where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)));
+
+      return { success: true, status: newStatus, openAmount };
     }),
 
   // ─── CANCEL (Gegenbuchung + Status cancelled) ─────────────────────────────
@@ -1032,7 +1020,7 @@ export const invoicesRouter = router({
         });
       } catch (e) {
         // Dokumenten-Eintrag ist nicht kritisch – PDF wurde erfolgreich erstellt.
-        logger.warn("[invoices.generatePdf] document insert failed:", e);
+        logger.warn({ err: e, invoiceId: invoice.id }, "Invoice PDF document record could not be created");
       }
 
       return { url, s3Key, cached: false, filename };
@@ -1137,41 +1125,5 @@ ${org.companyName}`;
       }
 
       return { success: true, messageId, to: recipient };
-    }),
-
-  // ─── ADMIN DELETE (alle Status, nur für Entwicklungsphase) ───────────────────────────────
-  adminDelete: orgProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [existing] = await db.select({ id: invoices.id }).from(invoices)
-        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)))
-        .limit(1);
-      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
-      await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, input.id));
-      await db.delete(invoices)
-        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)));
-      return { success: true };
-    }),
-
-  // ─── ADMIN BULK DELETE ───────────────────────────────────────────────────────────────────
-  adminBulkDelete: orgProcedure
-    .input(z.object({ ids: z.array(z.number()).min(1) }))
-    .mutation(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      let deleted = 0;
-      for (const id of input.ids) {
-        const [existing] = await db.select({ id: invoices.id }).from(invoices)
-          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)))
-          .limit(1);
-        if (!existing) continue;
-        await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
-        await db.delete(invoices)
-          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)));
-        deleted++;
-      }
-      return { success: true, deleted };
     }),
 });

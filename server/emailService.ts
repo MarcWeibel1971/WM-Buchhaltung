@@ -3,9 +3,7 @@
  * Verwendet für: Registrierungs-Bestätigung, Passwort-Reset
  */
 import { ENV } from "./_core/env";
-import { createLogger } from "./_core/logger";
-
-const logger = createLogger("emailService");
+import { logger } from "./_core/logger";
 
 /**
  * Resend-Attachment. `content` ist immer base64-kodiert (egal ob Text oder
@@ -42,12 +40,7 @@ export async function sendEmail(params: SendEmailParams): Promise<string> {
   const { to, subject, html, text, cc, replyTo, attachments } = params;
 
   if (!ENV.resendApiKey) {
-    logger.warn("[Email] RESEND_API_KEY not configured – email not sent");
-    // In development, log the email content for debugging
-    logger.info("[Email] Would send to:", to);
-    logger.info("[Email] Subject:", subject);
-    logger.info("[Email] HTML:", html.substring(0, 200) + "...");
-    if (attachments?.length) logger.info("[Email] Attachments:", attachments.map(a => a.filename).join(", "));
+    logger.warn({ recipient: to, subject, attachmentCount: attachments?.length ?? 0 }, "Email not sent because RESEND_API_KEY is not configured");
     return "dev-no-api-key";
   }
 
@@ -73,12 +66,12 @@ export async function sendEmail(params: SendEmailParams): Promise<string> {
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
-    logger.error(`[Email] Resend API error (${response.status}):`, errorBody);
+    logger.error({ status: response.status, errorBody, recipient: to }, "Resend API error");
     throw new Error(`E-Mail konnte nicht gesendet werden (${response.status})`);
   }
 
   const data = (await response.json()) as ResendResponse;
-  logger.info(`[Email] Sent successfully to ${to}, id: ${data.id}`);
+  logger.info({ recipient: to, messageId: data.id }, "Email sent successfully");
   return data.id;
 }
 

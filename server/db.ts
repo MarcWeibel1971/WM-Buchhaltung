@@ -6,14 +6,12 @@ import {
   invoiceSequences,
   bankAccounts, bankTransactions, employees, payrollEntries,
   vatPeriods, openingBalances, fiscalYears, creditCardStatements,
-  bookingRules, documents, invoices,
+  bookingRules, documents, organizations,
   type Account, type JournalEntry, type JournalLine, type BankTransaction,
   type Employee, type PayrollEntry, type BookingRule, type Document,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
-import { createLogger } from "./_core/logger";
-
-const logger = createLogger("db");
+import { logger } from "./_core/logger";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -22,7 +20,7 @@ export async function getDb() {
     try {
       _db = drizzle(process.env.DATABASE_URL);
     } catch (error) {
-      logger.warn("[Database] Failed to connect:", error);
+      logger.warn({ err: error }, "Database initialization failed");
       _db = null;
     }
   }
@@ -33,7 +31,7 @@ export async function getDb() {
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
-  if (!db) { logger.warn("[Database] Cannot upsert user: database not available"); return; }
+  if (!db) { logger.warn("Cannot upsert user because the database is unavailable"); return; }
   try {
     const values: InsertUser = { openId: user.openId };
     const updateSet: Record<string, unknown> = {};
@@ -53,7 +51,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (!values.lastSignedIn) values.lastSignedIn = new Date();
     if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
     await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
-  } catch (error) { logger.error("[Database] Failed to upsert user:", error); throw error; }
+  } catch (error) { logger.error({ err: error, openId: user.openId }, "Failed to upsert user"); throw error; }
 }
 
 export async function getUserByOpenId(openId: string) {
@@ -241,6 +239,49 @@ export async function getJournalEntryWithLines(orgId: number, entryId: number) {
   return { entry, lines };
 }
 
+/**
+ * Leitet das Geschäftsjahr zuverlässig aus einem ISO-Buchungsdatum ab.
+ * Ein vom Client übermitteltes Geschäftsjahr wird nie als Buchungsgrundlage
+ * verwendet, damit die zeitliche Zuordnung nicht manipuliert werden kann.
+ */
+export function deriveFiscalYearFromBookingDate(bookingDate: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(bookingDate);
+  if (!match) {
+    throw new Error("Buchungsdatum muss im Format JJJJ-MM-TT angegeben werden.");
+  }
+
+  const parsed = new Date(`${bookingDate}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== bookingDate) {
+    throw new Error("Buchungsdatum ist ungültig.");
+  }
+
+  return Number(match[1]);
+}
+
+/** Verhindert Buchungen in nicht eröffnete oder bereits geschlossene Jahre. */
+export async function assertFiscalYearOpen(organizationId: number, bookingDate: string): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const fiscalYear = deriveFiscalYearFromBookingDate(bookingDate);
+  const [year] = await db.select({ isClosed: fiscalYears.isClosed, status: fiscalYears.status })
+    .from(fiscalYears)
+    .where(and(
+      eq(fiscalYears.organizationId, organizationId),
+      eq(fiscalYears.year, fiscalYear),
+    ))
+    .limit(1);
+
+  if (!year) {
+    throw new Error(`Geschäftsjahr ${fiscalYear} ist nicht eröffnet. Bitte eröffnen Sie es zuerst.`);
+  }
+  if (year.isClosed || year.status === "closed") {
+    throw new Error(`Geschäftsjahr ${fiscalYear} ist geschlossen. In geschlossene Geschäftsjahre können keine Buchungen erstellt werden.`);
+  }
+
+  return fiscalYear;
+}
+
 export async function createJournalEntry(data: {
   organizationId: number;
   bookingDate: string;
@@ -252,6 +293,7 @@ export async function createJournalEntry(data: {
   fiscalYear?: number;
   aiConfidence?: number;
   aiReasoning?: string;
+  createdBy?: number;
   lines: Array<{
     accountId: number;
     side: "debit" | "credit";
@@ -271,14 +313,9 @@ export async function createJournalEntry(data: {
     throw new Error(`Double-Entry-Fehler: Soll (${debitTotal.toFixed(2)}) ≠ Haben (${creditTotal.toFixed(2)})`);
   }
 
-  // Geschäftsjahr konsistent aus dem Buchungsdatum ableiten (niemals still
-  // das Kalenderjahr annehmen) und Periodensperre durchsetzen (GeBüV).
-  const derivedYear = new Date(data.bookingDate).getFullYear();
-  if (data.fiscalYear != null && data.fiscalYear !== derivedYear) {
-    throw new Error(`Buchungsdatum (${data.bookingDate}) liegt nicht im Geschäftsjahr ${data.fiscalYear}.`);
-  }
-  const year = derivedYear;
-  await assertFiscalYearOpen(data.organizationId, year, data.bookingDate);
+  // Das Geschäftsjahr wird immer aus dem Buchungsdatum abgeleitet. Ein optional
+  // übermitteltes data.fiscalYear wird absichtlich ignoriert.
+  const year = await assertFiscalYearOpen(data.organizationId, data.bookingDate);
 
   // Belegnummer wird erst bei approve vergeben (GeBüV: lückenlos, siehe
   // approveJournalEntry). Drafts bleiben ohne entryNumber.
@@ -293,6 +330,7 @@ export async function createJournalEntry(data: {
     fiscalYear: year,
     aiConfidence: data.aiConfidence,
     aiReasoning: data.aiReasoning,
+    createdBy: data.createdBy,
   });
 
   const entryId = (result as any).insertId;
@@ -312,27 +350,23 @@ export async function createJournalEntry(data: {
   return entryId;
 }
 
-/**
- * GeBüV-Periodensperre: Buchungen sind nur in ein eröffnetes, noch nicht
- * abgeschlossenes Geschäftsjahr zulässig. Wirft einen Fehler, wenn das
- * Geschäftsjahr fehlt, abgeschlossen ist oder das Buchungsdatum ausserhalb
- * der Periode liegt.
- */
-export async function assertFiscalYearOpen(orgId: number, year: number, bookingDate?: string): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const [fy] = await db.select().from(fiscalYears)
-    .where(and(eq(fiscalYears.organizationId, orgId), eq(fiscalYears.year, year)))
-    .limit(1);
-  if (!fy) {
-    throw new Error(`Geschäftsjahr ${year} ist für diese Organisation nicht eröffnet. Bitte zuerst in den Einstellungen eröffnen.`);
-  }
-  if (fy.isClosed || fy.status === "closed") {
-    throw new Error(`Geschäftsjahr ${year} ist abgeschlossen – Buchungen sind gesperrt (GeBüV). Korrekturen bitte als Stornobuchung im aktuellen Geschäftsjahr erfassen.`);
-  }
-  if (bookingDate && (bookingDate < fy.startDate || bookingDate > fy.endDate)) {
-    throw new Error(`Buchungsdatum ${bookingDate} liegt ausserhalb der Periode des Geschäftsjahrs ${year} (${fy.startDate} bis ${fy.endDate}).`);
-  }
+/** Builds the debit/credit mirror required for a GeBüV-compliant reversal. */
+export function buildReversalLines(lines: Array<{
+  accountId: number;
+  side: "debit" | "credit";
+  amount: string;
+  description?: string | null;
+  vatAmount?: string | null;
+  vatRate?: string | null;
+}>) {
+  return lines.map((line) => ({
+    accountId: line.accountId,
+    side: (line.side === "debit" ? "credit" : "debit") as "debit" | "credit",
+    amount: line.amount,
+    description: line.description ?? undefined,
+    vatAmount: line.vatAmount ?? undefined,
+    vatRate: line.vatRate ?? undefined,
+  }));
 }
 
 /**
@@ -396,6 +430,14 @@ export async function allocateInvoiceNumber(orgId: number, fiscalYear: number): 
   return `R-${year}-${seqPadded}`;
 }
 
+export function canApproveJournalEntry(input: {
+  requiresDualApproval: boolean;
+  createdBy: number | null;
+  approverId: number;
+}): boolean {
+  return !input.requiresDualApproval || input.createdBy == null || input.createdBy !== input.approverId;
+}
+
 export async function approveJournalEntry(entryId: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -408,6 +450,8 @@ export async function approveJournalEntry(entryId: number, userId: number) {
       fiscalYear: journalEntries.fiscalYear,
       bookingDate: journalEntries.bookingDate,
       organizationId: journalEntries.organizationId,
+      status: journalEntries.status,
+      createdBy: journalEntries.createdBy,
     })
     .from(journalEntries)
     .where(eq(journalEntries.id, entryId))
@@ -416,10 +460,22 @@ export async function approveJournalEntry(entryId: number, userId: number) {
   if (existing.organizationId == null) {
     throw new Error(`Journal-Eintrag #${entryId} hat keine organizationId`);
   }
-
-  // GeBüV-Periodensperre: kein Approval in ein abgeschlossenes Geschäftsjahr
-  const fyYear = existing.fiscalYear ?? new Date(existing.bookingDate).getFullYear();
-  await assertFiscalYearOpen(existing.organizationId, fyYear);
+  if (existing.status !== "pending") {
+    throw new Error(`Journal-Eintrag #${entryId} ist nicht mehr ausstehend und kann nicht freigegeben werden.`);
+  }
+  const [organization] = await db.select({ requiresDualApproval: organizations.requiresDualApproval })
+    .from(organizations)
+    .where(eq(organizations.id, existing.organizationId))
+    .limit(1);
+  if (!organization) throw new Error(`Organisation ${existing.organizationId} wurde nicht gefunden.`);
+  if (!canApproveJournalEntry({
+    requiresDualApproval: organization.requiresDualApproval,
+    createdBy: existing.createdBy,
+    approverId: userId,
+  })) {
+    throw new Error("Vier-Augen-Freigabe aktiv: Ersteller und Freigebender müssen unterschiedliche Personen sein.");
+  }
+  const bookingFiscalYear = await assertFiscalYearOpen(existing.organizationId, existing.bookingDate);
 
   const updateSet: Record<string, unknown> = {
     status: "approved",
@@ -427,9 +483,9 @@ export async function approveJournalEntry(entryId: number, userId: number) {
     approvedAt: new Date(),
   };
   if (!existing.entryNumber) {
-    const fy = existing.fiscalYear ?? new Date(existing.bookingDate).getFullYear();
-    updateSet.entryNumber = await allocateEntryNumber(existing.organizationId, fy);
+    updateSet.entryNumber = await allocateEntryNumber(existing.organizationId, bookingFiscalYear);
   }
+  updateSet.fiscalYear = bookingFiscalYear;
   await db.update(journalEntries).set(updateSet).where(eq(journalEntries.id, entryId));
 }
 
@@ -499,10 +555,9 @@ export async function getBankAccounts(orgId: number) {
     account: accounts,
   }).from(bankAccounts)
     .leftJoin(accounts, eq(bankAccounts.accountId, accounts.id))
-    .where(and(
+    .where(
       eq(bankAccounts.organizationId, orgId),
-      eq(bankAccounts.isActive, true),
-    ));
+    );
 }
 
 export async function getPendingBankTransactions(orgId: number, bankAccountId?: number) {
@@ -570,97 +625,6 @@ export async function approveBankTransaction(txId: number, journalEntryId: numbe
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(bankTransactions).set({ status: "matched", journalEntryId }).where(eq(bankTransactions.id, txId));
-}
-
-// ─── Debitoren-Zahlungsabgleich via QR-Referenz (Phase 2.1) ─────────────────
-
-/**
- * Findet eine offene Debitoren-Rechnung anhand ihrer (bereits normalisierten)
- * QR-Referenz. Berücksichtigt nur bezahlbare Stati (sent/partially_paid).
- */
-export async function findOpenInvoiceByQRReference(orgId: number, qrReference: string) {
-  const db = await getDb();
-  if (!db) return null;
-  const [inv] = await db.select().from(invoices)
-    .where(and(
-      eq(invoices.organizationId, orgId),
-      eq(invoices.qrReference, qrReference),
-      inArray(invoices.status, ["sent", "partially_paid"]),
-    ))
-    .limit(1);
-  return inv ?? null;
-}
-
-export type InvoicePaymentResult = {
-  status: "sent" | "partially_paid" | "paid";
-  openAmount: number;
-  paidAmount: number;
-};
-
-/**
- * Reine Statuslogik für einen Zahlungseingang auf einer Debitoren-Rechnung.
- * Vollzahlung (Rest ≤ 1 Rappen) → paid + paidDate; sonst Teilzahlung.
- * Ausgelagert für testbare Einheit (kein DB-Zugriff).
- */
-export function computeInvoicePaymentState(
-  total: number,
-  paidSoFar: number,
-  amount: number,
-  paidDate: string,
-  currentPaidDate: string | null,
-): { status: "sent" | "partially_paid" | "paid"; openAmount: number; paidAmount: number; paidDate: string | null } {
-  const newPaid = Math.round((paidSoFar + amount) * 100) / 100;
-  const openAmount = Math.round((total - newPaid) * 100) / 100;
-
-  // Epsilon für Fliesskomma-Toleranz (1 Rappen)
-  let status: "sent" | "partially_paid" | "paid" = "sent";
-  let newPaidDate = currentPaidDate;
-  if (openAmount <= 0.01) {
-    status = "paid";
-    newPaidDate = paidDate;
-  } else if (newPaid > 0.01) {
-    status = "partially_paid";
-  }
-  return { status, openAmount, paidAmount: newPaid, paidDate: newPaidDate };
-}
-
-/**
- * Verbucht einen Zahlungseingang auf einer Debitoren-Rechnung:
- * paidAmount += amount, Status paid/partially_paid, paidDate bei Vollzahlung.
- * Gibt null zurück, wenn die Rechnung nicht (mehr) zahlbar ist
- * (z. B. zwischenzeitlich storniert) – Aufrufer behandelt das als Warnung,
- * nicht als Fehler.
- */
-export async function applyInvoicePayment(
-  orgId: number,
-  invoiceId: number,
-  amount: number,
-  paidDate: string,
-): Promise<InvoicePaymentResult | null> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  const [inv] = await db.select().from(invoices)
-    .where(and(eq(invoices.organizationId, orgId), eq(invoices.id, invoiceId)))
-    .limit(1);
-  if (!inv) return null;
-  if (inv.status !== "sent" && inv.status !== "partially_paid") return null;
-
-  const result = computeInvoicePaymentState(
-    parseFloat(inv.total as string),
-    parseFloat(inv.paidAmount as string),
-    amount,
-    paidDate,
-    inv.paidDate,
-  );
-
-  await db.update(invoices).set({
-    paidAmount: result.paidAmount.toFixed(2),
-    status: result.status,
-    paidDate: result.paidDate,
-  }).where(and(eq(invoices.organizationId, orgId), eq(invoices.id, invoiceId)));
-
-  return { status: result.status, openAmount: result.openAmount, paidAmount: result.paidAmount };
 }
 
 export async function updateBankTransaction(txId: number, data: {
@@ -820,68 +784,6 @@ export async function getDashboardStats(orgId: number, fiscalYear: number) {
   };
 }
 
-
-/**
- * Returns monthly revenue/expense/profit aggregates for the last N months.
- * Used for sparkline charts on the dashboard.
- */
-export async function getMonthlyAggregates(orgId: number, months = 6) {
-  const db = await getDb();
-  if (!db) return [];
-
-  // Build list of last N months (YYYY-MM format)
-  const result: Array<{ month: string; revenue: number; expenses: number; profit: number }> = [];
-  const now = new Date();
-  for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    const yearStart = `${monthStr}-01`;
-    const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-    const monthEnd = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
-
-    // Get all approved journal lines for this month
-    const lines = await db
-      .select({
-        amount: journalLines.amount,
-        side: journalLines.side,
-        accountNumber: accounts.number,
-      })
-      .from(journalLines)
-      .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
-      .innerJoin(accounts, eq(journalLines.accountId, accounts.id))
-      .where(and(
-        eq(journalEntries.organizationId, orgId),
-        eq(journalEntries.status, 'approved'),
-        sql`${journalEntries.bookingDate} >= ${yearStart}`,
-        sql`${journalEntries.bookingDate} < ${monthEnd}`,
-      ));
-
-    let revenue = 0;
-    let expenses = 0;
-    for (const line of lines) {
-      const num = line.accountNumber;
-      const amt = parseFloat(String(line.amount)) || 0;
-      // Revenue accounts: 3xxx (Ertrag)
-      if (num.startsWith('3')) {
-        if (line.side === 'credit') revenue += amt;
-        else revenue -= amt;
-      }
-      // Expense accounts: 4xxx-6xxx (Aufwand)
-      if (num.startsWith('4') || num.startsWith('5') || num.startsWith('6')) {
-        if (line.side === 'debit') expenses += amt;
-        else expenses -= amt;
-      }
-    }
-
-    result.push({
-      month: monthStr,
-      revenue: Math.max(0, revenue),
-      expenses: Math.max(0, expenses),
-      profit: revenue - expenses,
-    });
-  }
-  return result;
-}
 
 // ─── Booking Rules (Gelernte Buchungsregeln) ─────────────────────────────────
 
@@ -1058,46 +960,27 @@ export async function incrementRuleUsage(ruleId: number): Promise<void> {
 
 // ─── Document-Transaction Matching ──────────────────────────────────────────
 
+export const AUTO_MATCH_THRESHOLD = 50;
+
+/** Normalizes supplier/customer names before identity comparisons. */
+function normalizeMatchName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(ag|gmbh|sa|sarl|ltd|inc|co|kg|llc|cie|und|and|&)\b/g, '')
+    .replace(/[^a-zäöüéèàâ0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * Match score calculation between a document and a bank transaction.
- * Returns 0-100 score based on:
- * - Amount match (exact or close): 40 points
- * - Counterparty/vendor match: 30 points
- * - Date proximity: 20 points
- * - Reference/IBAN match: 10 points
+ * Returns 0-100 score based on amount, counterparty, date, reference and IBAN.
  */
 export function calculateMatchScore(
-  doc: { totalAmount?: number; counterparty?: string; documentDate?: string; counterpartyIban?: string; referenceNumber?: string; documentType?: string },
-  txn: { amount: string; counterparty: string | null; transactionDate: string; counterpartyIban: string | null; reference: string | null },
-  opts?: { requireIdentity?: boolean }
+  doc: { totalAmount?: number; counterparty?: string; documentDate?: string; counterpartyIban?: string; referenceNumber?: string },
+  txn: { amount: string; counterparty: string | null; transactionDate: string; counterpartyIban: string | null; reference: string | null }
 ): number {
   let score = 0;
-
-  // 0. Richtungs-Check: Kreditoren-Belege/Quittungen/KK-Abrechnungen matchen
-  // nur Ausgaben (Betrag < 0), Ausgangsrechnungen nur Zahlungseingänge (> 0).
-  // Ohne Richtungsprüfung matchen sich gleich hohe Ein-/Ausgänge gegenseitig.
-  const rawAmount = parseFloat(txn.amount);
-  if (doc.documentType === "invoice_in" || doc.documentType === "receipt" || doc.documentType === "credit_card_statement") {
-    if (rawAmount >= 0) return 0;
-  } else if (doc.documentType === "invoice_out") {
-    if (rawAmount <= 0) return 0;
-  }
-
-  // Identitätssignal: Punkte aus Gegenpartei, IBAN oder Referenz. Ein
-  // identischer Betrag ALLEIN darf nie zum Auto-Match führen (Miete, Abos,
-  // Löhne haben oft identische Beträge).
-  let identityPoints = 0;
-
-  // Helper: normalize company name for comparison
-  // Removes legal suffixes (AG, GmbH, SA, etc.), punctuation, extra spaces
-  function normalizeName(name: string): string {
-    return name
-      .toLowerCase()
-      .replace(/\b(ag|gmbh|sa|sarl|ltd|inc|co|kg|llc|cie|und|and|&)\b/g, '')
-      .replace(/[^a-zäöüéèàâ0-9]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
 
   // 1. Amount match (45 points)
   let amountScore = 0;
@@ -1117,22 +1000,21 @@ export function calculateMatchScore(
 
   // 2. Counterparty match (30 points)
   if (doc.counterparty && txn.counterparty) {
-    const docVendor = normalizeName(doc.counterparty);
-    const txnVendor = normalizeName(txn.counterparty);
+    const docVendor = normalizeMatchName(doc.counterparty);
+    const txnVendor = normalizeMatchName(txn.counterparty);
     if (docVendor === txnVendor) {
-      score += 30; identityPoints += 30;
+      score += 30;
     } else if (docVendor.includes(txnVendor) || txnVendor.includes(docVendor)) {
-      score += 25; identityPoints += 25;
+      score += 25;
     } else {
       // Check if any significant word matches (min 4 chars to avoid false positives)
       const docWords = docVendor.split(' ').filter(w => w.length >= 4);
       const txnWords = txnVendor.split(' ').filter(w => w.length >= 4);
       const commonWords = docWords.filter(w => txnWords.some(tw => tw.includes(w) || w.includes(tw)));
       if (commonWords.length >= 2) {
-        const pts = Math.min(25, commonWords.length * 12);
-        score += pts; identityPoints += pts;
+        score += Math.min(25, commonWords.length * 12);
       } else if (commonWords.length === 1) {
-        score += 12; identityPoints += 12;
+        score += 12;
       }
     }
   }
@@ -1154,30 +1036,96 @@ export function calculateMatchScore(
   if (doc.counterpartyIban && txn.counterpartyIban) {
     const docIban = doc.counterpartyIban.replace(/\s/g, '').toUpperCase();
     const txnIban = txn.counterpartyIban.replace(/\s/g, '').toUpperCase();
-    if (docIban === txnIban) { score += 10; identityPoints += 10; }
+    if (docIban === txnIban) score += 10;
   }
   if (doc.referenceNumber && txn.reference) {
     const docRef = doc.referenceNumber.replace(/\s/g, '');
     const txnRef = txn.reference.replace(/\s/g, '');
     if (docRef === txnRef || docRef.includes(txnRef) || txnRef.includes(docRef)) {
-      score += 10; identityPoints += 10;
+      score += 10;
     }
   }
 
-  // Regel «Betrag allein reicht nie» – nur für Auto-Match (requireIdentity):
-  // ohne Identitätssignal (Gegenpartei, IBAN oder Referenz) bleibt der Score
-  // unter dem Auto-Match-Schwellenwert. Für die Score-ANZEIGE (manuelles
-  // Matching) bleibt der volle Score erhalten.
-  if (opts?.requireIdentity && identityPoints === 0) return Math.min(score, 39);
-
   return Math.min(100, score);
+}
+
+type AutoMatchDocument = {
+  totalAmount?: number;
+  counterparty?: string;
+  documentDate?: string;
+  counterpartyIban?: string;
+  referenceNumber?: string;
+  documentType?: string | null;
+};
+
+type AutoMatchTransaction = {
+  amount: string;
+  counterparty: string | null;
+  transactionDate: string;
+  counterpartyIban: string | null;
+  reference: string | null;
+};
+
+function hasStrongIdentitySignal(doc: AutoMatchDocument, txn: AutoMatchTransaction): boolean {
+  if (doc.counterpartyIban && txn.counterpartyIban) {
+    const docIban = doc.counterpartyIban.replace(/\s/g, '').toUpperCase();
+    const txnIban = txn.counterpartyIban.replace(/\s/g, '').toUpperCase();
+    if (docIban === txnIban) return true;
+  }
+
+  if (doc.referenceNumber && txn.reference) {
+    const docReference = doc.referenceNumber.replace(/\s/g, '');
+    const txnReference = txn.reference.replace(/\s/g, '');
+    if (docReference === txnReference) return true;
+  }
+
+  if (!doc.counterparty || !txn.counterparty) return false;
+  const docVendor = normalizeMatchName(doc.counterparty);
+  const txnVendor = normalizeMatchName(txn.counterparty);
+  return docVendor.length >= 3 && txnVendor.length >= 3 && (
+    docVendor === txnVendor || docVendor.includes(txnVendor) || txnVendor.includes(docVendor)
+  );
+}
+
+function hasCompatiblePaymentDirection(documentType: string | null | undefined, transactionAmount: number): boolean {
+  // Unclassified documents and bank statements are not sufficiently meaningful
+  // for automatic matching. They remain available for explicit manual matching.
+  switch (documentType) {
+    case "invoice_in":
+    case "receipt":
+    case "credit_card_statement":
+      return transactionAmount < 0;
+    case "invoice_out":
+      return transactionAmount > 0;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Strict automatic-matching guard. A candidate needs all of the following:
+ * a score of at least 50, an independent identity signal, and a payment
+ * direction compatible with the document type. Matching on the amount alone
+ * is deliberately impossible.
+ */
+export function isSafeAutoMatch(
+  doc: AutoMatchDocument,
+  txn: AutoMatchTransaction,
+  threshold: number = AUTO_MATCH_THRESHOLD,
+): boolean {
+  const transactionAmount = Number.parseFloat(txn.amount);
+  if (!Number.isFinite(transactionAmount) || transactionAmount === 0) return false;
+  if (!hasCompatiblePaymentDirection(doc.documentType, transactionAmount)) return false;
+  if (!hasStrongIdentitySignal(doc, txn)) return false;
+
+  return calculateMatchScore(doc, txn) >= Math.max(AUTO_MATCH_THRESHOLD, threshold);
 }
 
 /**
  * Run auto-matching: find best matches between unmatched documents and pending transactions.
  * Returns array of matches with scores >= threshold.
  */
-export async function autoMatchDocuments(orgId: number, threshold: number = 50): Promise<{
+export async function autoMatchDocuments(orgId: number, threshold: number = AUTO_MATCH_THRESHOLD): Promise<{
   documentId: number;
   transactionId: number;
   score: number;
@@ -1222,7 +1170,6 @@ export async function autoMatchDocuments(orgId: number, threshold: number = 50):
           documentDate: meta.documentDate,
           counterpartyIban: meta.counterpartyIban,
           referenceNumber: meta.referenceNumber,
-          documentType: meta.documentType,
         },
         {
           amount: txn.amount,
@@ -1230,11 +1177,26 @@ export async function autoMatchDocuments(orgId: number, threshold: number = 50):
           transactionDate: txn.transactionDate,
           counterpartyIban: txn.counterpartyIban,
           reference: txn.reference,
-        },
-        { requireIdentity: true }
+        }
       );
 
-      if (score >= threshold && (!bestMatch || score > bestMatch.score)) {
+      const candidate = {
+        totalAmount: meta.totalAmount,
+        counterparty: meta.counterparty,
+        documentDate: meta.documentDate,
+        counterpartyIban: meta.counterpartyIban,
+        referenceNumber: meta.referenceNumber,
+        documentType: doc.documentType,
+      };
+      const transaction = {
+        amount: txn.amount,
+        counterparty: txn.counterparty,
+        transactionDate: txn.transactionDate,
+        counterpartyIban: txn.counterpartyIban,
+        reference: txn.reference,
+      };
+
+      if (score >= Math.max(AUTO_MATCH_THRESHOLD, threshold) && isSafeAutoMatch(candidate, transaction, threshold) && (!bestMatch || score > bestMatch.score)) {
         bestMatch = { txnId: txn.id, score, desc: txn.description || '' };
       }
     }

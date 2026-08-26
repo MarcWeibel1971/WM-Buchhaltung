@@ -11,6 +11,7 @@ import {
   json,
   primaryKey,
   unique,
+  index,
 } from "drizzle-orm/mysql-core";
 
 // ─── Users (Auth) ────────────────────────────────────────────────────────────
@@ -66,35 +67,20 @@ export const organizations = mysqlTable("organizations", {
   vatNumber: varchar("vatNumber", { length: 30 }),
   vatMethod: mysqlEnum("vatMethod", ["effective", "saldo", "pauschal"]).default("effective"),
   vatSaldoRate: decimal("vatSaldoRate", { precision: 5, scale: 2 }).default("0"),
+  vatPauschalRate: decimal("vatPauschalRate", { precision: 5, scale: 2 }).default("0"),
+  vatPauschalActivity: varchar("vatPauschalActivity", { length: 100 }),
   vatPeriod: mysqlEnum("vatPeriod", ["quarterly", "semi-annual"]).default("quarterly"),
   // Fiscal year
   fiscalYearStartMonth: int("fiscalYearStartMonth").default(1),
+  // If enabled, the creator of a manually proposed booking cannot approve it.
+  requiresDualApproval: boolean("requiresDualApproval").default(false).notNull(),
+  // JSON policy for dunning thresholds, fees, and grace periods.
+  reminderPolicy: text("reminderPolicy"),
   // Kontakt
   phone: varchar("phone", { length: 30 }),
   email: varchar("email", { length: 200 }),
   website: varchar("website", { length: 200 }),
   logoUrl: text("logoUrl"),
-  // ─── Mahn-Policy (3-stufig) ───────────────────────────────────────────────
-  // Pro Org konfigurierbare Policy für Zahlungserinnerung / 1. Mahnung / 2. Mahnung.
-  // minDaysOverdue = Anzahl Tage nach Fälligkeit, ab der die Stufe ausgelöst werden darf.
-  // feeAmount      = Mahngebühr in CHF (0 für Stufe 1 üblich).
-  // gracePeriodDays= Neue Zahlungsfrist in Tagen ab Mahndatum.
-  reminderLevel1Days: int("reminderLevel1Days").default(15).notNull(),
-  reminderLevel1Fee: decimal("reminderLevel1Fee", { precision: 15, scale: 2 }).default("0").notNull(),
-  reminderLevel1Grace: int("reminderLevel1Grace").default(10).notNull(),
-  reminderLevel2Days: int("reminderLevel2Days").default(30).notNull(),
-  reminderLevel2Fee: decimal("reminderLevel2Fee", { precision: 15, scale: 2 }).default("20").notNull(),
-  reminderLevel2Grace: int("reminderLevel2Grace").default(10).notNull(),
-  reminderLevel3Days: int("reminderLevel3Days").default(60).notNull(),
-  reminderLevel3Fee: decimal("reminderLevel3Fee", { precision: 15, scale: 2 }).default("40").notNull(),
-  reminderLevel3Grace: int("reminderLevel3Grace").default(7).notNull(),
-  // ─── Konto-Mappings pro Org (Phase 3c) ────────────────────────────────────
-  // Referenzieren accounts.id. Optional – wenn null, fallen die Router auf
-  // die bisherigen Konto-Nummern zurück (1082 / 1032 / 4000) für Rückwärts-
-  // kompatibilität mit bestehenden Mandanten.
-  defaultBankAccountId: int("defaultBankAccountId"),
-  creditCardClearingAccountId: int("creditCardClearingAccountId"),
-  defaultSalaryExpenseAccountId: int("defaultSalaryExpenseAccountId"),
   // Status
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -306,6 +292,8 @@ export const journalEntries = mysqlTable(
     // Who approved
     approvedBy: int("approvedBy"),
     approvedAt: timestamp("approvedAt"),
+    // Creator of a manual proposal; used for optional four-eyes enforcement.
+    createdBy: int("createdBy"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
@@ -315,6 +303,12 @@ export const journalEntries = mysqlTable(
     orgEntryNumberUnique: unique("journal_entries_org_entryNumber_unique").on(
       table.organizationId,
       table.entryNumber,
+    ),
+    orgFiscalStatusDateIdx: index("journal_entries_org_fiscal_status_date_idx").on(
+      table.organizationId,
+      table.fiscalYear,
+      table.status,
+      table.bookingDate,
     ),
   }),
 );
@@ -405,8 +399,6 @@ export const bankTransactions = mysqlTable("bank_transactions", {
   aiReasoning: text("aiReasoning"),
   // Matched document ID (if a document/invoice was matched)
   matchedDocumentId: int("matchedDocumentId"),
-  // Matched debitoren invoice (via QR-Referenz aus CAMT-Import)
-  matchedInvoiceId: int("matchedInvoiceId"),
   // Match confidence score (0-100)
   matchScore: int("matchScore"),
   // Suggested booking text (from AI or matched document)
@@ -432,8 +424,8 @@ export const creditCardStatements = mysqlTable("credit_card_statements", {
   // Total amount
   totalAmount: decimal("totalAmount", { precision: 15, scale: 2 }).notNull(),
   currency: varchar("currency", { length: 3 }).default("CHF").notNull(),
-  // Karteninhaber / Zuordnung (z.B. Employee-Code). Free-Text.
-  owner: varchar("owner", { length: 10 }),
+  // Owner: mw
+  owner: varchar("owner", { length: 10 }).default("mw"),
   // Status
   status: mysqlEnum("status", ["pending", "approved"]).default("pending").notNull(),
   // Linked journal entry (Sammelbelastung)
@@ -660,6 +652,9 @@ export const companySettings = mysqlTable("company_settings", {
   vatMethod: mysqlEnum("vatMethod", ["effective", "saldo", "pauschal"]).default("effective"),
   // Saldosteuersatz (for saldo method, e.g. 6.2%)
   vatSaldoRate: decimal("vatSaldoRate", { precision: 5, scale: 2 }).default("6.20"),
+  // Pauschalsteuersatz (for pauschal method, organisation-specific approved rate)
+  vatPauschalRate: decimal("vatPauschalRate", { precision: 5, scale: 2 }).default("0.00"),
+  vatPauschalActivity: varchar("vatPauschalActivity", { length: 100 }),
   // MWST period: quarterly, semi-annual
   vatPeriod: mysqlEnum("vatPeriod", ["quarterly", "semi-annual"]).default("quarterly"),
   // Fiscal year start (month: 1-12)
@@ -1021,12 +1016,6 @@ export const invoices = mysqlTable(
     introText: text("introText"),
     // Fusszeile / Dankestext
     footerText: text("footerText"),
-    // Schlusstext (nach Positionsliste, vor Grussformel)
-    closingText: text("closingText"),
-    // Grussformel + Unterzeichner (für Briefformat)
-    greeting: varchar("greeting", { length: 100 }),
-    signatory: varchar("signatory", { length: 200 }),
-    signatoryTitle: varchar("signatoryTitle", { length: 200 }),
     // Beträge (werden aus invoice_items berechnet, aber gecacht für Filter)
     subtotal: decimal("subtotal", { precision: 15, scale: 2 }).default("0").notNull(),
     vatTotal: decimal("vatTotal", { precision: 15, scale: 2 }).default("0").notNull(),
@@ -1063,6 +1052,26 @@ export const invoices = mysqlTable(
 );
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = typeof invoices.$inferInsert;
+
+// ─── Recurring Invoices (wiederkehrende Rechnungsvorlagen) ───────────────────
+export const recurringInvoices = mysqlTable("recurring_invoices", {
+  id: int("id").autoincrement().primaryKey(),
+  organizationId: int("organizationId").notNull(),
+  customerId: int("customerId").notNull(),
+  subject: varchar("subject", { length: 300 }).notNull(),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  currency: mysqlEnum("currency", ["CHF", "EUR"]).default("CHF").notNull(),
+  interval: mysqlEnum("interval", ["monthly", "quarterly", "yearly"]).notNull(),
+  nextRunDate: date("nextRunDate", { mode: "string" }).notNull(),
+  paymentTermDays: int("paymentTermDays").default(30).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  scheduleCronTaskUid: varchar("schedule_cron_task_uid", { length: 65 }),
+  lastInvoiceId: int("lastInvoiceId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type RecurringInvoice = typeof recurringInvoices.$inferSelect;
+export type InsertRecurringInvoice = typeof recurringInvoices.$inferInsert;
 
 // ─── Invoice Line Items ─────────────────────────────────────────────────────
 export const invoiceItems = mysqlTable("invoice_items", {
@@ -1218,68 +1227,3 @@ export const invitations = mysqlTable("invitations", {
 });
 export type Invitation = typeof invitations.$inferSelect;
 export type InsertInvitation = typeof invitations.$inferInsert;
-
-// ─── POS / EC-Karten Integration ─────────────────────────────────────────────
-export const posConfig = mysqlTable("pos_config", {
-  id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId").notNull(),
-  provider: mysqlEnum("provider", ["stripe_terminal", "sumup"]).notNull(),
-  apiKey: varchar("apiKey", { length: 500 }),
-  merchantCode: varchar("merchantCode", { length: 100 }),
-  webhookSecret: varchar("webhookSecret", { length: 500 }),
-  bankAccountId: int("bankAccountId"),
-  revenueAccountId: int("revenueAccountId"),
-  isActive: boolean("isActive").default(true).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-export type PosConfig = typeof posConfig.$inferSelect;
-export type InsertPosConfig = typeof posConfig.$inferInsert;
-
-export const posTransactions = mysqlTable("pos_transactions", {
-  id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId").notNull(),
-  provider: mysqlEnum("provider", ["stripe_terminal", "sumup"]).notNull(),
-  externalId: varchar("externalId", { length: 200 }).notNull().unique(),
-  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
-  currency: varchar("currency", { length: 3 }).default("CHF").notNull(),
-  paymentMethod: varchar("paymentMethod", { length: 50 }),
-  cardBrand: varchar("cardBrand", { length: 50 }),
-  cardLast4: varchar("cardLast4", { length: 4 }),
-  description: varchar("description", { length: 500 }),
-  status: mysqlEnum("status", ["pending", "completed", "refunded", "failed"]).default("completed").notNull(),
-  paidAt: timestamp("paidAt").notNull(),
-  invoiceId: int("invoiceId"),
-  journalEntryId: int("journalEntryId"),
-  bankTransactionId: int("bankTransactionId"),
-  rawPayload: json("rawPayload"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-export type PosTransaction = typeof posTransactions.$inferSelect;
-export type InsertPosTransaction = typeof posTransactions.$inferInsert;
-
-// ─── EBICS-Konfiguration ──────────────────────────────────────────────────────
-export const ebicsConfig = mysqlTable("ebics_config", {
-  id: int("id").autoincrement().primaryKey(),
-  organizationId: int("organizationId").notNull(),
-  bankName: varchar("bankName", { length: 100 }).notNull(),
-  hostId: varchar("hostId", { length: 50 }).notNull(),
-  bankUrl: varchar("bankUrl", { length: 500 }).notNull(),
-  partnerId: varchar("partnerId", { length: 50 }).notNull(),
-  userId: varchar("userId", { length: 50 }).notNull(),
-  version: mysqlEnum("version", ["2.5", "3.0"]).default("3.0").notNull(),
-  initStatus: mysqlEnum("initStatus", ["not_initialized", "ini_sent", "hia_sent", "active"]).default("not_initialized").notNull(),
-  signatureKeyPem: text("signatureKeyPem"),
-  authKeyPem: text("authKeyPem"),
-  encKeyPem: text("encKeyPem"),
-  bankSignatureKeyHash: varchar("bankSignatureKeyHash", { length: 128 }),
-  bankAuthKeyHash: varchar("bankAuthKeyHash", { length: 128 }),
-  bankEncKeyHash: varchar("bankEncKeyHash", { length: 128 }),
-  bankAccountId: int("bankAccountId"),
-  isActive: boolean("isActive").default(false).notNull(),
-  lastSyncAt: timestamp("lastSyncAt"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-export type EbicsConfig = typeof ebicsConfig.$inferSelect;
-export type InsertEbicsConfig = typeof ebicsConfig.$inferInsert;

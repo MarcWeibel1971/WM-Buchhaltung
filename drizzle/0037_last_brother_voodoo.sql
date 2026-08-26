@@ -1,0 +1,1 @@
+ALTER TABLE `organizations` ADD `vatPauschalRate` decimal(5,2) DEFAULT '0';

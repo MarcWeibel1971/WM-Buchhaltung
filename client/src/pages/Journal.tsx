@@ -2,7 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
-import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, RotateCcw, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet, Clock, CheckCircle, XCircle, BookOpen } from "lucide-react";
+import { Check, X, Edit2, Search, Filter, Plus, ChevronDown, ChevronUp, Layers, Trash2, Undo2, ArrowLeftRight, ArrowUpDown, ArrowUp, ArrowDown, Download, FileSpreadsheet, Clock, CheckCircle, XCircle, BookOpen } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DocumentUpload, DocumentList } from "@/components/DocumentUpload";
@@ -38,12 +38,16 @@ function SourceBadge({ source }: { source: string }) {
 }
 
 export default function Journal() {
-  // Read filter from URL query params (sidebar sub-items use ?filter=...)
-  const urlFilter = new URLSearchParams(window.location.search).get("filter");
+  // Read filter/tab from URL query params. `tab=approvals` remains supported
+  // for legacy inbox links and opens the Freigaben queue.
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlFilter = urlParams.get("filter");
+  const urlTab = urlParams.get("tab");
   const getInitialStatus = () => {
     if (urlFilter === "warnings") return "pending";
     if (urlFilter === "manual") return "pending";
     if (urlFilter === "booked") return "approved";
+    if (urlTab === "approvals") return "pending";
     // Default for Freigaben page: show pending
     if (window.location.pathname === "/freigaben") return "pending";
     return "all";
@@ -52,13 +56,16 @@ export default function Journal() {
   
   // Update status filter when URL changes
   useEffect(() => {
-    const newFilter = new URLSearchParams(window.location.search).get("filter");
+    const params = new URLSearchParams(window.location.search);
+    const newFilter = params.get("filter");
+    const newTab = params.get("tab");
     if (window.location.pathname === "/freigaben") {
       if (newFilter === "booked") setStatus("approved");
       else if (newFilter === "warnings" || newFilter === "manual") setStatus("pending");
+      else if (newTab === "approvals") setStatus("pending");
       else setStatus("pending");
     }
-  }, [urlFilter]);
+  }, [urlFilter, urlTab]);
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -66,6 +73,9 @@ export default function Journal() {
   const [showCreateDialog, setShowCreateDialog] = useState<false | "single" | "collective">(false);
   const [detailEntryId, setDetailEntryId] = useState<number | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; message: string; onConfirm: () => void } | null>(null);
+  const [reversalEntry, setReversalEntry] = useState<any>(null);
+  const [reversalBookingDate, setReversalBookingDate] = useState("");
+  const [reversalReason, setReversalReason] = useState("");
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [crossPageAll, setCrossPageAll] = useState(false); // true = alle Seiten selektiert
@@ -110,15 +120,19 @@ export default function Journal() {
     onSuccess: () => { toast.success("Buchung abgelehnt"); utils.journal.list.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
+  const reverseMutation = trpc.journal.reverse.useMutation({
+    onSuccess: () => {
+      toast.success("Stornobuchung als Freigabevorschlag erstellt.");
+      setReversalEntry(null);
+      utils.journal.list.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const deleteMutation = trpc.journal.delete.useMutation({
     onSuccess: () => { toast.success("Buchung gelöscht"); utils.journal.list.invalidate(); utils.reports.dashboard.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
-  const revertMutation = trpc.journal.revert.useMutation({
-    onSuccess: () => { toast.success("Buchung zurück auf Ausstehend gesetzt"); utils.journal.list.invalidate(); utils.reports.dashboard.invalidate(); },
-    onError: (e) => toast.error(e.message),
-  });
-
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
 
@@ -229,8 +243,6 @@ export default function Journal() {
   // Derived selection info
   const selectedEntries = entries.filter((e: any) => selectedIds.has(e.id));
   const selectedPending = selectedEntries.filter((e: any) => e.status === "pending");
-  const selectedApproved = selectedEntries.filter((e: any) => e.status === "approved");
-
   // Bulk mutations
   const bulkApproveMut = trpc.journal.bulkApprove.useMutation({
     onSuccess: (res) => {
@@ -250,25 +262,13 @@ export default function Journal() {
     },
     onError: (e) => toast.error(e.message),
   });
-  const bulkRevertMut = trpc.journal.bulkRevert.useMutation({
-    onSuccess: (res) => {
-      toast.success(`${res.reverted} Buchung(en) zurückgesetzt` + (res.skipped ? `, ${res.skipped} übersprungen` : ""));
-      setSelectedIds(new Set());
-      utils.journal.list.invalidate();
-      utils.reports.dashboard.invalidate();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-4 max-w-[1280px] mx-auto">
+    <div className="p-6 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="display text-[22px] font-medium" style={{ color: "var(--ink)" }}>Journal</h2>
-          <p className="text-[13px] mt-0.5" style={{ color: "var(--ink-3)" }}>
-            <span className="mono">{total}</span> Buchungen · Audit-Trail OR 957
-          </p>
+          <h2 className="text-xl font-bold">Journal</h2>
+          <p className="text-sm text-muted-foreground">{total} Buchungen</p>
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setShowExportDialog(true)}>
@@ -292,44 +292,30 @@ export default function Journal() {
         </div>
       </div>
 
-      {/* Underline-Tabs (KLAX) */}
-      <div
-        className="flex items-center gap-5"
-        style={{ borderBottom: "1px solid var(--hair)" }}
-      >
+      {/* Filter-Kacheln */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { key: "all",      label: "Alle",              count: journalStats.total },
-          { key: "pending",  label: "Zu genehmigen",     count: journalStats.pending },
-          { key: "approved", label: "Verbucht",          count: journalStats.approved },
-          { key: "rejected", label: "Abgelehnt",         count: journalStats.rejected },
+          { key: "all",      label: "Alle Buchungen",        count: journalStats.total,    accent: "from-slate-500 to-slate-600",  light: "bg-slate-50 border-slate-200 text-slate-700",  icon: <BookOpen className="w-5 h-5" /> },
+          { key: "pending",  label: "Zu genehmigen",         count: journalStats.pending,  accent: "from-amber-500 to-orange-500", light: "bg-amber-50 border-amber-200 text-amber-700",  icon: <Clock className="w-5 h-5" /> },
+          { key: "approved", label: "Verbucht",               count: journalStats.approved, accent: "from-green-500 to-emerald-600",light: "bg-green-50 border-green-200 text-green-700",  icon: <CheckCircle className="w-5 h-5" /> },
+          { key: "rejected", label: "Abgelehnt",              count: journalStats.rejected, accent: "from-red-500 to-rose-600",     light: "bg-red-50 border-red-200 text-red-700",        icon: <XCircle className="w-5 h-5" /> },
         ].map(tile => {
           const isActive = status === tile.key;
           return (
             <button
               key={tile.key}
               onClick={() => { setStatus(tile.key); setOffset(0); }}
-              className="relative py-2.5 text-[13px] flex items-center gap-2 transition-colors"
-              style={{
-                color: isActive ? "var(--ink)" : "var(--ink-3)",
-                fontWeight: isActive ? 500 : 400,
-              }}
+              className={`relative flex flex-col items-start p-4 rounded-xl border-2 transition-all text-left ${
+                isActive
+                  ? `bg-gradient-to-br ${tile.accent} text-white border-transparent shadow-lg scale-[1.02]`
+                  : `${tile.light} border-transparent hover:border-current hover:shadow-md`
+              }`}
             >
-              <span>{tile.label}</span>
-              <span
-                className="text-[11px] mono px-1.5 py-0.5 rounded-full"
-                style={{
-                  background: isActive ? "var(--klax-accent)" : "var(--surface-2)",
-                  color: isActive ? "var(--klax-accent-ink)" : "var(--ink-3)",
-                }}
-              >
-                {tile.count}
-              </span>
-              {isActive && (
-                <span
-                  className="absolute left-0 right-0 -bottom-px h-[2px]"
-                  style={{ background: "var(--klax-accent)" }}
-                />
-              )}
+              <div className={`mb-2 p-2 rounded-lg ${ isActive ? "bg-white/20" : "bg-white shadow-sm" }`}>
+                <span className={isActive ? "text-white" : ""}>{tile.icon}</span>
+              </div>
+              <div className={`text-2xl font-bold leading-none mb-1 ${ isActive ? "text-white" : "" }`}>{tile.count}</div>
+              <div className={`text-xs font-medium leading-tight ${ isActive ? "text-white/90" : "" }`}>{tile.label}</div>
             </button>
           );
         })}
@@ -357,14 +343,6 @@ export default function Journal() {
               onClick={() => bulkApproveMut.mutate({ entryIds: selectedPending.map(e => e.id) })}>
               <Check className="h-3 w-3" />
               {bulkApproveMut.isPending ? "Genehmige..." : `${selectedPending.length} genehmigen`}
-            </Button>
-          )}
-          {selectedApproved.length > 0 && (
-            <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
-              disabled={bulkRevertMut.isPending}
-              onClick={() => bulkRevertMut.mutate({ entryIds: selectedApproved.map(e => e.id) })}>
-              <RotateCcw className="h-3 w-3" />
-              {bulkRevertMut.isPending ? "Setze zurück..." : `${selectedApproved.length} zurücksetzen`}
             </Button>
           )}
           <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs border-red-300 text-red-700 hover:bg-red-50"
@@ -409,9 +387,9 @@ export default function Journal() {
       )}
 
       {/* Table */}
-      <div className="klax-card overflow-hidden">
+      <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="k-table">
+          <table className="accounting-table">
             <thead>
               <tr>
                 <th className="w-10 px-2">
@@ -513,9 +491,18 @@ export default function Journal() {
                           </>
                         )}
                         {entry.status === "approved" && (
-                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-amber-600"
-                            onClick={() => revertMutation.mutate({ entryId: entry.id })}>
-                            <RotateCcw className="h-3.5 w-3.5" />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-amber-700"
+                            title="Stornobuchung erstellen"
+                            onClick={() => {
+                              setReversalEntry(entry);
+                              setReversalBookingDate(new Date().toISOString().slice(0, 10));
+                              setReversalReason("");
+                            }}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
                           </Button>
                         )}
                         <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
@@ -632,6 +619,41 @@ export default function Journal() {
           fiscalYear={fiscalYear}
           onClose={() => setShowExportDialog(false)}
         />
+      )}
+
+      {reversalEntry && (
+        <Dialog open onOpenChange={(open) => { if (!open) setReversalEntry(null); }}>
+          <DialogContent className="w-[min(95vw,32rem)] max-w-none">
+            <DialogHeader>
+              <DialogTitle>Stornobuchung erstellen</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">Für {reversalEntry.entryNumber ?? `Buchung #${reversalEntry.id}`} wird eine spiegelbildliche Gegenbuchung als Freigabevorschlag erstellt. Die Originalbuchung bleibt unverändert.</p>
+            <div className="space-y-3 py-2">
+              <div className="space-y-1">
+                <label className="text-sm font-medium" htmlFor="reversal-date">Stornodatum</label>
+                <Input id="reversal-date" type="date" value={reversalBookingDate} onChange={(e) => setReversalBookingDate(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium" htmlFor="reversal-reason">Begründung (optional)</label>
+                <Input id="reversal-reason" value={reversalReason} onChange={(e) => setReversalReason(e.target.value)} placeholder="z. B. falsches Konto" maxLength={300} />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setReversalEntry(null)}>Abbrechen</Button>
+              <Button
+                variant="destructive"
+                disabled={!reversalBookingDate || reverseMutation.isPending}
+                onClick={() => reverseMutation.mutate({
+                  entryId: reversalEntry.id,
+                  bookingDate: reversalBookingDate,
+                  reason: reversalReason || undefined,
+                })}
+              >
+                {reverseMutation.isPending ? "Erstelle…" : "Storno als Vorschlag erstellen"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* Bestätigungs-Dialog */}
@@ -1252,6 +1274,7 @@ function ExportDialog({ fiscalYear, onClose }: { fiscalYear: number; onClose: ()
     },
     onError: (e) => toast.error(e.message),
   });
+  const archiveManifestQuery = trpc.journal.exportGebuevManifest.useQuery({ fiscalYear }, { enabled: false });
 
   const handleExport = () => {
     const params = {
@@ -1260,14 +1283,27 @@ function ExportDialog({ fiscalYear, onClose }: { fiscalYear: number; onClose: ()
       startDate: startDate || undefined,
       endDate: endDate || undefined,
     };
-    if (format === "infoniqa") {
+    if (format === "archive") {
+      archiveManifestQuery.refetch().then(({ data }) => {
+        if (!data) return;
+        const blob = new Blob([data.manifest], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `GeBueV_Archiv_${fiscalYear}_manifest.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success(`GeBüV-Manifest mit ${data.journal.entryCount} Buchungen und ${data.documents.length} Belegen exportiert`);
+        onClose();
+      });
+    } else if (format === "infoniqa") {
       exportInfoniqaMut.mutate(params);
     } else {
       exportCsvMut.mutate(params);
     }
   };
 
-  const isExporting = exportInfoniqaMut.isPending || exportCsvMut.isPending;
+  const isExporting = exportInfoniqaMut.isPending || exportCsvMut.isPending || archiveManifestQuery.isFetching;
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1328,6 +1364,19 @@ function ExportDialog({ fiscalYear, onClose }: { fiscalYear: number; onClose: ()
                   </div>
                 </div>
               </label>
+              <label
+                className={cn(
+                  "flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
+                  format === "archive" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
+                )}
+                onClick={() => setFormat("archive")}
+              >
+                <input type="radio" name="exportFormat" value="archive" checked={format === "archive"} onChange={() => setFormat("archive")} className="mt-1" />
+                <div>
+                  <div className="font-medium text-sm">GeBüV-Archivmanifest</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">Jahresmanifest mit SHA-256-Nachweis für das genehmigte Journal und Belegverzeichnis.</div>
+                </div>
+              </label>
             </div>
           </div>
 
@@ -1373,7 +1422,9 @@ function ExportDialog({ fiscalYear, onClose }: { fiscalYear: number; onClose: ()
             <p className="mt-1">
               {format === "infoniqa"
                 ? "Die Buchungen werden im Infoniqa-kompatiblen Format (sfbbuch.csv) exportiert. Einzelbuchungen als MType=1, Sammelbuchungen als MType=2. MWST-Codes werden automatisch gemappt (z.B. USt81 für 8.1%)."
-                : "Die Buchungen werden als Standard-CSV mit Semikolon-Trennung exportiert. UTF-8 mit BOM für Excel-Kompatibilität."
+                : format === "archive"
+                  ? "Das Manifest enthält den SHA-256-Integritätsnachweis des genehmigten Journalexports und ein Belegverzeichnis."
+                  : "Die Buchungen werden als Standard-CSV mit Semikolon-Trennung. UTF-8 mit BOM für Excel-Kompatibilität."
               }
             </p>
           </div>

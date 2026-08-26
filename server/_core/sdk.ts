@@ -14,9 +14,6 @@ import type {
   GetUserInfoWithJwtRequest,
   GetUserInfoWithJwtResponse,
 } from "./types/manusTypes";
-import { createLogger } from "./logger";
-
-const logger = createLogger("sdk");
 // Utility function
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
@@ -26,6 +23,8 @@ export type SessionPayload = {
   appId: string;
   name: string;
 };
+export type AuthenticatedUser = User & { taskUid?: string; isCron?: boolean };
+const CRON_OPEN_ID_PREFIX = "cron_";
 
 const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
 const GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
@@ -33,9 +32,9 @@ const GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserI
 
 class OAuthService {
   constructor(private client: ReturnType<typeof axios.create>) {
-    logger.info("[OAuth] Initialized with baseURL:", ENV.oAuthServerUrl);
+    console.log("[OAuth] Initialized with baseURL:", ENV.oAuthServerUrl);
     if (!ENV.oAuthServerUrl) {
-      logger.error(
+      console.error(
         "[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable."
       );
     }
@@ -204,7 +203,7 @@ class SDKServer {
     cookieValue: string | undefined | null
   ): Promise<{ openId: string; appId: string; name: string } | null> {
     if (!cookieValue) {
-      logger.warn("[Auth] Missing session cookie");
+      console.warn("[Auth] Missing session cookie");
       return null;
     }
 
@@ -220,7 +219,7 @@ class SDKServer {
         !isNonEmptyString(appId) ||
         !isNonEmptyString(name)
       ) {
-        logger.warn("[Auth] Session payload missing required fields");
+        console.warn("[Auth] Session payload missing required fields");
         return null;
       }
 
@@ -230,7 +229,7 @@ class SDKServer {
         name,
       };
     } catch (error) {
-      logger.warn("[Auth] Session verification failed", String(error));
+      console.warn("[Auth] Session verification failed", String(error));
       return null;
     }
   }
@@ -259,7 +258,7 @@ class SDKServer {
     } as GetUserInfoWithJwtResponse;
   }
 
-  async authenticateRequest(req: Request): Promise<User> {
+  async authenticateRequest(req: Request): Promise<AuthenticatedUser> {
     // Regular authentication flow
     const cookies = this.parseCookies(req.headers.cookie);
     const sessionCookie = cookies.get(COOKIE_NAME);
@@ -267,6 +266,12 @@ class SDKServer {
 
     if (!session) {
       throw ForbiddenError("Invalid session cookie");
+    }
+    if (session.openId.startsWith(CRON_OPEN_ID_PREFIX)) {
+      const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
+      if (!userInfo.taskUid) throw ForbiddenError("Cron session missing task_uid");
+      const now = new Date();
+      return { id: -1, openId: userInfo.openId, name: userInfo.name || "Manus Scheduled Task", email: null, loginMethod: null, role: "user", createdAt: now, updatedAt: now, lastSignedIn: now, taskUid: userInfo.taskUid, isCron: true } as AuthenticatedUser;
     }
 
     const sessionUserId = session.openId;
@@ -286,7 +291,7 @@ class SDKServer {
         });
         user = await db.getUserByOpenId(userInfo.openId);
       } catch (error) {
-        logger.error("[Auth] Failed to sync user from OAuth:", error);
+        console.error("[Auth] Failed to sync user from OAuth:", error);
         throw ForbiddenError("Failed to sync user info");
       }
     }

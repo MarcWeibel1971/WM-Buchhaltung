@@ -7,12 +7,16 @@ import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
+import { sdk } from "./sdk";
 import { uploadRouter } from "../uploadRoute";
 import { stripeWebhookRouter } from "../stripeWebhook";
-import { posWebhookRouter } from "../posWebhook";
 import { appRouter } from "../routers";
+import { getDb } from "../db";
+import { recurringInvoices } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
+import { processDueRecurringInvoices } from "../recurringInvoiceProcessor";
 import { createContext } from "./context";
-import { serveStatic, setupVite } from "./vite";
+import { serveStatic } from "./static";
 import { logger, requestLogger, errorLogger, installCrashHandlers } from "./logger";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -84,8 +88,6 @@ async function startServer() {
   // Stripe webhook needs raw body for signature verification – MUST be
   // registered BEFORE the JSON body parser.
   app.use("/api/stripe/webhook", stripeWebhookRouter);
-  // POS Webhooks (Stripe Terminal + SumUp) – Stripe braucht raw body
-  app.use("/api/pos/webhook", posWebhookRouter);
 
   // Body parser limits. Document uploads go through multer (separate size
   // limit in uploadRoute.ts), so the JSON body parser can be tight.
@@ -100,6 +102,22 @@ async function startServer() {
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });
+  });
+
+  app.post("/api/scheduled/recurring-invoice", async (req, res) => {
+    try {
+      const cronUser = await sdk.authenticateRequest(req);
+      if (!cronUser.isCron || !cronUser.taskUid) return res.status(403).json({ error: "Cron authentication required" });
+      const db = await getDb();
+      if (!db) return res.status(503).json({ error: "Database unavailable" });
+      const [template] = await db.select().from(recurringInvoices).where(eq(recurringInvoices.scheduleCronTaskUid, cronUser.taskUid)).limit(1);
+      if (!template) return res.status(404).json({ error: "Recurring invoice template not found" });
+      const result = await processDueRecurringInvoices(db, template.organizationId, new Date().toISOString().slice(0, 10), template.id);
+      return res.status(200).json(result);
+    } catch (error) {
+      logger.error({ err: error }, "recurring invoice cron handler failed");
+      return res.status(500).json({ error: "Recurring invoice processing failed" });
+    }
   });
 
   // Storage proxy for serving VRM/asset files
@@ -120,6 +138,8 @@ async function startServer() {
   );
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
+    const developmentServerModule = "./vite";
+    const { setupVite } = await import(developmentServerModule);
     await setupVite(app, server);
   } else {
     serveStatic(app);

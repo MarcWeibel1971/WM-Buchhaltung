@@ -1,0 +1,1 @@
+CREATE INDEX `journal_entries_org_fiscal_status_date_idx` ON `journal_entries` (`organizationId`,`fiscalYear`,`status`,`bookingDate`);

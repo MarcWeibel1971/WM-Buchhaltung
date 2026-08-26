@@ -7,24 +7,17 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { orgProcedure, router } from "./_core/trpc";
-import { getDb } from "./db";
-import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions, timeEntries, services } from "../drizzle/schema";
+import { createJournalEntry, getDb } from "./db";
+import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions, timeEntries, services, invoices, journalEntries } from "../drizzle/schema";
 import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { SwissQRBill } from "swissqrbill/pdf";
 import type { Data } from "swissqrbill/types";
-import { generateQRReference, formatQRReference as formatQRRef } from "../shared/qrReference";
+import { buildCamtReceiptSourceRef, calculateReconciledPayment, matchesInvoiceQrReference, normalizePaymentReference } from "../shared/paymentReconciliation";
+import { generateQrReference, isValidQrReference } from "../shared/qrReference";
+import { formatCHF, formatQRRef } from "./paymentFormatting";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Format CHF amount: 1234.56 → "1'234.56" */
-function formatCHF(n: number): string {
-  const [int, dec] = n.toFixed(2).split(".");
-  const formatted = int.replace(/\B(?=(\d{3})+(?!\d))/g, "'");
-  return `${formatted}.${dec}`;
-}
-
-
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
@@ -115,8 +108,11 @@ export const qrBillRouter = router({
 
       // Build reference
       let reference: string | undefined = input.reference;
+      if (reference && simpleIsQrIban && qr.referenceType === "QRR" && !isValidQrReference(reference)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Die QR-Referenz muss 27 Ziffern und eine gültige Modulo-10-Prüfziffer enthalten." });
+      }
       if (!reference && simpleIsQrIban && qr.referenceType === "QRR") {
-        reference = generateQRReference(input.journalEntryId ?? Date.now() % 100000, new Date().getFullYear());
+        reference = generateQrReference(input.journalEntryId ?? Date.now() % 100000, new Date().getFullYear());
       }
 
       // Build QR-Bill data
@@ -616,7 +612,7 @@ export const qrBillRouter = router({
       const total = subtotal + vatAmount;
 
       // Generate reference
-      const reference = generateQRReference(Date.now() % 100000, new Date().getFullYear());
+      const reference = generateQrReference(Date.now() % 100000, new Date().getFullYear());
 
       // Format invoice date (parse YYYY-MM-DD without timezone offset)
       const [yyyy2, mm2, dd2] = input.invoiceDate.split('-').map(Number);
@@ -878,7 +874,7 @@ export const qrBillRouter = router({
 
       let referenceStr = "";
       if (effectiveRefType === "QRR" && isQrIban) {
-        const ref = generateQRReference(Date.now() % 100000, new Date().getFullYear());
+        const ref = generateQrReference(Date.now() % 100000, new Date().getFullYear());
         referenceStr = formatQRRef(ref);
       } else if (effectiveRefType === "SCOR") {
         const refBody = String(Date.now() % 100000000000).padStart(11, "0");
@@ -977,9 +973,9 @@ export const qrBillRouter = router({
             ? await pdfDoc.embedPng(logoBytes)
             : await pdfDoc.embedJpg(logoBytes);
 
-          // Logo should be ~120pt wide, centered, starting ~12mm from top
-          const maxLogoW = 130;
-          const maxLogoH = 45;
+          // Logo should be ~160pt wide, centered, starting ~12mm from top
+          const maxLogoW = 180;
+          const maxLogoH = 70;
           const scale = Math.min(maxLogoW / logoImage.width, maxLogoH / logoImage.height);
           const logoW = logoImage.width * scale;
           const logoH = logoImage.height * scale;
@@ -1035,7 +1031,7 @@ export const qrBillRouter = router({
       // Amount column: right-aligned at rightEdge
       // Currency column: ~25mm before amount right edge
       const amtColRight = rightEdge; // right edge for amounts
-      const curColRight = rightEdge - 75; // "CHF" column (weiter links, kein Überlappen mit Beträgen)
+      const curColRight = rightEdge - 55; // "CHF" column
 
       for (let i = 0; i < input.lineItems.length; i++) {
         const item = input.lineItems[i];
@@ -1095,7 +1091,24 @@ export const qrBillRouter = router({
         drawT(input.signerTitle, leftM, bodyY);
       }
 
-      // ═══ 12. FOOTER (QR-Code auf Seite 1 entfernt – erscheint auf Seite 2 als SwissQRBill) – centered with divider line ═══
+      // ═══ 12. QR CODE IMAGE – centered, near bottom ═══
+      const QR_CODE_URL = "https://d2xsxph8kpxj0f.cloudfront.net/114467201/g3uYPYRzWxJLqW5bmLAtac/QRCodeMW_d48c71fc.png";
+      try {
+        const qrResponse = await fetch(QR_CODE_URL);
+        const qrBytes = new Uint8Array(await qrResponse.arrayBuffer());
+        const qrImage = await pdfDoc.embedPng(qrBytes);
+        const qrSize = 70; // 70pt ≈ 25mm
+        page.drawImage(qrImage, {
+          x: (pageW - qrSize) / 2,
+          y: pageH - 255 * mm,
+          width: qrSize,
+          height: qrSize,
+        });
+      } catch {
+        // QR code loading failed, skip
+      }
+
+      // ═══ 13. FOOTER – centered with divider line ═══
       const footerY = 275; // mm from top
       // Divider line
       drawLine(leftM + 80, rightEdge - 80, footerY - 3, 0.5, lightGray);
@@ -1285,9 +1298,143 @@ export const qrBillRouter = router({
         bookingDate: string;
         status: "matched" | "unmatched";
         documentId?: number;
+        invoiceId?: number;
+        invoiceNumber?: string | null;
+        journalEntryId?: number;
       }> = [];
+
+      // Debit notifications reconcile creditor payments. Credit notifications
+      // reconcile customer receipts against outgoing invoices via QR/SCOR ref.
+      const openDebitorInvoices = await db.select({
+        id: invoices.id,
+        invoiceNumber: invoices.invoiceNumber,
+        qrReference: invoices.qrReference,
+        total: invoices.total,
+        paidAmount: invoices.paidAmount,
+      }).from(invoices).where(and(
+        eq(invoices.organizationId, ctx.organizationId),
+        inArray(invoices.status, ["sent", "partially_paid"]),
+      ));
+      const paymentStates = openDebitorInvoices.map(invoice => ({
+        ...invoice,
+        paidAmountNumber: Number(invoice.paidAmount),
+      }));
+
+      const hasIncomingPayments = notification.entries.some(entry => entry.creditDebitIndicator === "CRDT");
+      let bankReceiptAccountId: number | undefined;
+      let debitorAccountId: number | undefined;
+      if (hasIncomingPayments) {
+        const paymentAccounts = await db.select({ id: accounts.id, number: accounts.number })
+          .from(accounts)
+          .where(and(
+            eq(accounts.organizationId, ctx.organizationId),
+            inArray(accounts.number, ["1020", "1100"]),
+          ));
+        bankReceiptAccountId = paymentAccounts.find(account => account.number === "1020")?.id;
+        debitorAccountId = paymentAccounts.find(account => account.number === "1100")?.id;
+        if (!bankReceiptAccountId || !debitorAccountId) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Für den Debitorenabgleich müssen die Konten 1020 (Bank) und 1100 (Debitoren) im Kontenplan vorhanden sein.",
+          });
+        }
+      }
       
-      for (const entry of notification.entries) {
+      for (let entryIndex = 0; entryIndex < notification.entries.length; entryIndex += 1) {
+        const entry = notification.entries[entryIndex];
+        if (entry.creditDebitIndicator === "CRDT") {
+          const invoice = paymentStates.find(candidate => matchesInvoiceQrReference(candidate.qrReference, entry));
+          if (!invoice || !bankReceiptAccountId || !debitorAccountId) {
+            unmatched++;
+            matchResults.push({
+              endToEndId: entry.endToEndId,
+              amount: entry.amount,
+              creditorName: entry.debtorName,
+              bookingDate: entry.bookingDate,
+              status: "unmatched",
+            });
+            continue;
+          }
+
+          const referenceKey = normalizePaymentReference(entry.reference ?? entry.remittanceInfo) || `entry-${entryIndex}`;
+          const sourceRef = buildCamtReceiptSourceRef(notification.messageId, entryIndex, referenceKey);
+          const [alreadyReconciled] = await db.select({ id: journalEntries.id })
+            .from(journalEntries)
+            .where(and(
+              eq(journalEntries.organizationId, ctx.organizationId),
+              eq(journalEntries.sourceRef, sourceRef),
+            ))
+            .limit(1);
+
+          if (alreadyReconciled) {
+            matched++;
+            matchResults.push({
+              endToEndId: entry.endToEndId,
+              amount: entry.amount,
+              creditorName: entry.debtorName,
+              bookingDate: entry.bookingDate,
+              status: "matched",
+              invoiceId: invoice.id,
+              invoiceNumber: invoice.invoiceNumber,
+              journalEntryId: alreadyReconciled.id,
+            });
+            continue;
+          }
+
+          const receivedAmount = Math.abs(entry.amount);
+          const reconciliation = calculateReconciledPayment(
+            Number(invoice.total),
+            invoice.paidAmountNumber,
+            receivedAmount,
+          );
+          const journalEntryId = await createJournalEntry({
+            organizationId: ctx.organizationId,
+            bookingDate: entry.bookingDate,
+            valueDate: entry.valueDate,
+            description: `Zahlungseingang ${invoice.invoiceNumber ?? invoice.id}`,
+            source: "bank_import",
+            sourceRef,
+            status: "pending",
+            lines: [
+              {
+                accountId: bankReceiptAccountId,
+                side: "debit",
+                amount: receivedAmount.toFixed(2),
+                description: `CAMT.054 Zahlungseingang ${invoice.invoiceNumber ?? invoice.id}`,
+              },
+              {
+                accountId: debitorAccountId,
+                side: "credit",
+                amount: receivedAmount.toFixed(2),
+                description: `Debitor ${invoice.invoiceNumber ?? invoice.id}`,
+              },
+            ],
+          });
+
+          await db.update(invoices).set({
+            paidAmount: reconciliation.paidAmount.toFixed(2),
+            status: reconciliation.status,
+            paidDate: reconciliation.status === "paid" ? entry.bookingDate : null,
+          }).where(and(
+            eq(invoices.organizationId, ctx.organizationId),
+            eq(invoices.id, invoice.id),
+          ));
+          invoice.paidAmountNumber = reconciliation.paidAmount;
+
+          matched++;
+          matchResults.push({
+            endToEndId: entry.endToEndId,
+            amount: entry.amount,
+            creditorName: entry.debtorName,
+            bookingDate: entry.bookingDate,
+            status: "matched",
+            invoiceId: invoice.id,
+            invoiceNumber: invoice.invoiceNumber,
+            journalEntryId,
+          });
+          continue;
+        }
+
         if (entry.creditDebitIndicator !== "DBIT") continue;
         
         let wasMatched = false;
@@ -1357,6 +1504,7 @@ export const qrBillRouter = router({
         messageId: notification.messageId,
         totalEntries: notification.entries.length,
         debitEntries: notification.entries.filter(e => e.creditDebitIndicator === "DBIT").length,
+        creditEntries: notification.entries.filter(e => e.creditDebitIndicator === "CRDT").length,
         matched,
         unmatched,
         results: matchResults,

@@ -114,10 +114,20 @@ export default function Journal() {
     onSuccess: () => { toast.success("Buchung gelöscht"); utils.journal.list.invalidate(); utils.reports.dashboard.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
-  const revertMutation = trpc.journal.revert.useMutation({
-    onSuccess: () => { toast.success("Buchung zurück auf Ausstehend gesetzt"); utils.journal.list.invalidate(); utils.reports.dashboard.invalidate(); },
+  const stornoMutation = trpc.journal.storno.useMutation({
+    onSuccess: (r) => {
+      toast.success(r.pendingApproval
+        ? "Stornobuchung erstellt – wartet auf Freigabe durch eine zweite Person (Vier-Augen-Prinzip)."
+        : "Stornobuchung wurde erstellt und freigegeben.");
+      setStornoEntry(null);
+      setStornoReason("");
+      utils.journal.list.invalidate();
+      utils.reports.dashboard.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
+  const [stornoEntry, setStornoEntry] = useState<any>(null);
+  const [stornoReason, setStornoReason] = useState("");
 
   const entries = data?.entries ?? [];
   const total = data?.total ?? 0;
@@ -497,7 +507,21 @@ export default function Journal() {
                       {entry.totalAmount != null ? formatCHF(entry.totalAmount) : "–"}
                     </td>
                     <td><SourceBadge source={entry.source} /></td>
-                    <td><StatusBadge status={entry.status} /></td>
+                    <td>
+                      <div className="flex flex-col gap-1 items-start">
+                        <StatusBadge status={entry.status} />
+                        {entry.reversedByEntryId && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                            Storniert
+                          </span>
+                        )}
+                        {entry.reversalOfEntryId && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
+                            Storno zu #{entry.reversalOfEntryId}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex gap-1 justify-end">
                         {entry.status === "pending" && (
@@ -512,9 +536,10 @@ export default function Journal() {
                             </Button>
                           </>
                         )}
-                        {entry.status === "approved" && (
+                        {entry.status === "approved" && !entry.reversedByEntryId && !entry.reversalOfEntryId && (
                           <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-amber-600"
-                            onClick={() => revertMutation.mutate({ entryId: entry.id })}>
+                            title="Stornobuchung erstellen"
+                            onClick={() => { setStornoEntry(entry); setStornoReason(""); }}>
                             <RotateCcw className="h-3.5 w-3.5" />
                           </Button>
                         )}
@@ -632,6 +657,41 @@ export default function Journal() {
           fiscalYear={fiscalYear}
           onClose={() => setShowExportDialog(false)}
         />
+      )}
+
+      {/* Storno-Dialog */}
+      {stornoEntry && (
+        <Dialog open onOpenChange={(open) => { if (!open) setStornoEntry(null); }}>
+          <DialogContent className="w-[min(95vw,28rem)] max-w-none">
+            <DialogHeader>
+              <DialogTitle>Buchung stornieren</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Für Buchung {stornoEntry.entryNumber ?? stornoEntry.id} wird eine Stornobuchung mit
+              invertierten Beträgen (Soll ↔ Haben) erstellt. Die Originalbuchung bleibt
+              unverändert erhalten (GeBüV).
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium" htmlFor="storno-reason">Grund (optional)</label>
+              <Input
+                id="storno-reason"
+                value={stornoReason}
+                onChange={(e) => setStornoReason(e.target.value)}
+                placeholder="z. B. falsches Konto, Doppelerfassung …"
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setStornoEntry(null)}>Abbrechen</Button>
+              <Button
+                variant="destructive"
+                disabled={stornoMutation.isPending}
+                onClick={() => stornoMutation.mutate({ entryId: stornoEntry.id, reason: stornoReason || undefined })}
+              >
+                Stornieren
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* Bestätigungs-Dialog */}

@@ -546,7 +546,55 @@ export function CompanyTab() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Prozesskontrollen (Vier-Augen-Prinzip) ── */}
+      <ProcessControlsCard />
     </div>
+  );
+}
+
+// ─── Prozesskontrollen ──────────────────────────────────────────────────────
+
+function ProcessControlsCard() {
+  const utils = trpc.useUtils();
+  const orgQuery = trpc.organizations.getCurrent.useQuery();
+  const updateMut = trpc.organizations.update.useMutation({
+    onSuccess: (_d, vars) => {
+      toast.success(vars.requireFourEyesApproval
+        ? "Vier-Augen-Prinzip aktiviert – Freigaben müssen neu durch eine zweite Person erfolgen."
+        : "Vier-Augen-Prinzip deaktiviert.");
+      utils.organizations.getCurrent.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const enabled = (orgQuery.data as any)?.requireFourEyesApproval ?? false;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Prozesskontrollen</CardTitle>
+        <CardDescription>Interne Kontrollen für den Freigabeprozess</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="four-eyes-switch" className="font-medium">Vier-Augen-Prinzip</Label>
+            <p className="text-[13px]" style={{ color: "var(--ink-3)" }}>
+              Wenn aktiv, darf ein Journaleintrag nicht von derselben Person erstellt
+              und freigegeben werden (Ersteller ≠ Prüfer). Direktbuchungen und Storni
+              bleiben bis zur Freigabe durch eine zweite Person offen.
+            </p>
+          </div>
+          <Switch
+            id="four-eyes-switch"
+            checked={enabled}
+            disabled={orgQuery.isLoading || updateMut.isPending}
+            onCheckedChange={(checked) => updateMut.mutate({ requireFourEyesApproval: checked })}
+          />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

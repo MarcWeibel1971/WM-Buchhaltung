@@ -95,6 +95,10 @@ export const organizations = mysqlTable("organizations", {
   defaultBankAccountId: int("defaultBankAccountId"),
   creditCardClearingAccountId: int("creditCardClearingAccountId"),
   defaultSalaryExpenseAccountId: int("defaultSalaryExpenseAccountId"),
+  // ─── Prozesskontrollen ────────────────────────────────────────────────────
+  // Vier-Augen-Prinzip: Wenn aktiv, muss die Freigabe eines Journaleintrags
+  // durch eine andere Person als den Ersteller erfolgen (Ersteller ≠ Prüfer).
+  requireFourEyesApproval: boolean("requireFourEyesApproval").default(false).notNull(),
   // Status
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -303,9 +307,15 @@ export const journalEntries = mysqlTable(
     aiReasoning: text("aiReasoning"),
     // Fiscal year
     fiscalYear: int("fiscalYear"),
+    // Who created (für Vier-Augen-Prinzip: Ersteller ≠ Prüfer)
+    createdBy: int("createdBy"),
     // Who approved
     approvedBy: int("approvedBy"),
     approvedAt: timestamp("approvedAt"),
+    // Storno-Verknüpfung (bilateral): reversalOfEntryId zeigt auf den
+    // stornierten Eintrag, reversedByEntryId auf den Storno-Eintrag.
+    reversalOfEntryId: int("reversalOfEntryId"),
+    reversedByEntryId: int("reversedByEntryId"),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },

@@ -253,6 +253,13 @@
       "when": 1777271422733,
       "tag": "0035_account_mappings",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1777271422734,
+      "tag": "0036_qr_invoice_matching",
+      "breakpoints": true
     }
   ]
 }

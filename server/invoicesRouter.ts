@@ -36,29 +36,17 @@ import {
   allocateInvoiceNumber,
   createJournalEntry,
   approveJournalEntry,
+  applyInvoicePayment,
 } from "./db";
+import {
+  generateQRReference,
+  formatQRReference as formatQRRef,
+} from "../shared/qrReference";
 import { createLogger } from "./_core/logger";
 
 const logger = createLogger("invoicesRouter");
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Generiert eine QR-Referenz (26 Ziffern + 1 Prüfziffer) aus einer Invoice-ID.
- * Format: YYMMDD + 20-stellig zero-padded ID + Modulo-10-Prüfziffer.
- * Kopie aus qrBillRouter – eine Extraktion in ein shared module steht
- * als kleine Aufräum-Aufgabe in der Roadmap.
- */
-function generateQRReference(invoiceId: number, fiscalYear: number): string {
-  const base = String(fiscalYear).slice(-2) + "0000" + String(invoiceId).padStart(20, "0");
-  const table = [0, 9, 4, 6, 8, 2, 7, 1, 3, 5];
-  let carry = 0;
-  for (const ch of base) {
-    carry = table[(carry + parseInt(ch)) % 10];
-  }
-  const check = (10 - carry) % 10;
-  return base + String(check);
-}
 
 /** Rundet auf 2 Dezimalstellen (Rappen). */
 function round2(n: number): number {
@@ -101,14 +89,6 @@ const invoiceItemInput = z.object({
 function formatCHF(n: number): string {
   const [int, dec] = n.toFixed(2).split(".");
   return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, "'")}.${dec}`;
-}
-
-/** QR-Referenz in 5er-Gruppen formatieren. */
-function formatQRRef(ref: string): string {
-  const parts: string[] = [];
-  let i = ref.length;
-  while (i > 0) { const start = Math.max(0, i - 5); parts.unshift(ref.slice(start, i)); i = start; }
-  return parts.join(" ");
 }
 
 /**
@@ -890,28 +870,12 @@ export const invoicesRouter = router({
         });
       }
 
-      const total = parseFloat(inv.total as string);
-      const paidSoFar = parseFloat(inv.paidAmount as string);
-      const newPaid = round2(paidSoFar + input.amount);
-      const openAmount = round2(total - newPaid);
+      // Kernlogik zentralisiert in db.applyInvoicePayment (wird auch vom
+      // automatischen Debitoren-Abgleich via QR-Referenz verwendet)
+      const result = await applyInvoicePayment(ctx.organizationId, input.id, input.amount, input.paidDate);
+      if (!result) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Epsilon für Fliesskomma-Toleranz (1 Rappen)
-      let newStatus: "sent" | "partially_paid" | "paid" = inv.status as any;
-      let paidDate: string | null = inv.paidDate;
-      if (openAmount <= 0.01) {
-        newStatus = "paid";
-        paidDate = input.paidDate;
-      } else if (newPaid > 0.01) {
-        newStatus = "partially_paid";
-      }
-
-      await db.update(invoices).set({
-        paidAmount: newPaid.toFixed(2),
-        status: newStatus,
-        paidDate,
-      }).where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)));
-
-      return { success: true, status: newStatus, openAmount };
+      return { success: true, status: result.status, openAmount: result.openAmount };
     }),
 
   // ─── CANCEL (Gegenbuchung + Status cancelled) ─────────────────────────────

@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { parseStatement, extractCAMT053AccountIban } from "../../../shared/bankParser";
+import { validateManualReference } from "@shared/qrReference";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 
 function formatCHF(val: string | number) {
@@ -170,6 +171,9 @@ export default function BankImport() {
   const importMutation = trpc.bankImport.importTransactions.useMutation({
     onSuccess: (data) => {
       toast.success(`${data.imported} Transaktionen importiert, ${data.duplicates} Duplikate übersprungen`);
+      if ((data as any).invoiceMatched > 0) {
+        toast.success(`${(data as any).invoiceMatched} Zahlungseingang/Zahlungseingänge via QR-Referenz einer Rechnung zugeordnet`, { duration: 6000 });
+      }
       refetchTxs();
       setImporting(false);
       if (data.imported > 0) {
@@ -1004,6 +1008,11 @@ export default function BankImport() {
                     </td>
                     <td className="text-sm max-w-xs">
                       <div className="truncate font-medium" title={tx.description ?? ""}>{tx.description ?? "–"}</div>
+                      {(tx as any).matchedInvoiceNumber && (
+                        <div className="text-xs text-green-700 font-medium mt-0.5" title="Zahlungseingang automatisch einer QR-Rechnung zugeordnet">
+                          QR-Match: {(tx as any).matchedInvoiceNumber}
+                        </div>
+                      )}
                     </td>
                     <td className="text-sm max-w-40">
                       <div className="truncate" title={tx.counterparty ?? ""}>
@@ -1029,6 +1038,12 @@ export default function BankImport() {
                     </td>
                     <td className={`text-sm text-right font-mono tabular-nums whitespace-nowrap ${amount >= 0 ? "text-green-700" : "text-red-600"}`}>
                       {amount >= 0 ? "" : "-"}{formatCHF(Math.abs(amount))}
+                      {tx.currency && tx.currency !== "CHF" && (
+                        <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                          title="Fremdwährung: Buchung derzeit nur in CHF möglich (keine Kursumrechnung)">
+                          {tx.currency}
+                        </span>
+                      )}
                     </td>
                     <td className="text-right text-xs">
                       {txIsPending && (
@@ -1259,6 +1274,20 @@ export default function BankImport() {
                   <div>
                     <Label className="text-xs">Referenz</Label>
                     <Input value={editForm.reference} onChange={e => setEditForm(f => ({ ...f, reference: e.target.value }))} />
+                    {editForm.reference.trim() && (() => {
+                      const check = validateManualReference(editForm.reference);
+                      if (!check.valid) {
+                        return <p className="text-xs text-red-600 mt-1">✗ {check.reason}</p>;
+                      }
+                      if (check.canonical) {
+                        return (
+                          <p className="text-xs text-green-600 mt-1">
+                            ✓ Gültige {check.canonical.startsWith("RF") ? "SCOR" : "QR"}-Referenz – automatischer Zahlungsabgleich möglich
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>

@@ -20,6 +20,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { decryptSecret } from "./secrets";
 import { createLogger } from "./_core/logger";
+import { STRIPE_API_VERSION } from "./stripeApiVersion";
 
 const logger = createLogger("posWebhook");
 
@@ -54,7 +55,7 @@ posWebhookRouter.post(
         // wird von decryptSecret transparent durchgereicht
         const apiKey = cfg.apiKey ? decryptSecret(cfg.apiKey) : "";
         const webhookSecret = decryptSecret(cfg.webhookSecret);
-        const stripe = new Stripe(apiKey, { apiVersion: "2026-03-25.dahlia" });
+        const stripe = new Stripe(apiKey, { apiVersion: STRIPE_API_VERSION });
         event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
         matchedConfig = cfg;
         break;

@@ -6,7 +6,7 @@ import {
   invoiceSequences,
   bankAccounts, bankTransactions, employees, payrollEntries,
   vatPeriods, openingBalances, fiscalYears, creditCardStatements,
-  bookingRules, documents,
+  bookingRules, documents, invoices,
   type Account, type JournalEntry, type JournalLine, type BankTransaction,
   type Employee, type PayrollEntry, type BookingRule, type Document,
 } from "../drizzle/schema";
@@ -570,6 +570,97 @@ export async function approveBankTransaction(txId: number, journalEntryId: numbe
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(bankTransactions).set({ status: "matched", journalEntryId }).where(eq(bankTransactions.id, txId));
+}
+
+// ─── Debitoren-Zahlungsabgleich via QR-Referenz (Phase 2.1) ─────────────────
+
+/**
+ * Findet eine offene Debitoren-Rechnung anhand ihrer (bereits normalisierten)
+ * QR-Referenz. Berücksichtigt nur bezahlbare Stati (sent/partially_paid).
+ */
+export async function findOpenInvoiceByQRReference(orgId: number, qrReference: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [inv] = await db.select().from(invoices)
+    .where(and(
+      eq(invoices.organizationId, orgId),
+      eq(invoices.qrReference, qrReference),
+      inArray(invoices.status, ["sent", "partially_paid"]),
+    ))
+    .limit(1);
+  return inv ?? null;
+}
+
+export type InvoicePaymentResult = {
+  status: "sent" | "partially_paid" | "paid";
+  openAmount: number;
+  paidAmount: number;
+};
+
+/**
+ * Reine Statuslogik für einen Zahlungseingang auf einer Debitoren-Rechnung.
+ * Vollzahlung (Rest ≤ 1 Rappen) → paid + paidDate; sonst Teilzahlung.
+ * Ausgelagert für testbare Einheit (kein DB-Zugriff).
+ */
+export function computeInvoicePaymentState(
+  total: number,
+  paidSoFar: number,
+  amount: number,
+  paidDate: string,
+  currentPaidDate: string | null,
+): { status: "sent" | "partially_paid" | "paid"; openAmount: number; paidAmount: number; paidDate: string | null } {
+  const newPaid = Math.round((paidSoFar + amount) * 100) / 100;
+  const openAmount = Math.round((total - newPaid) * 100) / 100;
+
+  // Epsilon für Fliesskomma-Toleranz (1 Rappen)
+  let status: "sent" | "partially_paid" | "paid" = "sent";
+  let newPaidDate = currentPaidDate;
+  if (openAmount <= 0.01) {
+    status = "paid";
+    newPaidDate = paidDate;
+  } else if (newPaid > 0.01) {
+    status = "partially_paid";
+  }
+  return { status, openAmount, paidAmount: newPaid, paidDate: newPaidDate };
+}
+
+/**
+ * Verbucht einen Zahlungseingang auf einer Debitoren-Rechnung:
+ * paidAmount += amount, Status paid/partially_paid, paidDate bei Vollzahlung.
+ * Gibt null zurück, wenn die Rechnung nicht (mehr) zahlbar ist
+ * (z. B. zwischenzeitlich storniert) – Aufrufer behandelt das als Warnung,
+ * nicht als Fehler.
+ */
+export async function applyInvoicePayment(
+  orgId: number,
+  invoiceId: number,
+  amount: number,
+  paidDate: string,
+): Promise<InvoicePaymentResult | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [inv] = await db.select().from(invoices)
+    .where(and(eq(invoices.organizationId, orgId), eq(invoices.id, invoiceId)))
+    .limit(1);
+  if (!inv) return null;
+  if (inv.status !== "sent" && inv.status !== "partially_paid") return null;
+
+  const result = computeInvoicePaymentState(
+    parseFloat(inv.total as string),
+    parseFloat(inv.paidAmount as string),
+    amount,
+    paidDate,
+    inv.paidDate,
+  );
+
+  await db.update(invoices).set({
+    paidAmount: result.paidAmount.toFixed(2),
+    status: result.status,
+    paidDate: result.paidDate,
+  }).where(and(eq(invoices.organizationId, orgId), eq(invoices.id, invoiceId)));
+
+  return { status: result.status, openAmount: result.openAmount, paidAmount: result.paidAmount };
 }
 
 export async function updateBankTransaction(txId: number, data: {

@@ -9,6 +9,7 @@ import { getDb } from "./db";
 import { ebicsConfig } from "../drizzle/schema";
 import { eq, desc } from "drizzle-orm";
 import crypto from "crypto";
+import { encryptSecret } from "./secrets";
 
 export const ebicsRouter = router({
   // ─── Alle Konfigurationen abrufen ─────────────────────────────────────────
@@ -138,13 +139,14 @@ export const ebicsRouter = router({
 
       if (!cfg) throw new Error("Konfiguration nicht gefunden");
 
-      // Schlüssel speichern (in Produktion: AES-verschlüsseln!)
+      // Private Schlüssel AES-256-GCM-verschlüsselt speichern (Phase 2.2).
+      // Wirft MissingMasterKeyError, wenn SECRETS_MASTER_KEY nicht gesetzt ist.
       await db
         .update(ebicsConfig)
         .set({
-          signatureKeyPem: sigPrivKey,
-          authKeyPem: authPrivKey,
-          encKeyPem: encPrivKey,
+          signatureKeyPem: encryptSecret(sigPrivKey),
+          authKeyPem: encryptSecret(authPrivKey),
+          encKeyPem: encryptSecret(encPrivKey),
           initStatus: "ini_sent",
           updatedAt: new Date(),
         })

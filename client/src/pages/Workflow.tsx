@@ -11,8 +11,9 @@ import { AICallout } from "@/components/klax/AICallout";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { toast } from "sonner";
 
-function formatCHF(val: number) {
-  return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", minimumFractionDigits: 2 }).format(val);
+// AP3.4: Beträge in Transaktionswährung anzeigen (EUR nie als CHF beschriftet)
+function formatCHF(val: number, currency = "CHF") {
+  return new Intl.NumberFormat("de-CH", { style: "currency", currency, minimumFractionDigits: 2 }).format(val);
 }
 
 function parseAmount(v: string | number | null | undefined): number {
@@ -305,7 +306,7 @@ export default function Workflow() {
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-[11.5px]" style={{ color: "var(--ink-3)" }}>
                         {meta?.amount != null && (
-                          <span className="mono font-medium">{formatCHF(parseAmount(meta.amount))}</span>
+                          <span className="mono font-medium">{formatCHF(parseAmount(meta.amount), meta.currency ?? "CHF")}</span>
                         )}
                         {meta?.date && <span>{meta.date}</span>}
                         <span className="truncate flex-1">{d.filename}</span>
@@ -411,7 +412,7 @@ export default function Workflow() {
                         className="mono text-[13px] font-medium"
                         style={{ color: isInbound ? "var(--pos)" : "var(--neg)" }}
                       >
-                        {isInbound ? "+" : ""}{formatCHF(amount)}
+                        {isInbound ? "+" : ""}{formatCHF(amount, t.currency ?? "CHF")}
                       </div>
                       {canApprove && (
                         <button
@@ -502,7 +503,7 @@ export default function Workflow() {
   );
 }
 
-function parseMeta(s: string | null | undefined): { counterparty?: string; amount?: number | string; date?: string } | null {
+function parseMeta(s: string | null | undefined): { counterparty?: string; amount?: number | string; date?: string; currency?: string } | null {
   if (!s) return null;
   try { return JSON.parse(s); } catch { return null; }
 }

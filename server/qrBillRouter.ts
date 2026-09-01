@@ -505,9 +505,10 @@ export const qrBillRouter = router({
         // - included in a pain.001 export (matchStatus = 'pain001')
         const isPaid = paidDocIds.has(doc.id) || doc.matchStatus === "matched" || doc.matchStatus === "manual" || doc.matchStatus === "pain001";
 
-        // Calculate due date: documentDate + 30 days (default payment term)
-        let dueDate = "";
-        if (documentDate) {
+        // Fälligkeitsdatum: explizit erfasstes Feld (z. B. manuelle Erfassung,
+        // AP3.5) hat Vorrang; sonst documentDate + 30 Tage (Default-Zahlungsfrist)
+        let dueDate = metadata.dueDate || "";
+        if (!dueDate && documentDate) {
           try {
             const d = new Date(documentDate);
             d.setDate(d.getDate() + 30);
@@ -537,6 +538,59 @@ export const qrBillRouter = router({
       });
 
       return results;
+    }),
+
+  // ─── AP3.5: Eingangsrechnung manuell erfassen (ohne Beleg-Upload) ─────────
+  createManualInvoiceIn: orgProcedure
+    .input(z.object({
+      counterparty: z.string().min(1),
+      counterpartyIban: z.string().min(15),
+      referenceNumber: z.string().optional(),
+      totalAmount: z.number().positive(),
+      currency: z.enum(["CHF", "EUR"]).default("CHF"),
+      documentDate: z.string().min(8),
+      dueDate: z.string().optional(),
+      description: z.string().optional(),
+      creditorAddress: z.string().optional(),
+      creditorZip: z.string().optional(),
+      creditorCity: z.string().optional(),
+      creditorCountry: z.string().default("CH"),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const fiscalYear = new Date(input.documentDate).getFullYear();
+      const metadata = {
+        manualEntry: true,
+        counterparty: input.counterparty,
+        counterpartyIban: input.counterpartyIban.replace(/\s/g, ""),
+        referenceNumber: input.referenceNumber ?? "",
+        totalAmount: input.totalAmount.toFixed(2),
+        currency: input.currency,
+        documentDate: input.documentDate,
+        dueDate: input.dueDate ?? "",
+        description: input.description ?? "",
+        creditorAddress: input.creditorAddress ?? "",
+        creditorZip: input.creditorZip ?? "",
+        creditorCity: input.creditorCity ?? "",
+        creditorCountry: input.creditorCountry,
+      };
+      const [result] = await db.insert(documents).values({
+        organizationId: ctx.organizationId,
+        filename: `Manuell: ${input.counterparty} (${input.documentDate})`,
+        // Kein Beleg vorhanden – Pflichtfelder bewusst leer
+        s3Key: "",
+        s3Url: "",
+        mimeType: "manual/entry",
+        fileSize: 0,
+        documentType: "invoice_in",
+        aiMetadata: JSON.stringify(metadata),
+        fiscalYear,
+        matchStatus: "unmatched",
+        uploadedBy: ctx.user.id,
+      });
+      return { documentId: (result as any).insertId };
     }),
 
   // ─── Mark invoice as manually paid ──────────────────────────────────────────

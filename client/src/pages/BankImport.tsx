@@ -966,7 +966,7 @@ export default function BankImport() {
                   <span className="inline-flex items-center">Haben-Konto<SortIcon col="credit" /></span>
                 </th>
                 <th className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>
-                  <span className="inline-flex items-center justify-end">Betrag CHF<SortIcon col="amount" /></span>
+                  <span className="inline-flex items-center justify-end">Betrag<SortIcon col="amount" /></span>
                 </th>
                 <th className="text-right cursor-pointer select-none" onClick={() => toggleSort("status")}>
                   <span className="inline-flex items-center justify-end">Status<SortIcon col="status" /></span>
@@ -1255,7 +1255,7 @@ export default function BankImport() {
                   <Input value={editTx.transactionDate ? new Date(editTx.transactionDate).toLocaleDateString("de-CH") : "–"} disabled className="bg-muted" />
                 </div>
                 <div>
-                  <Label className="text-xs">Betrag CHF</Label>
+                  <Label className="text-xs">Betrag {editTx?.currency ?? "CHF"}</Label>
                   <Input value={formatCHF(editTx.amount)} disabled className="bg-muted" />
                 </div>
               </div>

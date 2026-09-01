@@ -614,7 +614,7 @@ function PaymentDialog(props: {
         </AlertDialogHeader>
         <div className="space-y-3 py-2">
           <div>
-            <label className="text-sm font-medium">Betrag (CHF)</label>
+            <label className="text-sm font-medium">Betrag</label>
             <Input
               type="number" step="0.05" min="0"
               value={amount} onChange={(e) => setAmount(e.target.value)}

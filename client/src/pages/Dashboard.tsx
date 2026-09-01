@@ -25,7 +25,8 @@ export default function Dashboard() {
 
   const { data: incomeStatement } = trpc.reports.incomeStatement.useQuery({ fiscalYear: year });
   const { data: pendingJournal } = trpc.journal.list.useQuery({ status: "pending", limit: 50 });
-  const { data: pendingBank } = trpc.bankImport.getPendingTransactions.useQuery({});
+  // AP2.1: dieselbe Quelle wie die gemeinsame Transaktionsliste (/workflow)
+  const { data: pendingBank } = trpc.bankImport.getTransactionsByStatus.useQuery({ status: "all", fiscalYear: year });
   const { data: allDocs } = trpc.documents.list.useQuery({ fiscalYear: year });
   const { data: company } = trpc.settings.getCompanySettings.useQuery();
   const { data: monthlyData } = trpc.reports.monthlyAggregates.useQuery({ months: 6 });
@@ -40,11 +41,13 @@ export default function Dashboard() {
   const profit = totalRevenue - totalExpenses;
 
   const pendingEntries = pendingJournal?.entries?.length ?? 0;
-  const pendingBankTx = pendingBank?.length ?? 0;
-  const unmatchedBankTx = pendingBank?.filter(tx => !tx.matchedDocumentId)?.length ?? 0;
+  const pendingBankTx = pendingBank?.filter(tx => tx.status === "pending")?.length ?? 0;
+  const unmatchedBankTx = pendingBank?.filter(tx => tx.status === "pending" && !tx.matchedDocumentId && !(tx as any).matchedInvoiceId)?.length ?? 0;
   const newDocs = allDocs?.filter(d => !d.matchStatus || d.matchStatus === "unmatched")?.length ?? 0;
   const aiProcessedDocs = allDocs?.filter(d => d.aiMetadata)?.length ?? 0;
-  const matchedDocs = allDocs?.filter(d => d.matchStatus === "matched")?.length ?? 0;
+  const matchedDocs = allDocs?.filter(d => d.matchStatus === "matched" || d.matchStatus === "manual")?.length ?? 0;
+  // AP2.1: SCOR/QR-Matches aus derselben Quelle wie die Workflow-Seite mitzählen
+  const scorMatchedTx = pendingBank?.filter(tx => (tx as any).matchedInvoiceId)?.length ?? 0;
   const totalDocs = allDocs?.length ?? 0;
   const autoRate = totalDocs > 0 ? Math.round((aiProcessedDocs / totalDocs) * 100) : 0;
   const matchRate = totalDocs > 0 ? Math.round((matchedDocs / totalDocs) * 100) : 0;
@@ -216,7 +219,7 @@ export default function Dashboard() {
             </div>
             <div className="space-y-3">
               <PipelineRow label="Automatisch erkannt" value={aiProcessedDocs} icon={<Sparkles className="h-3 w-3" />} tone="ai" />
-              <PipelineRow label="Gematcht" value={matchedDocs} icon={<Link2 className="h-3 w-3" />} tone="pos" />
+              <PipelineRow label="Gematcht" value={matchedDocs + scorMatchedTx} icon={<Link2 className="h-3 w-3" />} tone="pos" />
               <PipelineRow label="Zur Prüfung" value={pendingEntries} icon={<Eye className="h-3 w-3" />} tone="warn" />
             </div>
           </div>

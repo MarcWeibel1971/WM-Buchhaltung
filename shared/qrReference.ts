@@ -145,3 +145,57 @@ export function validateManualReference(raw: string): {
   }
   return { valid: true, canonical: null };
 }
+
+// ─── QR-IBAN & SCOR (Audit P1-6) ────────────────────────────────────────────
+
+/**
+ * Prüft, ob eine IBAN eine QR-IBAN ist (QR-IID 30000–31999 an Position 5–9).
+ * Akzeptiert IBANs mit oder ohne Leerzeichen.
+ */
+export function isQrIban(iban: string | null | undefined): boolean {
+  if (!iban) return false;
+  const clean = iban.replace(/\s+/g, "").toUpperCase();
+  if (!/^CH\d{19}$/.test(clean)) return false;
+  const iid = parseInt(clean.slice(4, 9), 10);
+  return iid >= 30000 && iid <= 31999;
+}
+
+/** ISO-11649-Prüfziffern (Mod 97) für einen SCOR-Referenzkörper ohne "RFxx". */
+export function iso11649CheckDigits(referenceBody: string): string {
+  const rearranged = referenceBody.toUpperCase() + "RF00";
+  let numeric = "";
+  for (const ch of rearranged) {
+    const code = ch.charCodeAt(0);
+    numeric += code >= 65 ? String(code - 55) : ch;
+  }
+  let remainder = 0;
+  for (const ch of numeric) {
+    remainder = (remainder * 10 + parseInt(ch, 10)) % 97;
+  }
+  return String(98 - remainder).padStart(2, "0");
+}
+
+/**
+ * Generiert eine SCOR-Referenz (ISO 11649) aus einer Beleg-ID.
+ * Format: "RF" + 2 Prüfziffern + 11-stellig zero-padded ID.
+ */
+export function generateSCORReference(id: number): string {
+  const body = String(id).padStart(11, "0");
+  return "RF" + iso11649CheckDigits(body) + body;
+}
+
+/**
+ * Kanonische Rechnungsreferenz (Audit P1-6, SIX Swiss QR-bill):
+ * - QR-IBAN (IID 30000–31999) → QRR (27 Stellen, Mod 10 rekursiv)
+ * - normale IBAN / keine IBAN → SCOR (ISO 11649)
+ */
+export function generateInvoiceReference(
+  invoiceId: number,
+  fiscalYear: number,
+  iban: string | null | undefined,
+): string {
+  if (isQrIban(iban)) {
+    return generateQRReference(invoiceId, fiscalYear);
+  }
+  return generateSCORReference(invoiceId);
+}

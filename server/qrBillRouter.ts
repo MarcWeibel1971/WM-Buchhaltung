@@ -8,12 +8,12 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { orgProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
-import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions, timeEntries, services } from "../drizzle/schema";
+import { qrSettings, companySettings, employees, payrollEntries, bankAccounts, accounts, documents, bankTransactions, timeEntries, services, invoices } from "../drizzle/schema";
 import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { SwissQRBill } from "swissqrbill/pdf";
 import type { Data } from "swissqrbill/types";
-import { generateQRReference, formatQRReference as formatQRRef } from "../shared/qrReference";
+import { generateQRReference, formatQRReference as formatQRRef, generateSCORReference, isQrIban as isQrIbanShared } from "../shared/qrReference";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,12 +143,8 @@ export const qrBillRouter = router({
       if (reference && simpleIsQrIban && qr.referenceType === "QRR") {
         data.reference = formatQRRef(reference);
       } else if (!simpleIsQrIban) {
-        // For regular IBANs, use proper SCOR reference (ISO 11649)
-        const refBody = String(Date.now() % 100000000000).padStart(11, "0");
-        const numStr = refBody + "2715" + "00";
-        let rem = 0;
-        for (const ch of numStr) { rem = (rem * 10 + parseInt(ch)) % 97; }
-        data.reference = `RF${String(98 - rem).padStart(2, "0")}${refBody}`;
+        // SCOR-Referenz (ISO 11649) für normale IBANs – zentral (Audit P1-6)
+        data.reference = generateSCORReference(Date.now() % 100000000000);
       }
       if (input.additionalInfo || qr.additionalInfo) {
         data.message = input.additionalInfo || qr.additionalInfo || undefined;
@@ -659,18 +655,8 @@ export const qrBillRouter = router({
       if (effectiveRefType === "QRR" && isQrIban) {
         data.reference = formatQRRef(reference);
       } else if (effectiveRefType === "SCOR") {
-        // Generate a proper Creditor Reference (ISO 11649) for regular IBANs
-        // RF + 2 check digits + up to 21 alphanumeric chars, max 25 total
-        const refBody = String(Date.now() % 100000000000).padStart(11, "0");
-        // ISO 11649 check digit calculation: move RF00 to end, replace R=27,F=15, mod 97
-        const numericStr = refBody + "2715" + "00";
-        // Calculate mod 97 for large numbers using string-based approach
-        let remainder = 0;
-        for (const ch of numericStr) {
-          remainder = (remainder * 10 + parseInt(ch)) % 97;
-        }
-        const checkDigits = String(98 - remainder).padStart(2, "0");
-        data.reference = `RF${checkDigits}${refBody}`;
+        // SCOR-Referenz (ISO 11649) für normale IBANs – zentral (Audit P1-6)
+        data.reference = generateSCORReference(Date.now() % 100000000000);
       }
       // For NON reference type, don't set data.reference at all
 
@@ -846,6 +832,8 @@ export const qrBillRouter = router({
       paymentDays: z.number().int().default(30),
       includeServiceDetails: z.boolean().optional().default(false),
       customerId: z.number().int().optional(),
+      // Audit P3-6: verknüpfter Entwurf – dessen gespeicherte QR-Referenz verwenden
+      invoiceId: z.number().int().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const { PDFDocument: PDFLib, rgb, StandardFonts } = await import('pdf-lib');
@@ -872,21 +860,27 @@ export const qrBillRouter = router({
 
       // Generate reference
       const cleanIban = qr.iban.replace(/\s/g, "");
-      const iid = parseInt(cleanIban.substring(4, 9));
-      const isQrIban = iid >= 30000 && iid <= 31999;
-      const effectiveRefType = isQrIban ? (qr.referenceType || "QRR") : "SCOR";
+      const qrIban = isQrIbanShared(cleanIban);
+      const effectiveRefType = qrIban ? (qr.referenceType || "QRR") : "SCOR";
+
+      // Audit P1-6/P3-6: bei verknüpftem Entwurf dessen gespeicherte Referenz
+      // verwenden, damit Zahlungsteil und Debitorenkonto übereinstimmen.
+      let linkedInvoice: typeof invoices.$inferSelect | undefined;
+      if (input.invoiceId) {
+        const invRows = await db.select().from(invoices)
+          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.invoiceId)))
+          .limit(1);
+        linkedInvoice = invRows[0];
+      }
 
       let referenceStr = "";
-      if (effectiveRefType === "QRR" && isQrIban) {
-        const ref = generateQRReference(Date.now() % 100000, new Date().getFullYear());
+      if (effectiveRefType === "QRR" && qrIban) {
+        const ref = linkedInvoice?.qrReference
+          ?? generateQRReference(linkedInvoice?.id ?? Date.now() % 100000, linkedInvoice?.fiscalYear ?? new Date().getFullYear());
         referenceStr = formatQRRef(ref);
       } else if (effectiveRefType === "SCOR") {
-        const refBody = String(Date.now() % 100000000000).padStart(11, "0");
-        const numericStr = refBody + "2715" + "00";
-        let remainder = 0;
-        for (const ch of numericStr) { remainder = (remainder * 10 + parseInt(ch)) % 97; }
-        const checkDigits = String(98 - remainder).padStart(2, "0");
-        referenceStr = `RF${checkDigits}${refBody}`;
+        referenceStr = linkedInvoice?.qrReference
+          ?? generateSCORReference(linkedInvoice?.id ?? Date.now() % 100000000000);
       }
 
       // Format dates (parse YYYY-MM-DD without timezone offset)
@@ -1136,7 +1130,7 @@ export const qrBillRouter = router({
         },
       };
 
-      if (effectiveRefType === "QRR" && isQrIban) {
+      if (effectiveRefType === "QRR" && qrIban) {
         qrData.reference = referenceStr;
       } else if (effectiveRefType === "SCOR" && referenceStr) {
         qrData.reference = referenceStr;

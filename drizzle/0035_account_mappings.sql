@@ -7,8 +7,9 @@ ALTER TABLE `organizations`
   ADD COLUMN `defaultBankAccountId` int NULL,
   ADD COLUMN `creditCardClearingAccountId` int NULL,
   ADD COLUMN `defaultSalaryExpenseAccountId` int NULL;
+--> statement-breakpoint
 
 -- Entfernt den hardcodierten Default 'mw' in credit_card_statements.owner.
 -- Die Spalte bleibt (bestehende Daten), neue Zeilen dürfen leer sein.
 ALTER TABLE `credit_card_statements`
-  ALTER COLUMN `owner` DROP DEFAULT;
+  MODIFY COLUMN `owner` varchar(10) NULL;

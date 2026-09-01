@@ -5,7 +5,7 @@
  */
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
-import { useAuth } from "@/_core/hooks/useAuth";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,7 +79,7 @@ const CATEGORY_HINTS = [
 ];
 
 export default function GlobalRules() {
-  const { user } = useAuth();
+  const { isAdmin } = useIsAdmin();
   const utils = trpc.useUtils();
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ export default function GlobalRules() {
   }, [rulesData?.rules, filterSource]);
 
   // ── Access check ───────────────────────────────────────────────────────────
-  if (user?.role !== "admin") {
+  if (!isAdmin) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Card className="max-w-md">

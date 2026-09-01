@@ -51,6 +51,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const workflowBadge = newDocs + pendingBankTx;
 
   const currentOrgName = myOrgs?.find(o => o.isCurrent)?.name ?? companyData?.companyName ?? 'Meine Firma';
+  // Audit P1-5: Admin-Navigation auch für Organisations-Admins (owner/admin)
+  const currentOrgRole = myOrgs?.find(o => o.isCurrent)?.role;
+  const isAdmin = user?.role === "admin" || currentOrgRole === "owner" || currentOrgRole === "admin";
   const hasMultipleOrgs = (myOrgs?.length ?? 0) > 1;
   const userInitials = (user?.name ?? "U").split(" ").map(s => s[0]).slice(0, 2).join("").toUpperCase();
 
@@ -242,10 +245,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
           {NAV_ITEMS.map(renderNavItem)}
 
-          {user?.role === "admin" && (
+          {isAdmin && (
             <div className="pt-4">
               <div className="sb-group">Verwaltung</div>
-              {ADMIN_ITEMS.filter(i => !i.adminOnly || user?.role === "admin").map(renderNavItem)}
+              {ADMIN_ITEMS.filter(i => !i.adminOnly || isAdmin).map(renderNavItem)}
             </div>
           )}
         </nav>

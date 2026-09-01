@@ -60,19 +60,45 @@ const requireOrganization = t.middleware(async opts => {
 
 export const orgProcedure = t.procedure.use(requireOrganization);
 
+/**
+ * adminProcedure (Audit P1-5): Zugriff für globale Admins (users.role = 'admin')
+ * ODER Benutzer mit Rolle owner/admin in der aktuell aktiven Organisation.
+ */
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
-    if (!ctx.user || ctx.user.role !== 'admin') {
-      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    if (!ctx.user) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
     }
 
-    return next({
-      ctx: {
-        ...ctx,
-        user: ctx.user,
-      },
-    });
+    if (ctx.user.role === 'admin') {
+      return next({ ctx: { ...ctx, user: ctx.user } });
+    }
+
+    if (ctx.organizationId != null) {
+      const { getDb } = await import("../db");
+      const { userOrganizations } = await import("../../drizzle/schema");
+      const { and, eq } = await import("drizzle-orm");
+      const db = await getDb();
+      const membership = db
+        ? await db
+            .select()
+            .from(userOrganizations)
+            .where(
+              and(
+                eq(userOrganizations.userId, ctx.user.id),
+                eq(userOrganizations.organizationId, ctx.organizationId),
+              ),
+            )
+            .limit(1)
+        : [];
+      const orgRole = membership[0]?.role;
+      if (orgRole === "owner" || orgRole === "admin") {
+        return next({ ctx: { ...ctx, user: ctx.user } });
+      }
+    }
+
+    throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
   }),
 );

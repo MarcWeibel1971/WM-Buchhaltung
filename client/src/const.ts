@@ -4,6 +4,11 @@ export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 export const getLoginUrl = () => {
   const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL;
   const appId = import.meta.env.VITE_APP_ID;
+  // Audit P1-8: ohne OAuth-Portal-Konfiguration auf die eingebaute
+  // Login-Seite verweisen statt eine ungültige Portal-URL zu bauen.
+  if (!oauthPortalUrl || !appId) {
+    return "/login";
+  }
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
   const state = btoa(redirectUri);
 

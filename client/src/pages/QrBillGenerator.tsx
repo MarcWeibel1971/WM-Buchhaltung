@@ -376,8 +376,8 @@ export default function QrBillGenerator() {
             <p className="text-muted-foreground mb-4">
               Bitte konfigurieren Sie zuerst die IBAN und Referenzart unter Einstellungen &gt; QR-Rechnung.
             </p>
-            <Button variant="outline" onClick={() => window.location.href = "/settings"}>
-              Zu den Einstellungen
+            <Button variant="outline" onClick={() => window.location.href = "/einstellungen/qr"}>
+              Zu den QR-Einstellungen
             </Button>
           </CardContent>
         </Card>

@@ -882,8 +882,8 @@ export const timeEntries = mysqlTable("time_entries", {
   organizationId: int("organizationId").notNull(),
   // Customer
   customerId: int("customerId").notNull(),
-  // Service category
-  serviceId: int("serviceId").notNull(),
+  // Service category (nullable – AP3.7: Einträge ohne Leistung erlaubt, statt 0-Platzhalter)
+  serviceId: int("serviceId"),
   // Date of work
   date: date("date", { mode: 'string' }).notNull(),
   // Hours worked (e.g., 2.5)

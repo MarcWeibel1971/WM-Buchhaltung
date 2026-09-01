@@ -855,7 +855,7 @@ export const qrBillRouter = router({
 
       return {
         base64: pdfBuffer.toString("base64"),
-        filename: `Rechnung_${input.recipientName.replace(/\s+/g, "_")}_${invDate.toISOString().slice(0, 10)}.pdf`,
+        filename: `Rechnung_${input.recipientName.replace(/\s+/g, "_")}_${input.invoiceDate.split("-").reverse().join(".")}.pdf`,
       };
     }),
 
@@ -1297,7 +1297,7 @@ export const qrBillRouter = router({
 
       return {
         base64: Buffer.from(finalBytes).toString("base64"),
-        filename: `Rechnung_${input.recipientName.replace(/\s+/g, "_")}_${invDate.toISOString().slice(0, 10)}.pdf`,
+        filename: `Rechnung_${input.recipientName.replace(/\s+/g, "_")}_${input.invoiceDate.split("-").reverse().join(".")}.pdf`,
       };
     }),
 

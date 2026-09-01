@@ -178,7 +178,7 @@ export const timeTrackingRouter = router({
       const [result] = await db.insert(timeEntries).values({
         organizationId: ctx.organizationId,
         customerId: input.customerId,
-        serviceId: input.serviceId || 0,
+        serviceId: input.serviceId ?? null,  // AP3.7: NULL statt 0 (keine Phantom-Verknüpfung)
         date: input.date,
         hours: String(input.hours),
         description: input.description || null,

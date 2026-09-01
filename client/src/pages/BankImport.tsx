@@ -160,6 +160,15 @@ export default function BankImport() {
   });
 
   const utils = trpc.useUtils();
+  // AP3.6: nach Bank-Aktionen alle betroffenen Queries invalidieren,
+  // damit Dashboard/Workflow-Statistiken ohne Reload aktualisieren.
+  const invalidateAfterBankAction = () => {
+    utils.bankImport.invalidate();
+    utils.documents.invalidate();
+    utils.journal.invalidate();
+    utils.reports.invalidate();
+    utils.accounts.invalidate();
+  };
 
   const detectTransfersMutation = trpc.bankImport.detectTransfers.useMutation({
     onSuccess: (data) => {
@@ -177,6 +186,7 @@ export default function BankImport() {
         toast.success(`${(data as any).invoiceMatched} Zahlungseingang/Zahlungseingänge via QR-Referenz einer Rechnung zugeordnet`, { duration: 6000 });
       }
       refetchTxs();
+      invalidateAfterBankAction();
       setImporting(false);
       if (data.imported > 0) {
         // Run configured auto-actions sequentially after import
@@ -232,7 +242,7 @@ export default function BankImport() {
     onSuccess: () => {
       toast.success("Transaktion verbucht");
       refetchTxs();
-      utils.reports.dashboard.invalidate();
+      invalidateAfterBankAction();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -242,7 +252,7 @@ export default function BankImport() {
       toast.success(`${data.approved} Transaktionen verbucht, ${data.failed} fehlgeschlagen`);
       setSelectedTxIds(new Set());
       refetchTxs();
-      utils.reports.dashboard.invalidate();
+      invalidateAfterBankAction();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -252,19 +262,20 @@ export default function BankImport() {
       toast.success("Transaktion aktualisiert");
       setEditTx(null);
       refetchTxs();
+      invalidateAfterBankAction();
     },
     onError: (e) => toast.error(e.message),
   });
 
   const ignoreMutation = trpc.bankImport.ignoreTransaction.useMutation({
-    onSuccess: () => { toast.success("Transaktion ignoriert"); refetchTxs(); },
+    onSuccess: () => { toast.success("Transaktion ignoriert"); refetchTxs(); invalidateAfterBankAction(); },
   });
 
   const unapproveMutation = trpc.bankImport.unapproveTransaction.useMutation({
     onSuccess: () => {
       toast.success("Verbuchung rückgängig gemacht – Transaktion ist wieder ausstehend");
       refetchTxs();
-      utils.reports.dashboard.invalidate();
+      invalidateAfterBankAction();
     },
     onError: (e: any) => toast.error(e.message),
   });

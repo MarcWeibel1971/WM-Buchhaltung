@@ -97,9 +97,11 @@ export default function Workflow() {
   const approveMut = trpc.bankImport.approveTransaction.useMutation({
     onSuccess: () => {
       toast.success("Transaktion freigegeben und verbucht.");
-      utils.bankImport.getTransactionsByStatus.invalidate();
-      utils.bankImport.getPendingTransactions.invalidate();
-      utils.documents.list.invalidate();
+      utils.bankImport.invalidate();
+      utils.documents.invalidate();
+      utils.journal.invalidate();
+      utils.reports.invalidate();
+      utils.accounts.invalidate();
     },
     onError: (e) => toast.error(`Freigabe fehlgeschlagen: ${e.message}`),
   });

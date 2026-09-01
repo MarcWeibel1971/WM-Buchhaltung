@@ -34,7 +34,6 @@ import Onboarding from "./pages/Onboarding";
 import Invoices from "./pages/Invoices";
 import OpenPositions from "./pages/OpenPositions";
 import Layout from "./components/Layout";
-import AvatarChatWidget from "./components/AvatarChatWidget";
 import AcceptInvitation from "./pages/AcceptInvitation";
 import Admin from "./pages/Admin";
 import Journal from "./pages/Journal";
@@ -212,7 +211,6 @@ function ProtectedApp() {
           <Layout>
             <AppRouter />
           </Layout>
-          <AvatarChatWidget />
         </FiscalYearProvider>
       </OrgGuard>
     </AuthGuard>

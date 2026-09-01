@@ -124,6 +124,8 @@ export default function BankImport() {
 
   const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
   const { data: importAutomation } = trpc.importAutomation.get.useQuery();
+  // AP3.3: KI-Features ohne konfigurierten API-Key ausblenden
+  const { data: aiStatus } = trpc.system.aiStatus.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   // Always filter by selected fiscal year (consistent across all views)
   const txFiscalYear = fiscalYear || undefined;
@@ -191,7 +193,9 @@ export default function BankImport() {
         }
         // 2. KI categorization for remaining uncategorized
         if (cfg.autoKiCategorize) {
-          setTimeout(() => categorizeMutation.mutate({ transactionIds: [] }), cfg.autoRefreshLearned ? 2000 : 0);
+          if (aiStatus?.available) {
+            setTimeout(() => categorizeMutation.mutate({ transactionIds: [] }), cfg.autoRefreshLearned ? 2000 : 0);
+          }
         }
         // 3. Generate booking texts
         if (cfg.autoGenerateBookingTexts) {
@@ -872,7 +876,7 @@ export default function BankImport() {
               </SelectContent>
             </Select>
             {/* Pending-only actions */}
-            {isPending && pendingIds.length > 0 && (
+            {isPending && pendingIds.length > 0 && aiStatus?.available && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
                 disabled={categorizeMutation.isPending}
                 onClick={() => withSnapshot("KI kategorisieren", () => categorizeMutation.mutate({ transactionIds: pendingIds }))}>

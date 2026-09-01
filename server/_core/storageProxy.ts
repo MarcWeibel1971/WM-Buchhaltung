@@ -1,18 +1,45 @@
 import type { Express } from "express";
+import { createReadStream } from "fs";
+import { stat } from "fs/promises";
+import path from "path";
 import { ENV } from "./env";
 import { createLogger } from "./logger";
+import { resolveLocalKey } from "../storage";
 
 const logger = createLogger("storageProxy");
 
+const CONTENT_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".csv": "text/csv; charset=utf-8",
+  ".xml": "application/xml",
+  ".txt": "text/plain; charset=utf-8",
+};
+
 export function registerStorageProxy(app: Express) {
   app.get("/manus-storage/*", async (req, res) => {
-    const key = req.path.replace(/^\/manus-storage\//, "");
+    const key = decodeURIComponent(req.path.replace(/^\/manus-storage\//, ""));
     if (!key) {
       res.status(400).send("Missing storage key");
       return;
     }
+    // Audit P1-6/AP2.2: ohne Forge-Konfiguration aus dem lokalen
+    // Storage-Verzeichnis ausliefern (Self-Hosting-Fallback).
     if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
-      res.status(500).send("Storage proxy not configured");
+      try {
+        const abs = resolveLocalKey(key);
+        const info = await stat(abs);
+        if (!info.isFile()) throw new Error("not a file");
+        res.set("Content-Type", CONTENT_TYPES[path.extname(abs).toLowerCase()] ?? "application/octet-stream");
+        res.set("Content-Length", String(info.size));
+        res.set("Cache-Control", "private, max-age=3600");
+        createReadStream(abs).pipe(res);
+      } catch {
+        res.status(404).send("Datei nicht gefunden");
+      }
       return;
     }
     try {

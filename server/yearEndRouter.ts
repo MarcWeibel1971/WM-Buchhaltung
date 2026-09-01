@@ -569,7 +569,7 @@ export const yearEndRouter = router({
       const gewinnvortragAcc = await db.select().from(accounts).where(
         and(
           eq(accounts.organizationId, ctx.organizationId),
-          or(eq(accounts.number, "2990"), eq(accounts.number, "2290"), eq(accounts.number, "2200")),
+          or(eq(accounts.number, "2990"), eq(accounts.number, "2290"), eq(accounts.number, "2800")),
         )
       ).limit(1);
 

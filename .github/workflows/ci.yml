@@ -30,3 +30,45 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # Audit P1-4: Migrations-Smoke-Test – die komplette Drizzle-Kette muss auf
+  # einer leeren MySQL-8-Datenbank fehlerfrei durchlaufen (Regression: 0019
+  # ambiguöses ON DUPLICATE KEY, gelöschte 0020 customers-Migration).
+  migration-smoke-test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-pass
+          MYSQL_DATABASE: wm_smoke
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -pci-root-pass --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run migrations on fresh database
+        env:
+          DATABASE_URL: mysql://root:ci-root-pass@127.0.0.1:3306/wm_smoke
+        run: pnpm drizzle-kit migrate
+
+      - name: Assert customers columns (Regression 0020)
+        run: |
+          COLS=$(mysql -h 127.0.0.1 -u root -pci-root-pass wm_smoke -N -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='wm_smoke' AND TABLE_NAME='customers' AND COLUMN_NAME IN ('firstName','lastName','spouseFirstName','spouseLastName','maritalStatus','birthDate','spouseBirthDate','customerNumber');")
+          echo "customers-Spalten: $COLS/8"
+          if [ "$COLS" != "8" ]; then echo "::error::customers-Migration unvollständig"; exit 1; fi

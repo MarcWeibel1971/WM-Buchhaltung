@@ -266,15 +266,23 @@ export default function QrBillGenerator() {
     saveDraftMut.mutate(buildSaveDraftInput());
   };
 
-  const handleGenerateInvoice = () => {
+  const handleGenerateInvoice = async () => {
     if (!recipientName.trim()) { toast.error("Empfängername ist erforderlich"); return; }
     if (!recipientStreet.trim()) { toast.error("Strasse ist erforderlich"); return; }
     if (!recipientZip.trim()) { toast.error("PLZ ist erforderlich"); return; }
     if (!recipientCity.trim()) { toast.error("Ort ist erforderlich"); return; }
     if (total <= 0) { toast.error("Gesamtbetrag muss grösser als 0 sein"); return; }
 
-    // Automatisch als Entwurf speichern beim PDF-Generieren
-    saveDraftMut.mutate(buildSaveDraftInput());
+    // Audit P3-6/P1-6: Entwurf zuerst speichern und dessen ID an die
+    // PDF-Generierung übergeben, damit der Zahlungsteil dieselbe
+    // QR-Referenz wie die gespeicherte Rechnung erhält.
+    let draftId: number | undefined;
+    try {
+      const draft = await saveDraftMut.mutateAsync(buildSaveDraftInput());
+      draftId = draft?.id;
+    } catch {
+      return; // Fehler-Toast wird vom onError der Mutation ausgelöst
+    }
     generateInvoiceMut.mutate({
       recipientTitle: recipientTitle || undefined,
       recipientName: recipientName.trim(),
@@ -298,6 +306,7 @@ export default function QrBillGenerator() {
       paymentDays: parseInt(paymentDays) || 30,
       includeServiceDetails,
       customerId: selectedCustomerId ?? undefined,
+      invoiceId: draftId ?? undefined,
     });
   };
 

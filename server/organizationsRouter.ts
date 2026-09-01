@@ -48,6 +48,7 @@ const MINIMAL_KMU_ACCOUNTS: Array<{
   category?: string;
   subCategory?: string;
   sortOrder?: number;
+  isVatRelevant?: boolean;
 }> = [
   { number: "1000", name: "Kasse", accountType: "asset", normalBalance: "debit", category: "Umlaufvermögen", subCategory: "Flüssige Mittel", sortOrder: 100 },
   { number: "1020", name: "Bank", accountType: "asset", normalBalance: "debit", category: "Umlaufvermögen", subCategory: "Flüssige Mittel", sortOrder: 200 },
@@ -56,12 +57,12 @@ const MINIMAL_KMU_ACCOUNTS: Array<{
   { number: "2000", name: "Kreditoren", accountType: "liability", normalBalance: "credit", category: "Fremdkapital", subCategory: "Kurzfristig", sortOrder: 400 },
   { number: "2200", name: "Geschuldete MWST", accountType: "liability", normalBalance: "credit", category: "Fremdkapital", subCategory: "Kurzfristig", sortOrder: 450 },
   { number: "2800", name: "Eigenkapital", accountType: "equity", normalBalance: "credit", category: "Eigenkapital", subCategory: "Eigenkapital", sortOrder: 500 },
-  { number: "3000", name: "Dienstleistungsertrag", accountType: "revenue", normalBalance: "credit", category: "Betriebsertrag", subCategory: "Dienstleistungen", sortOrder: 600 },
-  { number: "4000", name: "Materialaufwand", accountType: "expense", normalBalance: "debit", category: "Drittaufwand", subCategory: "Material", sortOrder: 700 },
+  { number: "3000", isVatRelevant: true, name: "Dienstleistungsertrag", accountType: "revenue", normalBalance: "credit", category: "Betriebsertrag", subCategory: "Dienstleistungen", sortOrder: 600 },
+  { number: "4000", isVatRelevant: true, name: "Materialaufwand", accountType: "expense", normalBalance: "debit", category: "Drittaufwand", subCategory: "Material", sortOrder: 700 },
   { number: "5000", name: "Lohnaufwand", accountType: "expense", normalBalance: "debit", category: "Personalaufwand", subCategory: "Löhne", sortOrder: 750 },
-  { number: "6000", name: "Raumaufwand / Miete", accountType: "expense", normalBalance: "debit", category: "Mietaufwand", subCategory: "Raumaufwand", sortOrder: 800 },
-  { number: "6500", name: "Verwaltungsaufwand", accountType: "expense", normalBalance: "debit", category: "Verwaltungsaufwand", subCategory: "Büroaufwand", sortOrder: 850 },
-  { number: "6900", name: "Finanzaufwand", accountType: "expense", normalBalance: "debit", category: "Zinsaufwand", subCategory: "Finanzaufwand", sortOrder: 900 },
+  { number: "6000", isVatRelevant: true, name: "Raumaufwand / Miete", accountType: "expense", normalBalance: "debit", category: "Mietaufwand", subCategory: "Raumaufwand", sortOrder: 800 },
+  { number: "6500", isVatRelevant: true, name: "Verwaltungsaufwand", accountType: "expense", normalBalance: "debit", category: "Verwaltungsaufwand", subCategory: "Büroaufwand", sortOrder: 850 },
+  { number: "6900", isVatRelevant: true, name: "Finanzaufwand", accountType: "expense", normalBalance: "debit", category: "Zinsaufwand", subCategory: "Finanzaufwand", sortOrder: 900 },
   { number: "9000", name: "Eröffnungsbilanz", accountType: "equity", normalBalance: "credit", category: "Eigenkapital", subCategory: "Eröffnung", sortOrder: 999 },
 ];
 
@@ -232,6 +233,7 @@ export const organizationsRouter = router({
             category: acc.category ?? null,
             subCategory: acc.subCategory ?? null,
             sortOrder: acc.sortOrder ?? 0,
+            isVatRelevant: acc.isVatRelevant ?? false,
             isActive: true,
           });
           accountsCreated++;

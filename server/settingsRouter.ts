@@ -959,6 +959,7 @@ export const settingsRouter = router({
         accountType: z.enum(["asset", "liability", "expense", "revenue", "equity"]),
         category: z.string().max(100).optional(),
         subCategory: z.string().max(100).optional(),
+        isVatRelevant: z.boolean().optional(),
       })),
       mode: z.enum(["merge", "replace"]).default("merge"),
     }))
@@ -1005,6 +1006,8 @@ export const settingsRouter = router({
               name: acc.name,
               category: acc.category ?? null,
               subCategory: acc.subCategory ?? null,
+              // Audit P1-7: isVatRelevant nur überschreiben, wenn explizit geliefert
+              ...(acc.isVatRelevant !== undefined ? { isVatRelevant: acc.isVatRelevant } : {}),
             }).where(eq(accounts.id, existing[0].id));
             updated++;
           } else {
@@ -1019,6 +1022,8 @@ export const settingsRouter = router({
             normalBalance,
             category: acc.category ?? null,
             subCategory: acc.subCategory ?? null,
+            // Audit P1-7: Default nach Kontotyp (Ertrag/Aufwand = MWST-relevant)
+            isVatRelevant: acc.isVatRelevant ?? (acc.accountType === "revenue" || acc.accountType === "expense"),
             isActive: true,
             sortOrder: parseInt(acc.number) || 0,
           });

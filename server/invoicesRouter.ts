@@ -41,6 +41,9 @@ import {
 import {
   generateQRReference,
   formatQRReference as formatQRRef,
+  generateSCORReference,
+  generateInvoiceReference,
+  isQrIban,
 } from "../shared/qrReference";
 import { createLogger } from "./_core/logger";
 
@@ -287,8 +290,7 @@ async function renderInvoicePdf(params: {
   // ── QR-Einzahlungsschein (falls IBAN konfiguriert und CHF/EUR) ──
   if (qr && qr.iban) {
     const cleanIban = qr.iban.replace(/\s/g, "");
-    const iid = parseInt(cleanIban.substring(4, 9));
-    const isQrIban = iid >= 30000 && iid <= 31999;
+    const qrIban = isQrIban(cleanIban);
 
     const data: Data = {
       amount: total,
@@ -310,18 +312,15 @@ async function renderInvoicePdf(params: {
       },
     };
 
-    // Referenz: QRR nur mit QR-IBAN, sonst SCOR, oder invoice.qrReference wenn gesetzt
-    const effectiveRefType = isQrIban ? (qr.referenceType || "QRR") : "SCOR";
-    if (effectiveRefType === "QRR" && isQrIban) {
+    // Referenz (Audit P1-6): gespeicherte qrReference hat Vorrang;
+    // QRR nur mit QR-IBAN, sonst SCOR (zentrale Implementierung)
+    const effectiveRefType = qrIban ? (qr.referenceType || "QRR") : "SCOR";
+    if (effectiveRefType === "QRR" && qrIban) {
       const ref = invoice.qrReference || generateQRReference(invoice.id, invoice.fiscalYear ?? invoiceDate.getFullYear());
       data.reference = formatQRRef(ref);
     } else if (effectiveRefType === "SCOR") {
-      const refBody = String(invoice.id).padStart(11, "0");
-      const numericStr = refBody + "2715" + "00";
-      let remainder = 0;
-      for (const ch of numericStr) remainder = (remainder * 10 + parseInt(ch)) % 97;
-      const checkDigits = String(98 - remainder).padStart(2, "0");
-      data.reference = `RF${checkDigits}${refBody}`;
+      const ref = invoice.qrReference || generateSCORReference(invoice.id);
+      data.reference = formatQRRef(ref);
     }
 
     const qrBill = new SwissQRBill(data);
@@ -738,7 +737,7 @@ export const invoicesRouter = router({
       debitorAccountNumber: z.string().default("1100"),
       // Fallback für Positionen ohne eigenes Ertragskonto
       defaultRevenueAccountNumber: z.string().default("3000"),
-      vatAccountNumber: z.string().default("2040"),
+      vatAccountNumber: z.string().default("2200"), // Audit P1-7: kanonisches MWST-Konto
     }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
@@ -788,7 +787,10 @@ export const invoicesRouter = router({
       // Belegnummer + QR-Referenz vergeben
       const fiscalYear = invoice.fiscalYear ?? new Date(invoice.invoiceDate).getFullYear();
       const invoiceNumber = await allocateInvoiceNumber(ctx.organizationId, fiscalYear);
-      const qrReference = generateQRReference(invoice.id, fiscalYear);
+      // Audit P1-6: kanonische Referenz – QRR nur mit QR-IBAN, sonst SCOR (ISO 11649)
+      const [qrSettingsRow] = await db.select().from(qrSettings)
+        .where(eq(qrSettings.organizationId, ctx.organizationId)).limit(1);
+      const qrReference = generateInvoiceReference(invoice.id, fiscalYear, qrSettingsRow?.iban ?? null);
 
       // Journal-Entry Zeilen zusammenbauen
       // Debit: 1100 Debitoren (Total)

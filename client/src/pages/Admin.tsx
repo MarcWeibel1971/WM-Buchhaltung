@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
-import { useAuth } from "@/_core/hooks/useAuth";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import Settings from "./Settings";
 import { Loader2, ShieldOff } from "lucide-react";
 
@@ -11,14 +11,14 @@ import { Loader2, ShieldOff } from "lucide-react";
  * Nutzt den gleichen Container wie /einstellungen, aber mit scope="admin".
  */
 export default function Admin() {
-  const { user, loading } = useAuth();
+  const { isAdmin, loading, user } = useIsAdmin();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    if (!loading && user && user.role !== "admin") {
+    if (!loading && user && !isAdmin) {
       setLocation("/einstellungen", { replace: true } as any);
     }
-  }, [loading, user, setLocation]);
+  }, [loading, user, isAdmin, setLocation]);
 
   if (loading) {
     return (
@@ -31,7 +31,7 @@ export default function Admin() {
     );
   }
 
-  if (!user || user.role !== "admin") {
+  if (!user || !isAdmin) {
     return (
       <div className="min-h-full flex items-center justify-center p-8" style={{ background: "var(--paper)" }}>
         <div className="klax-card max-w-md p-6 text-center">
@@ -40,7 +40,7 @@ export default function Admin() {
             Kein Zugriff
           </h2>
           <p className="text-sm" style={{ color: "var(--ink-3)" }}>
-            Der Admin-Bereich ist nur für Benutzer mit Admin-Rolle verfügbar.
+            Der Admin-Bereich ist nur für Administratoren verfügbar (global oder Organisations-Admin).
           </p>
         </div>
       </div>

@@ -104,7 +104,7 @@ SELECT
 FROM (SELECT 1) x
 LEFT JOIN `company_settings` cs ON 1=1
 LIMIT 1
-ON DUPLICATE KEY UPDATE `id` = `id`;
+ON DUPLICATE KEY UPDATE `organizations`.`id` = `organizations`.`id`;
 --> statement-breakpoint
 
 -- Fallback: falls keine Zeile eingefügt wurde (leerer Table), explizit anlegen.

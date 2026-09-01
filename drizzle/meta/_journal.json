@@ -274,6 +274,13 @@
       "when": 1788281251655,
       "tag": "0038_ap2_invoice_recipient",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1788283107733,
+      "tag": "0039_drop_global_entrynumber_unique",
+      "breakpoints": true
     }
   ]
 }

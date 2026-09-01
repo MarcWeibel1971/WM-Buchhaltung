@@ -514,7 +514,10 @@ export const payrollEntries = mysqlTable("payroll_entries", {
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => [
+  // Audit P2-7: genau eine Lohnabrechnung pro Mitarbeiter und Monat
+  unique("payroll_entries_employee_year_month").on(t.employeeId, t.year, t.month),
+]);
 export type PayrollEntry = typeof payrollEntries.$inferSelect;
 
 // ─── VAT Periods (MWST-Perioden) ──────────────────────────────────────────────
@@ -541,7 +544,10 @@ export const vatPeriods = mysqlTable("vat_periods", {
   netVatPayable: decimal("netVatPayable", { precision: 15, scale: 2 }).default("0"),
   status: mysqlEnum("status", ["open", "submitted", "paid"]).default("open").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => [
+  // Audit P2-5: genau eine MWST-Periode pro Organisation, Jahr und Periode
+  unique("vat_periods_org_year_period").on(t.organizationId, t.year, t.period),
+]);
 
 // ─── Opening Balances (Eröffnungssalden) ──────────────────────────────────────
 export const openingBalances = mysqlTable("opening_balances", {

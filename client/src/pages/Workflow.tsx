@@ -35,11 +35,18 @@ type TxItem = {
   id: number;
   transactionDate: string;
   amount: string;
+  currency?: string;
   counterparty: string | null;
   description: string | null;
   matchedDocumentId: number | null;
+  matchedInvoiceNumber?: string | null;
+  suggestedDebitAccountId?: number | null;
+  suggestedCreditAccountId?: number | null;
+  aiConfidence?: number | null;
   status: string;
 };
+
+type AccountItem = { id: number; number: string; name: string };
 
 export default function Workflow() {
   const [location, setLocation] = useLocation();
@@ -55,16 +62,19 @@ export default function Workflow() {
   const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
   const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
   const [docFilter, setDocFilter] = useState<"all" | "new" | "matched">(initialFilter === "new" ? "new" : "all");
-  const [txFilter, setTxFilter] = useState<"all" | "unmatched">(initialFilter === "unmatched" ? "unmatched" : "all");
+  const [txFilter, setTxFilter] = useState<"all" | "open" | "unmatched">(initialFilter === "unmatched" ? "unmatched" : "open");
 
   const docsQuery = trpc.documents.list.useQuery({ fiscalYear });
-  const txQuery = trpc.bankImport.getPendingTransactions.useQuery({});
+  // AP2.1: eine gemeinsame Transaktionsliste (gleiche Quelle wie Dashboard)
+  const txQuery = trpc.bankImport.getTransactionsByStatus.useQuery({ status: "all", fiscalYear });
+  const accountsQuery = trpc.accounts.list.useQuery();
 
   const utils = trpc.useUtils();
   const autoMatchMut = trpc.documents.autoMatch.useMutation({
     onSuccess: (res) => {
       toast.success(`${res.matched} von ${res.total} Belegen automatisch gematcht.`);
       utils.documents.list.invalidate();
+      utils.bankImport.getTransactionsByStatus.invalidate();
       utils.bankImport.getPendingTransactions.invalidate();
     },
     onError: (e) => toast.error(`Auto-Match fehlgeschlagen: ${e.message}`),
@@ -74,11 +84,23 @@ export default function Workflow() {
     onSuccess: () => {
       toast.success("Beleg mit Banktransaktion verknüpft.");
       utils.documents.list.invalidate();
+      utils.bankImport.getTransactionsByStatus.invalidate();
       utils.bankImport.getPendingTransactions.invalidate();
       setSelectedDocId(null);
       setSelectedTxId(null);
     },
     onError: (e) => toast.error(`Verknüpfung fehlgeschlagen: ${e.message}`),
+  });
+
+  // AP2.1: Freigabe direkt in der Transaktionszeile (SCOR-Match freigebbar)
+  const approveMut = trpc.bankImport.approveTransaction.useMutation({
+    onSuccess: () => {
+      toast.success("Transaktion freigegeben und verbucht.");
+      utils.bankImport.getTransactionsByStatus.invalidate();
+      utils.bankImport.getPendingTransactions.invalidate();
+      utils.documents.list.invalidate();
+    },
+    onError: (e) => toast.error(`Freigabe fehlgeschlagen: ${e.message}`),
   });
 
   // ?action=ai-match → Auto-Match direkt anstossen
@@ -104,6 +126,7 @@ export default function Workflow() {
 
   const docs: DocItem[] = (docsQuery.data ?? []) as any;
   const txns: TxItem[] = (txQuery.data ?? []) as any;
+  const accounts: AccountItem[] = (accountsQuery.data ?? []) as any;
 
   const filteredDocs = useMemo(() => {
     let list = docs;
@@ -114,12 +137,14 @@ export default function Workflow() {
 
   const filteredTxns = useMemo(() => {
     let list = txns;
-    if (txFilter === "unmatched") list = list.filter(t => !t.matchedDocumentId);
+    if (txFilter === "open") list = list.filter(t => t.status === "pending");
+    else if (txFilter === "unmatched") list = list.filter(t => t.status === "pending" && !t.matchedDocumentId && !t.matchedInvoiceNumber);
     return list;
   }, [txns, txFilter]);
 
   const newDocsCount = docs.filter(d => !d.matchStatus || d.matchStatus === "unmatched").length;
-  const unmatchedTxCount = txns.filter(t => !t.matchedDocumentId).length;
+  const unmatchedTxCount = txns.filter(t => t.status === "pending" && !t.matchedDocumentId && !t.matchedInvoiceNumber).length;
+  const scorMatchedTxCount = txns.filter(t => !!t.matchedInvoiceNumber).length;
   const matchedDocsCount = docs.filter(d => d.matchStatus === "matched" || d.matchStatus === "manual").length;
 
   // Match-Linien zwischen Belegen und Transaktionen (matched docs ↔ tx)
@@ -196,7 +221,7 @@ export default function Workflow() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="Neue Belege" value={newDocsCount} icon={<FileText className="h-3.5 w-3.5" />} />
         <StatCard label="Ungematchte Bank-Tx" value={unmatchedTxCount} icon={<Building2 className="h-3.5 w-3.5" />} />
-        <StatCard label="Gematcht" value={matchedDocsCount} icon={<Link2 className="h-3.5 w-3.5" />} tone="pos" />
+        <StatCard label="Gematcht" value={matchedDocsCount + scorMatchedTxCount} icon={<Link2 className="h-3.5 w-3.5" />} tone="pos" />
         <StatCard label="Match-Paare" value={matchPairs.length} icon={<Sparkles className="h-3.5 w-3.5" />} tone="ai" />
       </div>
 
@@ -305,7 +330,7 @@ export default function Workflow() {
               <Pill variant="info">{filteredTxns.length}</Pill>
             </div>
             <div className="flex gap-1">
-              {(["all", "unmatched"] as const).map(f => (
+              {(["open", "unmatched", "all"] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setTxFilter(f)}
@@ -316,7 +341,7 @@ export default function Workflow() {
                     border: "1px solid var(--hair)",
                   }}
                 >
-                  {f === "all" ? "Alle" : "Ungematcht"}
+                  {f === "open" ? "Offen" : f === "unmatched" ? "Ungematcht" : "Alle"}
                 </button>
               ))}
             </div>
@@ -332,13 +357,18 @@ export default function Workflow() {
             {filteredTxns.map(t => {
               const isSelected = selectedTxId === t.id;
               const amount = parseAmount(t.amount);
-              const isMatched = !!t.matchedDocumentId;
+              const isDocMatched = !!t.matchedDocumentId;
+              const isScorMatched = !!t.matchedInvoiceNumber;
+              const isMatched = isDocMatched || isScorMatched;
               const isInbound = amount > 0;
+              const debitAcc = accounts.find(a => a.id === t.suggestedDebitAccountId);
+              const creditAcc = accounts.find(a => a.id === t.suggestedCreditAccountId);
+              const canApprove = t.status === "pending" && !!debitAcc && !!creditAcc;
               return (
-                <button
+                <div
                   key={t.id}
                   onClick={() => setSelectedTxId(isSelected ? null : t.id)}
-                  className="w-full text-left rounded-md p-3 transition-all"
+                  className="w-full text-left rounded-md p-3 transition-all cursor-pointer"
                   style={{
                     background: isSelected ? "var(--klax-accent-soft, #FFF6E6)" : "var(--surface)",
                     border: `1px solid ${isSelected ? "var(--klax-accent)" : "var(--hair)"}`,
@@ -355,25 +385,55 @@ export default function Workflow() {
                       <Building2 className="h-3.5 w-3.5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[13px] font-medium truncate" style={{ color: "var(--ink)" }}>
                           {t.counterparty ?? t.description ?? "Unbekannt"}
                         </span>
-                        {isMatched && <Pill variant="pos" icon={<Link2 className="h-2.5 w-2.5" />}>verknüpft</Pill>}
+                        {isScorMatched && (
+                          <Pill variant="pos" icon={<Link2 className="h-2.5 w-2.5" />}>QR-Match {t.matchedInvoiceNumber}</Pill>
+                        )}
+                        {isDocMatched && <Pill variant="pos" icon={<Link2 className="h-2.5 w-2.5" />}>verknüpft</Pill>}
+                        {t.status === "matched" && <Pill variant="pos" icon={<CheckCircle className="h-2.5 w-2.5" />}>Verbucht</Pill>}
+                        {t.status === "ignored" && <Pill variant="info">Ignoriert</Pill>}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-[11.5px]" style={{ color: "var(--ink-3)" }}>
                         <span>{new Date(t.transactionDate).toLocaleDateString("de-CH")}</span>
                         {t.description && <span className="truncate flex-1">{t.description}</span>}
                       </div>
+                      {t.status === "pending" && debitAcc && creditAcc && (
+                        <div className="mono text-[11px] mt-1 truncate" style={{ color: "var(--ink-3)" }}>
+                          Vorschlag: {debitAcc.number} {debitAcc.name} / {creditAcc.number} {creditAcc.name}
+                        </div>
+                      )}
                     </div>
-                    <div
-                      className="mono text-[13px] font-medium flex-shrink-0"
-                      style={{ color: isInbound ? "var(--pos)" : "var(--neg)" }}
-                    >
-                      {isInbound ? "+" : ""}{formatCHF(amount)}
+                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                      <div
+                        className="mono text-[13px] font-medium"
+                        style={{ color: isInbound ? "var(--pos)" : "var(--neg)" }}
+                      >
+                        {isInbound ? "+" : ""}{formatCHF(amount)}
+                      </div>
+                      {canApprove && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            approveMut.mutate({
+                              transactionId: t.id,
+                              debitAccountId: debitAcc.id,
+                              creditAccountId: creditAcc.id,
+                              description: t.description ?? undefined,
+                            });
+                          }}
+                          disabled={approveMut.isPending}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11.5px] font-medium disabled:opacity-50"
+                          style={{ background: "var(--pos)", color: "#fff" }}
+                        >
+                          <CheckCircle className="h-3 w-3" /> Freigeben
+                        </button>
+                      )}
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

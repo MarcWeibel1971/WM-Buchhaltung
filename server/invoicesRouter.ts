@@ -386,7 +386,7 @@ export const invoicesRouter = router({
         const isOverdue = (inv.status === "sent" || inv.status === "partially_paid") && inv.dueDate < today;
         return {
           ...inv,
-          customerName: r.customerName ?? "—",
+          customerName: r.customerName ?? inv.recipientName ?? "—",
           customerCompany: r.customerCompany ?? null,
           isOverdue,
           daysOverdue: isOverdue ? Math.floor((Date.parse(today) - Date.parse(inv.dueDate)) / 86400000) : 0,
@@ -465,11 +465,6 @@ export const invoicesRouter = router({
       dueDate.setDate(dueDate.getDate() + input.paymentTermDays);
       const dueDateStr = dueDate.toISOString().slice(0, 10);
 
-      // Notiz mit Empfängeradresse (da kein Kunde-FK)
-      const recipientNote = input.customerId
-        ? undefined
-        : `${input.recipientName}, ${input.recipientStreet}, ${input.recipientZip} ${input.recipientCity}`;
-
       let invoiceId: number;
 
       if (input.invoiceId) {
@@ -498,7 +493,12 @@ export const invoicesRouter = router({
           vatTotal: vatTotal.toFixed(2),
           total: total.toFixed(2),
           fiscalYear,
-          notes: recipientNote ?? input.notes ?? null,
+          notes: input.notes ?? null,
+          // Audit P2-3: Empfänger in dedizierte Spalten (statt notes-Workaround)
+          recipientName: input.recipientName,
+          recipientStreet: input.recipientStreet,
+          recipientZip: input.recipientZip,
+          recipientCity: input.recipientCity,
         }).where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.invoiceId)));
 
         // Positionen neu schreiben
@@ -525,7 +525,12 @@ export const invoicesRouter = router({
           vatTotal: vatTotal.toFixed(2),
           total: total.toFixed(2),
           fiscalYear,
-          notes: recipientNote ?? input.notes ?? null,
+          notes: input.notes ?? null,
+          // Audit P2-3: Empfänger in dedizierte Spalten (statt notes-Workaround)
+          recipientName: input.recipientName,
+          recipientStreet: input.recipientStreet,
+          recipientZip: input.recipientZip,
+          recipientCity: input.recipientCity,
         });
         invoiceId = (result as any).insertId as number;
       }
@@ -982,10 +987,26 @@ export const invoicesRouter = router({
       }
 
       if (!invoice.customerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Rechnung hat keinen Kunden – bitte zuerst einen Kunden zuweisen" });
-      const [customer] = await db.select().from(customers)
-        .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
-        .limit(1);
-      if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
+      // Empfänger: Kunde (FK) oder dedizierte Empfänger-Spalten (Audit P2-3)
+      let customer: typeof customers.$inferSelect | null = null;
+      if (invoice.customerId) {
+        [customer] = await db.select().from(customers)
+          .where(and(eq(customers.organizationId, ctx.organizationId), eq(customers.id, invoice.customerId)))
+          .limit(1);
+        if (!customer) throw new TRPCError({ code: "BAD_REQUEST", message: "Kunde nicht gefunden" });
+      } else if (invoice.recipientName) {
+        customer = {
+          name: invoice.recipientName,
+          company: null,
+          street: invoice.recipientStreet,
+          zipCode: invoice.recipientZip,
+          city: invoice.recipientCity,
+          country: "Schweiz",
+          salutation: null,
+        } as unknown as typeof customers.$inferSelect;
+      } else {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Weder Kunde noch Empfängeradresse vorhanden" });
+      }
       const [org] = await db.select().from(companySettings)
         .where(eq(companySettings.organizationId, ctx.organizationId)).limit(1);
       if (!org) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen" });

@@ -1,5 +1,6 @@
 import { trpc } from "@/lib/trpc";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,21 +65,21 @@ export default function QrBillGenerator() {
   const [recipientCity, setRecipientCity] = useState("");
 
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
-  const [invoiceSubject, setInvoiceSubject] = useState("Beratung: Rechnung");
+  const [invoiceSubject, setInvoiceSubject] = useState("Rechnung");
   const [salutation, setSalutation] = useState("");
   const [introText, setIntroText] = useState(
-    "Ich erlaube mir, Dir den Aufwand für meine Beratungsleistungen gemäss beiliegendem Leistungsblatt in Rechnung zu stellen:"
+    "Gerne stellen wir Ihnen den Aufwand für unsere Leistungen gemäss beiliegendem Leistungsblatt in Rechnung:"
   );
   const [closingText, setClosingText] = useState(
-    "Ich danke Dir für das mir entgegengebrachte Vertrauen und freue mich, Dir auch in Zukunft zur Verfügung zu stehen."
+    "Wir danken Ihnen für das entgegengebrachte Vertrauen und freuen uns auf die weitere Zusammenarbeit."
   );
   const [greeting, setGreeting] = useState("Herzliche Grüsse");
-  const [signerName, setSignerName] = useState("Marc Weibel");
-  const [signerTitle, setSignerTitle] = useState("lic.oec. HSG");
+  const [signerName, setSignerName] = useState("");
+  const [signerTitle, setSignerTitle] = useState("");
 
   // Line items
   const [lineItems, setLineItems] = useState<LineItem[]>([
-    { id: "1", description: "Honorar nach Stundenaufwand", amount: "" },
+    { id: "1", description: "", amount: "" },
   ]);
 
   // MWST
@@ -87,6 +88,15 @@ export default function QrBillGenerator() {
 
   // Payment terms
   const [paymentDays, setPaymentDays] = useState("30");
+
+  // Audit P2-1: Signatur aus dem Benutzerprofil vorbefüllen statt hartcodiertem
+  // Namen – ein neuer Mandant sieht ausschliesslich eigene Daten.
+  const { user } = useAuth();
+  useEffect(() => {
+    if (!editId && user?.name) {
+      setSignerName(prev => (prev === "" ? user.name! : prev));
+    }
+  }, [user, editId]);
 
   // ─── Simple QR-Bill Form ──────────────────────────────────────────────────
   const [simpleCustomerPopoverOpen, setSimpleCustomerPopoverOpen] = useState(false);

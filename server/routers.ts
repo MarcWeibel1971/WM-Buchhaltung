@@ -6,6 +6,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, orgProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { invokeNemotron } from "./nemotron";
+import { computePayrollDeductions } from "./payrollCalc";
 import { pdfUrlToImages } from "./pdfToImages";
 import {
   extractInvoiceFields,
@@ -2724,43 +2725,66 @@ const payrollRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
+      // Audit P2-6: Mitarbeiter muss zur aktiven Organisation gehören
+      const [emp] = await db.select({ id: employees.id }).from(employees)
+        .where(and(eq(employees.id, input.employeeId), eq(employees.organizationId, ctx.organizationId)))
+        .limit(1);
+      if (!emp) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Mitarbeiter gehört nicht zur aktiven Organisation." });
+      }
+
+      // Audit P2-7: keine Doppelanlage (employee, year, month)
+      const existing = await db.select({ id: payrollEntries.id }).from(payrollEntries)
+        .where(and(
+          eq(payrollEntries.employeeId, input.employeeId),
+          eq(payrollEntries.year, input.year),
+          eq(payrollEntries.month, input.month),
+        )).limit(1);
+      if (existing.length > 0) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `Lohnabrechnung ${String(input.month).padStart(2, "0")}/${input.year} für diesen Mitarbeiter existiert bereits.`,
+        });
+      }
+
+      // Audit P2-6: Abzüge serverseitig aus den Versicherungseinstellungen
+      // (Systematik-Tabelle) nachrechnen – Client-Werte werden nicht übernommen.
       const gross = parseFloat(input.grossSalary);
-      const ahvEmp = parseFloat(input.ahvEmployee);
-      const bvgEmp = parseFloat(input.bvgEmployee);
-      const ktgEmp = parseFloat(input.ktgUvgEmployee);
-      const netSalary = gross - ahvEmp - bvgEmp - ktgEmp;
-      const ahvEmpr = parseFloat(input.ahvEmployer);
-      const bvgEmpr = parseFloat(input.bvgEmployer);
-      const ktgEmpr = parseFloat(input.ktgUvgEmployer);
-      const totalEmployerCost = gross + ahvEmpr + bvgEmpr + ktgEmpr;
+      const ded = await computePayrollDeductions(db, ctx.organizationId, gross);
 
       const [result] = await db.insert(payrollEntries).values({
         organizationId: ctx.organizationId,
         employeeId: input.employeeId,
         year: input.year,
         month: input.month,
-        grossSalary: input.grossSalary,
-        ahvEmployee: input.ahvEmployee,
-        ahvEmployer: input.ahvEmployer,
-        bvgEmployee: input.bvgEmployee,
-        bvgEmployer: input.bvgEmployer,
-        ktgUvgEmployee: input.ktgUvgEmployee,
-        ktgUvgEmployer: input.ktgUvgEmployer,
-        netSalary: netSalary.toFixed(2),
-        totalEmployerCost: totalEmployerCost.toFixed(2),
+        grossSalary: gross.toFixed(2),
+        ahvEmployee: ded.ahvEmployee.toFixed(2),
+        ahvEmployer: ded.ahvEmployer.toFixed(2),
+        bvgEmployee: ded.bvgEmployee.toFixed(2),
+        bvgEmployer: ded.bvgEmployer.toFixed(2),
+        ktgUvgEmployee: ded.ktgUvgEmployee.toFixed(2),
+        ktgUvgEmployer: ded.ktgUvgEmployer.toFixed(2),
+        netSalary: ded.netSalary.toFixed(2),
+        totalEmployerCost: ded.totalEmployerCost.toFixed(2),
         status: "draft",
         notes: input.notes,
       });
 
-      return { payrollId: (result as any).insertId };
+      return { payrollId: (result as any).insertId, warnings: ded.warnings };
     }),
 
   // Annual payroll summary: sum all months for a given employee and year
   annualSummary: orgProcedure
     .input(z.object({ year: z.number(), employeeId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // Org-Scope (Audit P1-7): fremde employeeId liefert 404 statt Daten
+      const [empCheck] = await db.select({ id: employees.id }).from(employees)
+        .where(and(eq(employees.id, input.employeeId), eq(employees.organizationId, ctx.organizationId)))
+        .limit(1);
+      if (!empCheck) throw new TRPCError({ code: "NOT_FOUND", message: "Mitarbeiter nicht gefunden" });
 
       const rows = await db
         .select()
@@ -2840,7 +2864,7 @@ const payrollRouter = router({
       const emps = await getEmployees(ctx.organizationId);
 
       // ── Load insurance settings for deduction calculation ──
-      const allInsurance = await db.select().from(insuranceSettings).where(eq(insuranceSettings.isActive, true));
+      const allInsurance = await db.select().from(insuranceSettings).where(and(eq(insuranceSettings.isActive, true), eq(insuranceSettings.organizationId, ctx.organizationId)));
       const ahvSetting = allInsurance.find(s => s.insuranceType === 'ahv');
       const bvgSetting = allInsurance.find(s => s.insuranceType === 'bvg');
       const ktgSetting = allInsurance.find(s => s.insuranceType === 'ktg' || s.insuranceType === 'uvg');
@@ -3123,7 +3147,7 @@ const payrollRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Load insurance settings
-      const allInsurance = await db.select().from(insuranceSettings).where(eq(insuranceSettings.isActive, true));
+      const allInsurance = await db.select().from(insuranceSettings).where(and(eq(insuranceSettings.isActive, true), eq(insuranceSettings.organizationId, ctx.organizationId)));
       const ahvSetting = allInsurance.find(s => s.insuranceType === 'ahv');
       const bvgSetting = allInsurance.find(s => s.insuranceType === 'bvg');
       const ktgSetting = allInsurance.find(s => s.insuranceType === 'ktg' || s.insuranceType === 'uvg');
@@ -3144,7 +3168,7 @@ const payrollRouter = router({
       const ktgEmprRate = ktgSetting ? parseFloat(ktgSetting.employerRate as string ?? '0') / 100 : 0;
 
       // Get all payroll entries for the year
-      const entries = await db.select().from(payrollEntries).where(eq(payrollEntries.year, input.year));
+      const entries = await db.select().from(payrollEntries).where(and(eq(payrollEntries.year, input.year), eq(payrollEntries.organizationId, ctx.organizationId)));
 
       let recalculated = 0;
       for (const entry of entries) {
@@ -3195,7 +3219,7 @@ const payrollRouter = router({
         employee: employees,
       }).from(payrollEntries)
         .innerJoin(employees, eq(payrollEntries.employeeId, employees.id))
-        .where(eq(payrollEntries.id, input.payrollId)).limit(1);
+        .where(and(eq(payrollEntries.id, input.payrollId), eq(payrollEntries.organizationId, ctx.organizationId))).limit(1);
 
       if (!payroll) throw new TRPCError({ code: "NOT_FOUND" });
 
@@ -3249,7 +3273,7 @@ const payrollRouter = router({
         lines,
       });
 
-      await db.update(payrollEntries).set({ status: "approved", journalEntryId: entryId }).where(eq(payrollEntries.id, input.payrollId));
+      await db.update(payrollEntries).set({ status: "approved", journalEntryId: entryId }).where(and(eq(payrollEntries.id, input.payrollId), eq(payrollEntries.organizationId, ctx.organizationId)));
       await approveJournalEntry(entryId, ctx.user.id);
 
       return { success: true, entryId };
@@ -3258,12 +3282,12 @@ const payrollRouter = router({
   // Get bank transactions linked to a payroll entry (by employee code + month/year)
   getTransactions: orgProcedure
     .input(z.object({ employeeId: z.number(), year: z.number(), month: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
       // Get the employee
-      const [emp] = await db.select().from(employees).where(eq(employees.id, input.employeeId)).limit(1);
+      const [emp] = await db.select().from(employees).where(and(eq(employees.id, input.employeeId), eq(employees.organizationId, ctx.organizationId))).limit(1);
       if (!emp) return [];
 
       const empCode = emp.code?.toLowerCase() ?? '';
@@ -3323,13 +3347,13 @@ const payrollRouter = router({
 
   generateLohnausweisPdf: orgProcedure
     .input(z.object({ year: z.number(), employeeId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const { PDFDocument } = await import('pdf-lib');
       const db = await getDb();
       if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
 
       // Fetch employee
-      const [emp] = await db.select().from(employees).where(eq(employees.id, input.employeeId));
+      const [emp] = await db.select().from(employees).where(and(eq(employees.id, input.employeeId), eq(employees.organizationId, ctx.organizationId)));
       if (!emp) throw new TRPCError({ code: 'NOT_FOUND', message: 'Mitarbeiter nicht gefunden' });
 
       // Fetch company settings
@@ -3577,6 +3601,20 @@ const vatRouter = router({
 
       const startDate = toDateStr(input.startDate) as string;
       const endDate = toDateStr(input.endDate) as string;
+
+      // Audit P2-5: Doppelanlage derselben MWST-Periode serverseitig ablehnen
+      const existingPeriod = await db.select({ id: vatPeriods.id }).from(vatPeriods)
+        .where(and(
+          eq(vatPeriods.organizationId, ctx.organizationId),
+          eq(vatPeriods.year, input.year),
+          eq(vatPeriods.period, input.period),
+        )).limit(1);
+      if (existingPeriod.length > 0) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `MWST-Periode ${input.period} ${input.year} existiert bereits.`,
+        });
+      }
 
       // Get company settings to determine VAT method (scoped to this org)
       const [settings] = await db.select().from(companySettings)

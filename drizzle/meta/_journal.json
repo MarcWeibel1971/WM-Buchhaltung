@@ -260,6 +260,27 @@
       "when": 1777271422734,
       "tag": "0036_qr_invoice_matching",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "5",
+      "when": 1788280748186,
+      "tag": "0037_ap2_unique_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "5",
+      "when": 1788281251655,
+      "tag": "0038_ap2_invoice_recipient",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1788283107733,
+      "tag": "0039_drop_global_entrynumber_unique",
+      "breakpoints": true
     }
   ]
 }

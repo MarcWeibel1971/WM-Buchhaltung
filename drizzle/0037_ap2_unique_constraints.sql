@@ -1,0 +1,2 @@
+ALTER TABLE `payroll_entries` ADD CONSTRAINT `payroll_entries_employee_year_month` UNIQUE(`employeeId`,`year`,`month`);--> statement-breakpoint
+ALTER TABLE `vat_periods` ADD CONSTRAINT `vat_periods_org_year_period` UNIQUE(`organizationId`,`year`,`period`);

@@ -262,21 +262,14 @@ function daysBetween(from: string, to: string): number {
 
 /**
  * Ermittelt das vorgeschlagene Mahn-Level für eine überfällige Rechnung.
- * Berücksichtigt bereits gesandte Reminder: der nächste Level ist mindestens
- * um 1 höher als der zuletzt gesandte.
+ * Sequentiell (Audit P2-2): Stufe N+1 wird erst vorgeschlagen, nachdem Stufe N
+ * versendet wurde – auch wenn die Frist für höhere Stufen längst überschritten
+ * ist (bei 113 Tagen ohne Vorstufe bleibt es bei der Zahlungserinnerung).
  */
-function suggestLevel(policy: ReminderPolicy, daysOverdue: number, maxExistingLevel: number): Level | null {
-  let suggested: Level | null = null;
-  if (daysOverdue >= policy.level3.minDaysOverdue) suggested = 3;
-  else if (daysOverdue >= policy.level2.minDaysOverdue) suggested = 2;
-  else if (daysOverdue >= policy.level1.minDaysOverdue) suggested = 1;
-  if (suggested == null) return null;
-  // Nur empfehlen, was noch nicht gesandt wurde.
-  if (maxExistingLevel >= suggested) {
-    const next = (maxExistingLevel + 1) as Level;
-    return next <= 3 ? next : null;
-  }
-  return suggested;
+export function suggestLevel(policy: ReminderPolicy, daysOverdue: number, maxExistingLevel: number): Level | null {
+  const next = (maxExistingLevel + 1) as Level;
+  if (next > 3) return null;
+  return daysOverdue >= policyLevel(policy, next).minDaysOverdue ? next : null;
 }
 
 /** Prüft, ob der aktuelle User owner/admin der aktiven Org ist. */
@@ -431,7 +424,7 @@ export const remindersRouter = router({
           invoiceDate: inv.invoiceDate,
           dueDate: inv.dueDate,
           customerId: inv.customerId,
-          customerName: r.customerName ?? "—",
+          customerName: r.customerName ?? inv.recipientName ?? "—",
           customerCompany: r.customerCompany ?? null,
           customerEmail: r.customerEmail ?? null,
           subject: inv.subject,

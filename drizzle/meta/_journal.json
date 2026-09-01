@@ -267,6 +267,13 @@
       "when": 1788280748186,
       "tag": "0037_ap2_unique_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "5",
+      "when": 1788281251655,
+      "tag": "0038_ap2_invoice_recipient",
+      "breakpoints": true
     }
   ]
 }

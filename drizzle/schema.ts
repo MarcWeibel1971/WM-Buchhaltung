@@ -1003,6 +1003,12 @@ export const invoices = mysqlTable(
     // Kunde (FK auf customers – nur eingeloggt innerhalb der Org)
     // NULL erlaubt für Entwürfe aus QrBillGenerator ohne Kundenzuordnung
     customerId: int("customerId"),
+    // Dedizierter Empfänger (Audit P2-3) für Rechnungen ohne Kunden-FK –
+    // ersetzt den bisherigen notes-Workaround
+    recipientName: varchar("recipientName", { length: 200 }),
+    recipientStreet: varchar("recipientStreet", { length: 200 }),
+    recipientZip: varchar("recipientZip", { length: 10 }),
+    recipientCity: varchar("recipientCity", { length: 100 }),
     // Rechnungsdatum (Ausstellungsdatum)
     invoiceDate: date("invoiceDate", { mode: "string" }).notNull(),
     // Fälligkeitsdatum – wird bei `issue` aus payment_terms_days berechnet,

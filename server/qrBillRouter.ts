@@ -1068,7 +1068,7 @@ export const qrBillRouter = router({
       // Build closing text that includes IBAN reference like the original template
       const closingWithIban = input.closingText.includes('IBAN')
         ? input.closingText
-        : `Ich bitte Dich, diesen Betrag auf unser Konto, IBAN ${ibanFormatted}, zu überweisen. ${input.closingText}`;
+        : `Bitte überweisen Sie den Betrag auf unser Konto, IBAN ${ibanFormatted}. ${input.closingText}`;
       const closingLines = wrapText(closingWithIban, fontLight, 10, contentW);
       for (const line of closingLines) {
         drawT(line, leftM, bodyY);

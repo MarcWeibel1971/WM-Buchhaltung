@@ -59,9 +59,9 @@ export default function Dashboard() {
 
   // Aufgaben-Hub: konsolidierte Tabs (ehemalige Tiles + Filter-Rail)
   const tasks: { key: TaskKey; icon: any; label: string; count: number; href: string; description: string }[] = [
-    { key: "newDocs", icon: FileText, label: "Neue Belege", count: newDocs, href: "/workflow?tab=docs&filter=new", description: "Warten auf KI-Analyse" },
+    { key: "newDocs", icon: FileText, label: "Neue Belege", count: newDocs, href: "/belege-bank?tab=docs&filter=new", description: "Warten auf KI-Analyse" },
     { key: "pendingEntries", icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/journal", description: "Buchungsvorschläge bereit" },
-    { key: "unmatchedBankTx", icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/workflow?tab=bank&filter=unmatched", description: "Ohne zugeordneten Beleg" },
+    { key: "unmatchedBankTx", icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/belege-bank?tab=bank&filter=unmatched", description: "Ohne zugeordneten Beleg" },
     { key: "openInvoices", icon: Receipt, label: "Offene Rechnungen", count: openInvoices, href: "/rechnungen?tab=open", description: "Fällige Zahlungen" },
   ];
 
@@ -93,7 +93,7 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Link href="/workflow?action=upload">
+          <Link href="/belege-bank?action=upload">
             <button className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-medium"
               style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)", boxShadow: "var(--shadow-1)" }}>
               <Upload className="h-3.5 w-3.5" /> Beleg hochladen
@@ -127,13 +127,13 @@ export default function Dashboard() {
                 <Sparkles className="h-3.5 w-3.5" />
               </span>
               <span className="k-label" style={{ color: "var(--ai)" }}>
-                KLAX hat für dich vorbereitet
+                KLAX hat für Sie vorbereitet
               </span>
             </div>
             <p className="text-[15px] leading-snug" style={{ color: "var(--ink)" }}>
               {totalActive > 0 ? (
                 <>
-                  <strong className="font-semibold">{totalActive}</strong> offene Aufgaben warten auf dich.
+                  <strong className="font-semibold">{totalActive}</strong> offene Aufgaben warten auf Sie.
                   {aiProcessedDocs > 0 && <> Davon wurden <strong className="font-semibold">{aiProcessedDocs}</strong> automatisch erkannt.</>}
                 </>
               ) : (
@@ -278,13 +278,13 @@ export default function Dashboard() {
                 Alle Vorschläge sind verbucht und alle Transaktionen zugeordnet.
               </p>
               <div className="flex gap-2 justify-center mt-5">
-                <Link href="/workflow?action=upload">
+                <Link href="/belege-bank?action=upload">
                   <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
                     style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
                     <Upload className="h-3.5 w-3.5" /> Beleg hochladen
                   </button>
                 </Link>
-                <Link href="/workflow?action=bank-import">
+                <Link href="/belege-bank?action=bank-import">
                   <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
                     style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
                     <Building2 className="h-3.5 w-3.5" /> Bank importieren

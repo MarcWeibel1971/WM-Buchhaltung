@@ -108,7 +108,7 @@ export default function Workflow() {
     if (initialAction === "ai-match" && !autoMatchMut.isPending) {
       autoMatchMut.mutate({ threshold: 50 });
       // Action aus URL entfernen, damit es nicht beim Re-Render erneut feuert
-      setLocation("/workflow", { replace: true } as any);
+      setLocation("/belege-bank", { replace: true } as any);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialAction]);
@@ -451,8 +451,8 @@ export default function Workflow() {
             {selectedDocId && selectedTxId
               ? "Beleg und Banktransaktion ausgewählt — bereit zum Verknüpfen."
               : selectedDocId
-                ? "Beleg ausgewählt. Wähle nun eine passende Banktransaktion rechts."
-                : "Banktransaktion ausgewählt. Wähle nun einen passenden Beleg links."}
+                ? "Beleg ausgewählt. Wählen Sie nun eine passende Banktransaktion rechts."
+                : "Banktransaktion ausgewählt. Wählen Sie nun einen passenden Beleg links."}
           </div>
           <button
             onClick={() => { setSelectedDocId(null); setSelectedTxId(null); }}

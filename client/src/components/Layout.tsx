@@ -73,16 +73,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // Kreditoren / Zeiterfassung / Lohn / Berichte / MWST / Jahresabschluss
   const NAV_ITEMS: NavItem[] = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard", badge: totalInbox > 0 ? totalInbox : undefined },
-    { href: "/workflow", icon: Wallet, label: "Belege & Bank", badge: workflowBadge > 0 ? workflowBadge : undefined },
+    { href: "/belege-bank", icon: Wallet, label: "Belege & Bank", badge: workflowBadge > 0 ? workflowBadge : undefined },
     { href: "/journal", icon: BookCheck, label: "Buchungen", badge: pendingEntries > 0 ? pendingEntries : undefined },
     { href: "/rechnungen", icon: Receipt, label: "Rechnungen" },
     { href: "/mahnwesen", icon: AlarmClock, label: "Mahnwesen" },
     { href: "/zahlungen/kreditoren", icon: Landmark, label: "Kreditoren" },
-    { href: "/time-tracking", icon: Clock, label: "Zeiterfassung" },
+    { href: "/zeiterfassung", icon: Clock, label: "Zeiterfassung" },
     { href: "/payroll", icon: Users, label: "Lohn" },
     { href: "/berichte", icon: BarChart3, label: "Berichte" },
-    { href: "/abschluss", icon: CalendarCheck, label: "MWST" },
-    { href: "/year-end", icon: CalendarClock, label: "Jahresabschluss" },
+    { href: "/mwst", icon: CalendarCheck, label: "MWST" },
+    { href: "/jahresabschluss", icon: CalendarClock, label: "Jahresabschluss" },
   ];
 
   // Admin-Bereich konsolidiert: ein einziger Eintrag /admin mit internen Tabs.
@@ -92,8 +92,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const isItemActive = (item: NavItem): boolean => {
     if (item.href === "/") return location === "/";
-    if (item.href === "/workflow") {
-      return location.startsWith("/workflow") ||
+    if (item.href === "/belege-bank") {
+      return location.startsWith("/belege-bank") ||
+        location.startsWith("/workflow") ||
         location.startsWith("/belege") ||
         location.startsWith("/bank") ||
         location.startsWith("/documents") ||
@@ -114,8 +115,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (item.href === "/berichte") {
       return location.startsWith("/berichte") || location.startsWith("/reports");
     }
-    if (item.href === "/abschluss") {
-      return location.startsWith("/abschluss") || location.startsWith("/vat");
+    if (item.href === "/mwst") {
+      return location.startsWith("/mwst") || location.startsWith("/abschluss") || location.startsWith("/vat");
     }
     return location === item.href || location.startsWith(item.href + "/");
   };
@@ -145,7 +146,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const findLabel = (): string => {
     if (location === "/") return "Dashboard";
-    if (location.startsWith("/workflow") ||
+    if (location.startsWith("/belege-bank") ||
+      location.startsWith("/workflow") ||
       location.startsWith("/belege") ||
       location.startsWith("/bank") ||
       location.startsWith("/bank-import") ||
@@ -155,11 +157,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (location.startsWith("/rechnungen") || location.startsWith("/zahlungen/debitoren") || location.startsWith("/qr-rechnung")) return "Rechnungen";
     if (location.startsWith("/mahnwesen")) return "Mahnwesen";
     if (location.startsWith("/zahlungen/kreditoren")) return "Kreditoren";
-    if (location.startsWith("/time-tracking")) return "Zeiterfassung";
+    if (location.startsWith("/zeiterfassung") || location.startsWith("/time-tracking")) return "Zeiterfassung";
     if (location.startsWith("/payroll")) return "Lohn";
     if (location.startsWith("/berichte") || location.startsWith("/reports")) return "Berichte";
-    if (location.startsWith("/year-end")) return "Jahresabschluss";
-    if (location.startsWith("/abschluss") || location.startsWith("/vat")) return "MWST";
+    if (location.startsWith("/jahresabschluss") || location.startsWith("/year-end")) return "Jahresabschluss";
+    if (location.startsWith("/mwst") || location.startsWith("/abschluss") || location.startsWith("/vat")) return "MWST";
     if (location.startsWith("/settings") || location.startsWith("/einstellungen")) return "Einstellungen";
     if (location.startsWith("/admin")) return "Admin";
     return "KLAX";
@@ -170,17 +172,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     {
       label: "Beleg hochladen",
       icon: Upload,
-      onClick: () => { setNewOpen(false); setLocation("/workflow?action=upload"); },
+      onClick: () => { setNewOpen(false); setLocation("/belege-bank?action=upload"); },
     },
     {
       label: "Bank importieren",
       icon: Building2,
-      onClick: () => { setNewOpen(false); setLocation("/workflow?action=bank-import"); },
+      onClick: () => { setNewOpen(false); setLocation("/belege-bank?action=bank-import"); },
     },
     {
       label: "KI-Auto-Match",
       icon: Sparkles,
-      onClick: () => { setNewOpen(false); setLocation("/workflow?action=ai-match"); },
+      onClick: () => { setNewOpen(false); setLocation("/belege-bank?action=ai-match"); },
     },
     {
       label: "Rechnung erstellen",

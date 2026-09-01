@@ -75,7 +75,7 @@ const TABS = [
   { id: "depreciation", label: "Abschreibungen", icon: TrendingDown, scope: "admin" },
   { id: "suppliers", label: "Lieferanten", icon: Truck, scope: "admin" },
   { id: "customers", label: "Kunden", icon: UserCheck, scope: "admin" },
-  { id: "reminders", label: "Mahnwesen", icon: Bell, scope: "admin" },
+  { id: "reminders", label: "Mahn-Einstellungen", icon: Bell, scope: "admin" },
   { id: "accountMappings", label: "Standard-Konten", icon: Wallet, scope: "admin" },
   { id: "importAutomation", label: "Import-Automatisierung", icon: Bolt, scope: "admin" },
   { id: "dsg", label: "Datenschutz & Audit", icon: ShieldCheck, scope: "admin" },
@@ -5061,7 +5061,7 @@ function RemindersTab() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-bold">Mahnwesen</h1>
+        <h1 className="text-2xl font-bold">Mahn-Einstellungen</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Schwellwerte und Gebühren für das 3-stufige Mahnwesen. Die Einstellungen gelten für alle
           Rechnungen dieser Organisation. Bestehende Mahnungen bleiben unverändert.

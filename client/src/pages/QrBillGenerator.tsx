@@ -67,12 +67,32 @@ export default function QrBillGenerator() {
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [invoiceSubject, setInvoiceSubject] = useState("Rechnung");
   const [salutation, setSalutation] = useState("");
-  const [introText, setIntroText] = useState(
-    "Gerne stellen wir Ihnen den Aufwand für unsere Leistungen gemäss beiliegendem Leistungsblatt in Rechnung:"
-  );
-  const [closingText, setClosingText] = useState(
-    "Wir danken Ihnen für das entgegengebrachte Vertrauen und freuen uns auf die weitere Zusammenarbeit."
-  );
+  // AP3.1: Textbausteine als waehlbare Vorlagen (Sie/Du)
+  const TEXT_TEMPLATES = {
+    sie: {
+      intro: "Gerne stellen wir Ihnen den Aufwand für unsere Leistungen gemäss beiliegendem Leistungsblatt in Rechnung:",
+      closing: "Wir danken Ihnen für das entgegengebrachte Vertrauen und freuen uns auf die weitere Zusammenarbeit.",
+    },
+    du: {
+      intro: "Gerne stellen wir dir den Aufwand für unsere Leistungen gemäss beiliegendem Leistungsblatt in Rechnung:",
+      closing: "Wir danken dir für das entgegengebrachte Vertrauen und freuen uns auf die weitere Zusammenarbeit.",
+    },
+  } as const;
+  const [addressForm, setAddressForm] = useState<"sie" | "du">("sie");
+  const switchAddressForm = (next: "sie" | "du") => {
+    if (next === addressForm) return;
+    const prev = TEXT_TEMPLATES[addressForm];
+    // Nur ersetzen, wenn die Texte noch der bisherigen Vorlage entsprechen
+    if (introText === prev.intro || introText === TEXT_TEMPLATES[next].intro) {
+      setIntroText(TEXT_TEMPLATES[next].intro);
+    }
+    if (closingText === prev.closing || closingText === TEXT_TEMPLATES[next].closing) {
+      setClosingText(TEXT_TEMPLATES[next].closing);
+    }
+    setAddressForm(next);
+  };
+  const [introText, setIntroText] = useState<string>(TEXT_TEMPLATES.sie.intro);
+  const [closingText, setClosingText] = useState<string>(TEXT_TEMPLATES.sie.closing);
   const [greeting, setGreeting] = useState("Herzliche Grüsse");
   const [signerName, setSignerName] = useState("");
   const [signerTitle, setSignerTitle] = useState("");
@@ -520,7 +540,25 @@ export default function QrBillGenerator() {
           {/* Intro Text */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Einleitungstext</CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-base">Einleitungstext</CardTitle>
+                <div className="flex items-center gap-1 text-xs">
+                  <span className="text-muted-foreground mr-1">Anrede:</span>
+                  {(["sie", "du"] as const).map(f => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => switchAddressForm(f)}
+                      className="px-2 py-0.5 rounded border text-xs"
+                      style={addressForm === f
+                        ? { background: "var(--primary, #1a1a1a)", color: "#fff", borderColor: "transparent" }
+                        : { background: "transparent", color: "inherit", borderColor: "var(--border, #e5e5e5)" }}
+                    >
+                      {f === "sie" ? "Sie" : "Du"}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               <Textarea

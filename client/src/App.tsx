@@ -120,7 +120,9 @@ function OrgGuard({ children }: { children: React.ReactNode }) {
 function RedirectTo({ to }: { to: string }) {
   const [, setLocation] = useLocation();
   useEffect(() => {
-    setLocation(to, { replace: true } as any);
+    // AP3.2: Query-Parameter der Alt-Route an die Ziel-Route durchreichen
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    setLocation(to + (search && !to.includes("?") ? search : ""), { replace: true } as any);
   }, [to, setLocation]);
   return null;
 }
@@ -141,13 +143,16 @@ function AppRouter() {
       {/* Hauptrouten */}
       <Route path="/" component={Dashboard} />
       <Route path="/dashboard" component={Dashboard} />
-      <Route path="/workflow" component={Workflow} />
+      <Route path="/belege-bank" component={Workflow} />
+      <Route path="/workflow">{() => <RedirectTo to="/belege-bank" />}</Route>
       <Route path="/rechnungen" component={Invoices} />
       <Route path="/mahnwesen" component={OpenPositions} />
       <Route path="/berichte" component={Berichte} />
-      <Route path="/abschluss" component={VatPage} />
-      <Route path="/vat" component={VatPage} />
-      <Route path="/year-end" component={YearEnd} />
+      <Route path="/mwst" component={VatPage} />
+      <Route path="/abschluss">{() => <RedirectTo to="/mwst" />}</Route>
+      <Route path="/vat">{() => <RedirectTo to="/mwst" />}</Route>
+      <Route path="/jahresabschluss" component={YearEnd} />
+      <Route path="/year-end">{() => <RedirectTo to="/jahresabschluss" />}</Route>
       {/* Einstellungen (persönlich/Workspace) – Tabs via ?tab=… */}
       <Route path="/einstellungen">{() => <Settings />}</Route>
       <Route path="/settings">{() => <Settings />}</Route>
@@ -157,24 +162,25 @@ function AppRouter() {
 
       {/* Detail-Routen */}
       <Route path="/documents/:id" component={DocumentDetail} />
-      <Route path="/zahlungen/debitoren" component={QrBillGenerator} />
       <Route path="/rechnungen/neu" component={QrBillGenerator} />
+      <Route path="/zahlungen/debitoren">{() => <RedirectTo to="/rechnungen/neu" />}</Route>
       <Route path="/zahlungen/kreditoren" component={Kreditoren} />
-      <Route path="/time-tracking" component={TimeTracking} />
+      <Route path="/zeiterfassung" component={TimeTracking} />
+      <Route path="/time-tracking">{() => <RedirectTo to="/zeiterfassung" />}</Route>
       <Route path="/payroll" component={Payroll} />
 
       {/* Redirects: Alte Pfade → Neue Pfade */}
       <Route path="/inbox">{() => <RedirectTo to="/" />}</Route>
-      <Route path="/belege">{() => <RedirectTo to="/workflow" />}</Route>
-      <Route path="/bank">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/belege">{() => <RedirectTo to="/belege-bank" />}</Route>
+      <Route path="/bank">{() => <RedirectTo to="/belege-bank" />}</Route>
       <Route path="/freigaben">{() => <RedirectTo to="/journal" />}</Route>
-      <Route path="/documents">{() => <RedirectTo to="/workflow" />}</Route>
+      <Route path="/documents">{() => <RedirectTo to="/belege-bank" />}</Route>
       <Route path="/journal" component={Journal} />
       <Route path="/bank-import" component={BankImport} />
       <Route path="/credit-card">{() => <RedirectTo to="/bank-import" />}</Route>
       <Route path="/reports">{() => <RedirectTo to="/berichte" />}</Route>
-      <Route path="/zahlungen">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>
-      <Route path="/qr-rechnung">{() => <RedirectTo to="/zahlungen/debitoren" />}</Route>
+      <Route path="/zahlungen">{() => <RedirectTo to="/rechnungen/neu" />}</Route>
+      <Route path="/qr-rechnung">{() => <RedirectTo to="/rechnungen/neu" />}</Route>
 
       {/* Redirects: alte Admin/Settings-Pfade → neue Tab-URLs */}
       <Route path="/admin/global-rules">{() => <RedirectTo to="/admin?tab=globalRules" />}</Route>

@@ -72,3 +72,68 @@ jobs:
           COLS=$(mysql -h 127.0.0.1 -u root -pci-root-pass wm_smoke -N -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='wm_smoke' AND TABLE_NAME='customers' AND COLUMN_NAME IN ('firstName','lastName','spouseFirstName','spouseLastName','maritalStatus','birthDate','spouseBirthDate','customerNumber');")
           echo "customers-Spalten: $COLS/8"
           if [ "$COLS" != "8" ]; then echo "::error::customers-Migration unvollständig"; exit 1; fi
+
+  # AP4.4: Integrationstest Kernkette „Rechnung → QR-PDF → CAMT-Zahlung →
+  # Match → Freigabe → bezahlt → mahnfrei" für QRR- und SCOR-Pfad (P1-1).
+  # Läuft gegen eine frische Testdatenbank (MySQL 8).
+  core-chain-integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-pass
+          MYSQL_DATABASE: wm_corechain
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -pci-root-pass --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run migrations on fresh database
+        env:
+          DATABASE_URL: mysql://root:ci-root-pass@127.0.0.1:3306/wm_corechain
+        run: pnpm drizzle-kit migrate
+
+      - name: Start app server
+        env:
+          DATABASE_URL: mysql://root:ci-root-pass@127.0.0.1:3306/wm_corechain
+          JWT_SECRET: ci-core-chain-secret-0123456789abcdef
+          PORT: "3000"
+          NODE_ENV: development
+          VITE_APP_ID: ci-core-chain
+          VITE_OAUTH_PORTAL_URL: https://portal.invalid.local
+          OAUTH_SERVER_URL: https://portal.invalid.local
+        run: |
+          nohup pnpm tsx server/_core/index.ts > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3000/ > /dev/null; then echo "server up"; exit 0; fi
+            sleep 2
+          done
+          echo "::error::server did not start"
+          tail -100 server.log
+          exit 1
+
+      - name: Run core chain integration test (QRR + SCOR)
+        env:
+          DATABASE_URL: mysql://root:ci-root-pass@127.0.0.1:3306/wm_corechain
+          BASE_URL: http://127.0.0.1:3000
+        run: node scripts/e2e-core-chain.mjs
+
+      - name: Server log on failure
+        if: failure()
+        run: tail -200 server.log

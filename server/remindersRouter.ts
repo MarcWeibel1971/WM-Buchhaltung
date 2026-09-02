@@ -21,7 +21,7 @@ import {
 import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { storagePut } from "./storage";
-import { sendEmail } from "./emailService";
+import { EMAIL_NOT_CONFIGURED_MESSAGE, isEmailConfigured, sendEmail } from "./emailService";
 import { getDb } from "./db";
 import { createLogger } from "./_core/logger";
 
@@ -709,6 +709,11 @@ export const remindersRouter = router({
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      // AP4.6: Ehrliche Meldung, statt Versand-Erfolg vorzutäuschen
+      if (!isEmailConfigured()) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: EMAIL_NOT_CONFIGURED_MESSAGE });
+      }
 
       const [reminder] = await db.select().from(invoiceReminders)
         .where(and(

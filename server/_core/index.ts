@@ -14,6 +14,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { logger, requestLogger, errorLogger, installCrashHandlers } from "./logger";
+import { logStartupFeatureSummary } from "./startupCheck";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -137,6 +138,8 @@ async function startServer() {
 
   server.listen(port, () => {
     logger.info({ port, env: process.env.NODE_ENV }, "server started");
+    // AP4.1: Feature-Zusammenfassung (optionale Keys, hilfreiche Warnungen)
+    logStartupFeatureSummary();
   });
 
   // Graceful shutdown: respond to SIGTERM/SIGINT, stop accepting new

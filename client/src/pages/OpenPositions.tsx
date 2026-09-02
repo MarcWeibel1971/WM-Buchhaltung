@@ -455,6 +455,9 @@ function SendReminderEmailDialog(props: {
   );
   const [bodyText, setBodyText] = useState("");
   const [includeInvoice, setIncludeInvoice] = useState(true);
+  // AP4.6: Ehrliche Meldung, wenn kein E-Mail-Versand konfiguriert ist
+  const emailStatus = trpc.system.emailStatus.useQuery();
+  const emailUnavailable = emailStatus.data ? !emailStatus.data.configured : false;
 
   return (
     <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -467,6 +470,13 @@ function SendReminderEmailDialog(props: {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-3 py-2">
+          {emailUnavailable && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-800">
+              E-Mail-Versand ist auf diesem Server nicht konfiguriert (kein Versand-Provider:
+              weder Resend noch SMTP). Die Mahnung kann nicht versendet werden – bitte wenden
+              Sie sich an den Administrator.
+            </div>
+          )}
           <div>
             <Label>An *</Label>
             <Input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="kunde@example.ch" />
@@ -499,7 +509,7 @@ function SendReminderEmailDialog(props: {
         <AlertDialogFooter>
           <AlertDialogCancel>Abbrechen</AlertDialogCancel>
           <AlertDialogAction
-            disabled={!to || props.isPending}
+            disabled={!to || props.isPending || emailUnavailable}
             onClick={() => {
               const ccList = cc.split(",").map(s => s.trim()).filter(Boolean);
               props.onSend({

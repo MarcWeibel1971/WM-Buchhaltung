@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -20,7 +19,6 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { useAuth } from "@/_core/hooks/useAuth";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -84,13 +82,6 @@ export default function Invoices() {
   const [search, setSearch] = useState("");
   const [paymentDialog, setPaymentDialog] = useState<{ id: number; open: number } | null>(null);
 
-  // Admin-Selektion
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-
   const utils = trpc.useUtils();
   const statusFilter: any = tab === "all" ? undefined : tab;
   const listQuery = trpc.invoices.list.useQuery({
@@ -101,23 +92,6 @@ export default function Invoices() {
 
   const deleteMutation = trpc.invoices.delete.useMutation({
     onSuccess: () => { toast.success("Entwurf gelöscht"); utils.invoices.list.invalidate(); },
-    onError: (e) => toast.error(e.message),
-  });
-  const adminDeleteMutation = trpc.invoices.adminDelete.useMutation({
-    onSuccess: () => {
-      toast.success("Rechnung gelöscht");
-      utils.invoices.list.invalidate();
-      setSelectedIds(new Set());
-    },
-    onError: (e) => toast.error(e.message),
-  });
-  const adminBulkDeleteMutation = trpc.invoices.adminBulkDelete.useMutation({
-    onSuccess: (r) => {
-      toast.success(`${r.deleted} Rechnung(en) gelöscht`);
-      utils.invoices.list.invalidate();
-      setSelectedIds(new Set());
-      setBulkDeleteOpen(false);
-    },
     onError: (e) => toast.error(e.message),
   });
   const issueMutation = trpc.invoices.issue.useMutation({
@@ -199,18 +173,6 @@ export default function Invoices() {
   const handleEdit = (id: number) => navigate(`/rechnungen/neu?id=${id}`);
 
   // Selektion-Helpers
-  const toggleSelect = useCallback((id: number) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
-  const toggleAll = useCallback((checked: boolean) => {
-    setSelectedIds(checked ? new Set(rows.map(r => r.id)) : new Set());
-  }, [rows]);
-  const allSelected = rows.length > 0 && selectedIds.size === rows.length;
-  const someSelected = selectedIds.size > 0 && !allSelected;
 
   return (
     <div className="px-6 lg:px-8 py-6 space-y-5 max-w-[1280px] mx-auto">
@@ -322,50 +284,12 @@ export default function Invoices() {
         </div>
       </div>
 
-      {/* Admin Bulk-Delete Toolbar */}
-      {isAdmin && selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
-          <span className="text-sm font-medium text-destructive">
-            {selectedIds.size} Rechnung(en) ausgewählt
-          </span>
-          <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
-            <AlertDialogTrigger asChild>
-              <Button size="sm" variant="destructive" className="gap-1">
-                <Trash2 className="h-4 w-4" /> Alle löschen
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{selectedIds.size} Rechnung(en) löschen?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Diese Aktion ist unwiderruflich. Alle ausgewählten Rechnungen (inkl. verbuchter)
-                  werden permanent gelöscht. Nur für die Entwicklungsphase verwenden.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                <AlertDialogAction
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  onClick={() => adminBulkDeleteMutation.mutate({ ids: Array.from(selectedIds) })}
-                  disabled={adminBulkDeleteMutation.isPending}
-                >
-                  {adminBulkDeleteMutation.isPending ? "Löschen…" : "Endgültig löschen"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
-            Auswahl aufheben
-          </Button>
-        </div>
-      )}
 
       {/* Tabelle */}
       <Card>
         <CardHeader className="py-4">
           <CardTitle className="text-base">
             {rows.length} {rows.length === 1 ? "Rechnung" : "Rechnungen"}
-            {isAdmin && <span className="ml-2 text-xs text-muted-foreground font-normal">(Admin: Checkboxen zum Löschen)</span>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -382,16 +306,6 @@ export default function Invoices() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {isAdmin && (
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={allSelected}
-                        onCheckedChange={(c) => toggleAll(!!c)}
-                        aria-label="Alle auswählen"
-                        data-state={someSelected ? "indeterminate" : allSelected ? "checked" : "unchecked"}
-                      />
-                    </TableHead>
-                  )}
                   <TableHead>Nummer</TableHead>
                   <TableHead>Datum</TableHead>
                   <TableHead>Fällig</TableHead>
@@ -407,18 +321,9 @@ export default function Invoices() {
                 {rows.map((inv) => (
                   <TableRow
                     key={inv.id}
-                    className={`cursor-pointer ${selectedIds.has(inv.id) ? "bg-destructive/5" : ""}`}
-                    onClick={() => isAdmin ? undefined : handleEdit(inv.id)}
+                    className="cursor-pointer"
+                    onClick={() => handleEdit(inv.id)}
                   >
-                    {isAdmin && (
-                      <TableCell onClick={(e) => { e.stopPropagation(); toggleSelect(inv.id); }}>
-                        <Checkbox
-                          checked={selectedIds.has(inv.id)}
-                          onCheckedChange={() => toggleSelect(inv.id)}
-                          aria-label={`Rechnung ${inv.invoiceNumber ?? inv.id} auswählen`}
-                        />
-                      </TableCell>
-                    )}
                     <TableCell
                       className="font-mono text-xs whitespace-nowrap"
                       onClick={() => handleEdit(inv.id)}
@@ -465,60 +370,28 @@ export default function Invoices() {
                             >
                               <Send className="h-4 w-4" />
                             </Button>
-                            {!isAdmin && (
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button size="sm" variant="ghost" title="Löschen">
-                                    <Trash2 className="h-4 w-4 text-destructive" />
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Entwurf löschen?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      Der Entwurf wird unwiderruflich entfernt.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => deleteMutation.mutate({ id: inv.id })}>
-                                      Löschen
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            )}
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button size="sm" variant="ghost" title="Löschen">
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Entwurf löschen?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Der Entwurf wird unwiderruflich entfernt.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => deleteMutation.mutate({ id: inv.id })}>
+                                    Löschen
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           </>
-                        )}
-
-                        {/* Admin: Einzellöschen für alle Status */}
-                        {isAdmin && (
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button size="sm" variant="ghost" title="Admin: Löschen">
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Rechnung löschen?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Rechnung {inv.invoiceNumber ?? `#${inv.id}`} wird permanent gelöscht.
-                                  Nur für die Entwicklungsphase verwenden.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                                <AlertDialogAction
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  onClick={() => adminDeleteMutation.mutate({ id: inv.id })}
-                                  disabled={adminDeleteMutation.isPending}
-                                >
-                                  Löschen
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
                         )}
 
                         {inv.status !== "draft" && (

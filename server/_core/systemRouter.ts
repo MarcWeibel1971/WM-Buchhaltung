@@ -20,6 +20,12 @@ export const systemRouter = router({
     available: Boolean(ENV.forgeApiKey || process.env.OPENROUTER_API_KEY),
   })),
 
+  // AP4.6: E-Mail-Versand-Status – der Client zeigt eine ehrliche Meldung,
+  // statt Versand-Erfolge vorzutäuschen.
+  emailStatus: publicProcedure.query(() => ({
+    configured: Boolean(ENV.resendApiKey),
+  })),
+
   notifyOwner: adminProcedure
     .input(
       z.object({

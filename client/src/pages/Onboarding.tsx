@@ -36,6 +36,7 @@ export default function Onboarding() {
     phone: "",
     website: "",
     seedKmuKontenplan: true,
+    chartTemplate: "minimal" as "minimal" | "voll",
     initialFiscalYear: new Date().getFullYear(),
   });
 
@@ -142,6 +143,7 @@ export default function Onboarding() {
       phone: form.phone || undefined,
       website: form.website || undefined,
       seedKmuKontenplan: form.seedKmuKontenplan,
+      chartTemplate: form.chartTemplate,
       initialFiscalYear: form.initialFiscalYear,
       makeCurrent: true,
     });
@@ -516,12 +518,38 @@ export default function Onboarding() {
                   />
                   <div className="flex-1">
                     <Label htmlFor="seedKmu" className="cursor-pointer">
-                      Standard-KMU-Kontenplan importieren
+                      Standard-KMU-Kontenplan einrichten
                     </Label>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Erstellt einen Basiskontenplan nach Käfer, den Sie später
-                      in den Einstellungen erweitern können.
+                      Kanonischer Kontenplan nach Käfer – wahlweise minimal oder voll.
+                      Sie können ihn später in den Einstellungen anpassen.
                     </p>
+                    {form.seedKmuKontenplan && (
+                      <div className="mt-2 space-y-1.5">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="chartTemplate"
+                            checked={form.chartTemplate === "minimal"}
+                            onChange={() => setForm({ ...form, chartTemplate: "minimal" })}
+                          />
+                          <span>
+                            <strong>Minimal</strong> (14 Konten) – das Wichtigste zum sofort Loslegen
+                          </span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="radio"
+                            name="chartTemplate"
+                            checked={form.chartTemplate === "voll"}
+                            onChange={() => setForm({ ...form, chartTemplate: "voll" })}
+                          />
+                          <span>
+                            <strong>Voll</strong> (63 Konten) – kompletter Käfer-KMU-Kontenrahmen
+                          </span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>

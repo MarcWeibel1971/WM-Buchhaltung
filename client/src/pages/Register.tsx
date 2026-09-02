@@ -17,6 +17,9 @@ export default function Register() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  // AP4.6: Hinweis zeigen, wenn der Server keine E-Mails versenden kann
+  const emailStatus = trpc.system.emailStatus.useQuery();
+
   const registerMutation = trpc.auth.register.useMutation({
     onSuccess: () => {
       setSuccess(true);
@@ -62,6 +65,17 @@ export default function Register() {
               <p className="text-sm text-muted-foreground mb-6">
                 Prüfen Sie auch Ihren Spam-Ordner, falls Sie die E-Mail nicht finden.
               </p>
+              {emailStatus.data && !emailStatus.data.configured && (
+                <Alert className="mb-6 border-amber-300 bg-amber-50 text-left">
+                  <AlertCircle className="h-4 w-4 text-amber-600" />
+                  <AlertDescription className="text-amber-800">
+                    Hinweis: Auf diesem Server ist kein E-Mail-Versand konfiguriert
+                    (kein Versand-Provider: weder Resend noch SMTP). Die Bestätigungs-E-Mail
+                    wurde nicht versendet – bitte wenden Sie sich an den Administrator,
+                    damit Ihr Konto freigeschaltet wird.
+                  </AlertDescription>
+                </Alert>
+              )}
               <Button asChild variant="outline" className="w-full">
                 <Link href="/login">
                   Zurück zur Anmeldung

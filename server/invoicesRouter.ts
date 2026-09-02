@@ -30,7 +30,7 @@ import PDFDocument from "pdfkit";
 import { SwissQRBill } from "swissqrbill/pdf";
 import type { Data } from "swissqrbill/types";
 import { storagePut } from "./storage";
-import { sendEmail } from "./emailService";
+import { EMAIL_NOT_CONFIGURED_MESSAGE, isEmailConfigured, sendEmail } from "./emailService";
 import {
   getDb,
   allocateInvoiceNumber,
@@ -1079,6 +1079,11 @@ export const invoicesRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
+      // AP4.6: Ehrliche Meldung, statt Versand-Erfolg vorzutäuschen
+      if (!isEmailConfigured()) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: EMAIL_NOT_CONFIGURED_MESSAGE });
+      }
+
       const [invoice] = await db.select().from(invoices)
         .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)))
         .limit(1);
@@ -1162,39 +1167,7 @@ ${org.companyName}`;
       return { success: true, messageId, to: recipient };
     }),
 
-  // ─── ADMIN DELETE (alle Status, nur für Entwicklungsphase) ───────────────────────────────
-  adminDelete: orgProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [existing] = await db.select({ id: invoices.id }).from(invoices)
-        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)))
-        .limit(1);
-      if (!existing) throw new TRPCError({ code: "NOT_FOUND" });
-      await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, input.id));
-      await db.delete(invoices)
-        .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, input.id)));
-      return { success: true };
-    }),
-
-  // ─── ADMIN BULK DELETE ───────────────────────────────────────────────────────────────────
-  adminBulkDelete: orgProcedure
-    .input(z.object({ ids: z.array(z.number()).min(1) }))
-    .mutation(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      let deleted = 0;
-      for (const id of input.ids) {
-        const [existing] = await db.select({ id: invoices.id }).from(invoices)
-          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)))
-          .limit(1);
-        if (!existing) continue;
-        await db.delete(invoiceItems).where(eq(invoiceItems.invoiceId, id));
-        await db.delete(invoices)
-          .where(and(eq(invoices.organizationId, ctx.organizationId), eq(invoices.id, id)));
-        deleted++;
-      }
-      return { success: true, deleted };
-    }),
+  // AP4.3 (Revisionssicherheit): Die früheren Admin-Lösch-Mutationen für beliebige
+  // Rechnungs-Status wurden entfernt – gebuchte Rechnungen sind produktiv nicht
+  // löschbar. Entwürfe: delete. Verbuchte: cancel (Storno mit Gegenbuchung).
 });

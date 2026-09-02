@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import { ENV } from "./_core/env";
+import { STRIPE_API_VERSION } from "./stripeApiVersion";
 
 // ─── Stripe Client ──────────────────────────────────────────────────────────
 let stripeInstance: Stripe | null = null;
@@ -10,7 +11,7 @@ export function getStripe(): Stripe {
       throw new Error("STRIPE_SECRET_KEY is not configured");
     }
     stripeInstance = new Stripe(ENV.stripeSecretKey, {
-      apiVersion: "2026-03-25.dahlia",
+      apiVersion: STRIPE_API_VERSION,
     });
   }
   return stripeInstance;

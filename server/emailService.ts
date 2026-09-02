@@ -2,84 +2,55 @@
  * E-Mail-Service via Resend API
  * Verwendet für: Registrierungs-Bestätigung, Passwort-Reset
  */
-import { ENV } from "./_core/env";
 import { createLogger } from "./_core/logger";
+import {
+  isEmailProviderConfigured,
+  resolveEmailProvider,
+  type EmailAttachment,
+  type EmailMessage,
+} from "./emailProviders";
 
 const logger = createLogger("emailService");
 
+// AP4.1: Re-Export für bestehende Konsumenten – die kanonischen Typen leben
+// jetzt in emailProviders.ts.
+export type { EmailAttachment, EmailMessage } from "./emailProviders";
+
 /**
- * Resend-Attachment. `content` ist immer base64-kodiert (egal ob Text oder
- * Binary – z.B. PDF). Max-Größe pro Attachment: 40 MB (Resend-Limit).
+ * AP4.6: Einheitliche, ehrliche Fehlermeldung, wenn kein Versanddienst
+ * konfiguriert ist – statt still "dev-no-api-key" zurückzugeben, während
+ * der Benutzer eine Erfolgsmeldung sieht.
  */
-export interface EmailAttachment {
-  filename: string;
-  content: string;        // base64-encoded
-  contentType?: string;   // z.B. "application/pdf"; Resend rät Content-Type aus Dateiendung
+export const EMAIL_NOT_CONFIGURED_MESSAGE =
+  "E-Mail-Versand ist nicht konfiguriert (weder RESEND_API_KEY noch SMTP_HOST gesetzt). Bitte konfigurieren Sie einen Versand-Provider (EMAIL_PROVIDER=resend oder smtp) in den Umgebungsvariablen und starten Sie den Server neu.";
+
+/** AP4.6/4.1: true, wenn ein echter Versand-Provider konfiguriert ist. */
+export function isEmailConfigured(): boolean {
+  return isEmailProviderConfigured();
 }
 
-interface SendEmailParams {
-  to: string;
-  subject: string;
-  html: string;
-  text?: string;
-  /** Optional: CC-Empfänger (z.B. Treuhänder). */
-  cc?: string[];
-  /** Optional: Antwort-an-Adresse (wenn abweichend vom Absender). */
-  replyTo?: string;
-  /** Optional: PDF/Bild-Anhänge (Rechnungen, Mahnungen etc.). */
-  attachments?: EmailAttachment[];
-}
-
-interface ResendResponse {
-  id: string;
+/** AP4.6: Wird geworfen, wenn ohne konfigurierten Versanddienst gesendet werden soll. */
+export class EmailNotConfiguredError extends Error {
+  constructor() {
+    super(EMAIL_NOT_CONFIGURED_MESSAGE);
+    this.name = "EmailNotConfiguredError";
+  }
 }
 
 /**
  * Sends an email via the Resend API.
  * Returns the message ID on success, throws on failure.
  */
-export async function sendEmail(params: SendEmailParams): Promise<string> {
-  const { to, subject, html, text, cc, replyTo, attachments } = params;
-
-  if (!ENV.resendApiKey) {
-    logger.warn("[Email] RESEND_API_KEY not configured – email not sent");
-    // In development, log the email content for debugging
-    logger.info("[Email] Would send to:", to);
-    logger.info("[Email] Subject:", subject);
-    logger.info("[Email] HTML:", html.substring(0, 200) + "...");
-    if (attachments?.length) logger.info("[Email] Attachments:", attachments.map(a => a.filename).join(", "));
-    return "dev-no-api-key";
+export async function sendEmail(params: EmailMessage): Promise<string> {
+  const provider = resolveEmailProvider();
+  if (provider.name === "log") {
+    // AP4.6: Ehrlich fehlschlagen. Die Auth-Flows (Registrierung, Passwort-Reset)
+    // fangen den Fehler ab und loggen ihn; Fach-Flows (Rechnung, Mahnung) sind
+    // zusätzlich mit isEmailConfigured()-Guards abgesichert.
+    logger.warn("[Email] Kein Versand-Provider konfiguriert – E-Mail nicht gesendet. To:", params.to, "Subject:", params.subject);
+    throw new EmailNotConfiguredError();
   }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${ENV.resendApiKey}`,
-    },
-    body: JSON.stringify({
-      from: ENV.resendFromEmail,
-      to: [to],
-      cc: cc && cc.length > 0 ? cc : undefined,
-      reply_to: replyTo,
-      subject,
-      html,
-      text: text || undefined,
-      attachments: attachments && attachments.length > 0
-        ? attachments.map(a => ({ filename: a.filename, content: a.content, content_type: a.contentType }))
-        : undefined,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
-    logger.error(`[Email] Resend API error (${response.status}):`, errorBody);
-    throw new Error(`E-Mail konnte nicht gesendet werden (${response.status})`);
-  }
-
-  const data = (await response.json()) as ResendResponse;
-  logger.info(`[Email] Sent successfully to ${to}, id: ${data.id}`);
-  return data.id;
+  return provider.send(params);
 }
 
 /**

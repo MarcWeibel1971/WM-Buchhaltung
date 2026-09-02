@@ -11,6 +11,10 @@ import {
   fiscalYears,
 } from "../drizzle/schema";
 import { eq, and, asc, inArray } from "drizzle-orm";
+import {
+  getKmuAccounts,
+  KMU_KONTENPLAN_VERSION,
+} from "../shared/kmuKontenplan";
 
 /**
  * Helper: turns a company name into a URL-friendly slug.
@@ -37,34 +41,6 @@ async function generateUniqueSlug(db: any, baseName: string): Promise<string> {
     if (suffix > 100) return `${base}-${Date.now()}`;
   }
 }
-
-// Default KMU-Kontenplan template – very small subset, the full template lives
-// in settingsRouter.getKmuTemplate and can be imported after onboarding.
-const MINIMAL_KMU_ACCOUNTS: Array<{
-  number: string;
-  name: string;
-  accountType: "asset" | "liability" | "expense" | "revenue" | "equity";
-  normalBalance: "debit" | "credit";
-  category?: string;
-  subCategory?: string;
-  sortOrder?: number;
-  isVatRelevant?: boolean;
-}> = [
-  { number: "1000", name: "Kasse", accountType: "asset", normalBalance: "debit", category: "Umlaufvermögen", subCategory: "Flüssige Mittel", sortOrder: 100 },
-  { number: "1020", name: "Bank", accountType: "asset", normalBalance: "debit", category: "Umlaufvermögen", subCategory: "Flüssige Mittel", sortOrder: 200 },
-  { number: "1100", name: "Debitoren", accountType: "asset", normalBalance: "debit", category: "Umlaufvermögen", subCategory: "Forderungen", sortOrder: 300 },
-  { number: "1170", name: "Vorsteuer", accountType: "asset", normalBalance: "debit", category: "Umlaufvermögen", subCategory: "Forderungen", sortOrder: 350 },
-  { number: "2000", name: "Kreditoren", accountType: "liability", normalBalance: "credit", category: "Fremdkapital", subCategory: "Kurzfristig", sortOrder: 400 },
-  { number: "2200", name: "Geschuldete MWST", accountType: "liability", normalBalance: "credit", category: "Fremdkapital", subCategory: "Kurzfristig", sortOrder: 450 },
-  { number: "2800", name: "Eigenkapital", accountType: "equity", normalBalance: "credit", category: "Eigenkapital", subCategory: "Eigenkapital", sortOrder: 500 },
-  { number: "3000", isVatRelevant: true, name: "Dienstleistungsertrag", accountType: "revenue", normalBalance: "credit", category: "Betriebsertrag", subCategory: "Dienstleistungen", sortOrder: 600 },
-  { number: "4000", isVatRelevant: true, name: "Materialaufwand", accountType: "expense", normalBalance: "debit", category: "Drittaufwand", subCategory: "Material", sortOrder: 700 },
-  { number: "5000", name: "Lohnaufwand", accountType: "expense", normalBalance: "debit", category: "Personalaufwand", subCategory: "Löhne", sortOrder: 750 },
-  { number: "6000", isVatRelevant: true, name: "Raumaufwand / Miete", accountType: "expense", normalBalance: "debit", category: "Mietaufwand", subCategory: "Raumaufwand", sortOrder: 800 },
-  { number: "6500", isVatRelevant: true, name: "Verwaltungsaufwand", accountType: "expense", normalBalance: "debit", category: "Verwaltungsaufwand", subCategory: "Büroaufwand", sortOrder: 850 },
-  { number: "6900", isVatRelevant: true, name: "Finanzaufwand", accountType: "expense", normalBalance: "debit", category: "Zinsaufwand", subCategory: "Finanzaufwand", sortOrder: 900 },
-  { number: "9000", name: "Eröffnungsbilanz", accountType: "equity", normalBalance: "credit", category: "Eigenkapital", subCategory: "Eröffnung", sortOrder: 999 },
-];
 
 export const organizationsRouter = router({
   /**
@@ -158,6 +134,8 @@ export const organizationsRouter = router({
       website: z.string().max(200).optional(),
       // Onboarding-Optionen
       seedKmuKontenplan: z.boolean().default(true),
+      // AP4.5: Variante des kanonischen KMU-Kontenplans (minimal = 14, voll = 63)
+      chartTemplate: z.enum(["minimal", "voll"]).default("minimal"),
       initialFiscalYear: z.number().int().optional(),
       makeCurrent: z.boolean().default(true),
     }))
@@ -220,10 +198,10 @@ export const organizationsRouter = router({
         website: input.website,
       });
 
-      // 4. Optional: Minimal-Kontenplan seeden
+      // 4. Optional: kanonischen KMU-Kontenplan seeden (AP4.5, minimal/voll)
       let accountsCreated = 0;
       if (input.seedKmuKontenplan) {
-        for (const acc of MINIMAL_KMU_ACCOUNTS) {
+        for (const acc of getKmuAccounts(input.chartTemplate)) {
           await db.insert(accounts).values({
             organizationId: newOrgId,
             number: acc.number,
@@ -266,6 +244,8 @@ export const organizationsRouter = router({
         slug,
         name: input.name,
         accountsCreated,
+        chartTemplate: input.seedKmuKontenplan ? input.chartTemplate : null,
+        kontenplanVersion: input.seedKmuKontenplan ? KMU_KONTENPLAN_VERSION : null,
         fiscalYearCreated: !!input.initialFiscalYear,
         isCurrent: input.makeCurrent,
       };

@@ -52,6 +52,9 @@ export default function Dashboard() {
   const autoRate = totalDocs > 0 ? Math.round((aiProcessedDocs / totalDocs) * 100) : 0;
   const matchRate = totalDocs > 0 ? Math.round((matchedDocs / totalDocs) * 100) : 0;
   const openInvoices = 0;
+  // AP3.3: ehrlicher Empty-State – ohne Datenbasis keine Pseudo-KPIs,
+  // sondern eine Anleitung für die ersten Schritte.
+  const isEmpty = totalDocs === 0 && (pendingBank?.length ?? 0) === 0 && pendingEntries === 0;
 
   const firstName = (user?.name ?? "").split(" ")[0] || "dir";
   const companyName = company?.companyName ?? "Meine Firma";
@@ -59,9 +62,9 @@ export default function Dashboard() {
 
   // Aufgaben-Hub: konsolidierte Tabs (ehemalige Tiles + Filter-Rail)
   const tasks: { key: TaskKey; icon: any; label: string; count: number; href: string; description: string }[] = [
-    { key: "newDocs", icon: FileText, label: "Neue Belege", count: newDocs, href: "/workflow?tab=docs&filter=new", description: "Warten auf KI-Analyse" },
+    { key: "newDocs", icon: FileText, label: "Neue Belege", count: newDocs, href: "/belege-bank?tab=docs&filter=new", description: "Warten auf KI-Analyse" },
     { key: "pendingEntries", icon: CheckSquare, label: "Zur Freigabe", count: pendingEntries, href: "/journal", description: "Buchungsvorschläge bereit" },
-    { key: "unmatchedBankTx", icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/workflow?tab=bank&filter=unmatched", description: "Ohne zugeordneten Beleg" },
+    { key: "unmatchedBankTx", icon: Building2, label: "Ungematchte Bank-Tx", count: unmatchedBankTx, href: "/belege-bank?tab=bank&filter=unmatched", description: "Ohne zugeordneten Beleg" },
     { key: "openInvoices", icon: Receipt, label: "Offene Rechnungen", count: openInvoices, href: "/rechnungen?tab=open", description: "Fällige Zahlungen" },
   ];
 
@@ -93,7 +96,7 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Link href="/workflow?action=upload">
+          <Link href="/belege-bank?action=upload">
             <button className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-medium"
               style={{ background: "var(--klax-accent)", color: "var(--klax-accent-ink)", boxShadow: "var(--shadow-1)" }}>
               <Upload className="h-3.5 w-3.5" /> Beleg hochladen
@@ -127,32 +130,43 @@ export default function Dashboard() {
                 <Sparkles className="h-3.5 w-3.5" />
               </span>
               <span className="k-label" style={{ color: "var(--ai)" }}>
-                KLAX hat für dich vorbereitet
+                KLAX hat für Sie vorbereitet
               </span>
             </div>
-            <p className="text-[15px] leading-snug" style={{ color: "var(--ink)" }}>
-              {totalActive > 0 ? (
-                <>
-                  <strong className="font-semibold">{totalActive}</strong> offene Aufgaben warten auf dich.
-                  {aiProcessedDocs > 0 && <> Davon wurden <strong className="font-semibold">{aiProcessedDocs}</strong> automatisch erkannt.</>}
-                </>
-              ) : (
-                <>Alles erledigt. Keine offenen Aufgaben.</>
-              )}
-            </p>
+            {isEmpty ? (
+              <div className="text-[13.5px] leading-relaxed" style={{ color: "var(--ink)" }}>
+                <p className="font-medium mb-1">Willkommen! So starten Sie:</p>
+                <ol className="list-decimal ml-5 space-y-1" style={{ color: "var(--ink-2)" }}>
+                  <li><Link href="/belege-bank?action=upload"><span className="underline underline-offset-2">Beleg hochladen</span></Link> oder <Link href="/bank-import"><span className="underline underline-offset-2">Banktransaktionen importieren</span></Link></li>
+                  <li>Buchungsvorschläge unter <Link href="/journal"><span className="underline underline-offset-2">Buchungen</span></Link> prüfen und freigeben</li>
+                  <li><Link href="/rechnungen/neu"><span className="underline underline-offset-2">Erste QR-Rechnung erstellen</span></Link></li>
+                </ol>
+              </div>
+            ) : (
+              <p className="text-[15px] leading-snug" style={{ color: "var(--ink)" }}>
+                {totalActive > 0 ? (
+                  <>
+                    <strong className="font-semibold">{totalActive}</strong> offene Aufgaben warten auf Sie.
+                    {aiProcessedDocs > 0 && <> Davon wurden <strong className="font-semibold">{aiProcessedDocs}</strong> automatisch erkannt.</>}
+                  </>
+                ) : (
+                  <>Alles erledigt. Keine offenen Aufgaben.</>
+                )}
+              </p>
+            )}
           </div>
 
           {/* Kompakter KPI-Block */}
           <div className="grid grid-cols-3 gap-4 w-full lg:w-auto lg:flex-shrink-0">
             <div className="min-w-[78px]">
               <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
-                {autoRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span>
+                {totalDocs > 0 ? <>{autoRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span></> : "–"}
               </div>
               <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Automatisierung</div>
             </div>
             <div className="min-w-[78px]">
               <div className="display text-[22px] mono font-medium" style={{ color: "var(--ink)" }}>
-                {matchRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span>
+                {totalDocs > 0 ? <>{matchRate}<span className="text-[14px]" style={{ color: "var(--ink-3)" }}>%</span></> : "–"}
               </div>
               <div className="text-[10.5px] mt-0.5" style={{ color: "var(--ink-3)" }}>Match-Quote</div>
             </div>
@@ -278,13 +292,13 @@ export default function Dashboard() {
                 Alle Vorschläge sind verbucht und alle Transaktionen zugeordnet.
               </p>
               <div className="flex gap-2 justify-center mt-5">
-                <Link href="/workflow?action=upload">
+                <Link href="/belege-bank?action=upload">
                   <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
                     style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
                     <Upload className="h-3.5 w-3.5" /> Beleg hochladen
                   </button>
                 </Link>
-                <Link href="/workflow?action=bank-import">
+                <Link href="/belege-bank?action=bank-import">
                   <button className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-[12.5px]"
                     style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--hair)" }}>
                     <Building2 className="h-3.5 w-3.5" /> Bank importieren

@@ -11,8 +11,9 @@ import { AICallout } from "@/components/klax/AICallout";
 import { DocumentUpload } from "@/components/DocumentUpload";
 import { toast } from "sonner";
 
-function formatCHF(val: number) {
-  return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", minimumFractionDigits: 2 }).format(val);
+// AP3.4: Beträge in Transaktionswährung anzeigen (EUR nie als CHF beschriftet)
+function formatCHF(val: number, currency = "CHF") {
+  return new Intl.NumberFormat("de-CH", { style: "currency", currency, minimumFractionDigits: 2 }).format(val);
 }
 
 function parseAmount(v: string | number | null | undefined): number {
@@ -96,9 +97,11 @@ export default function Workflow() {
   const approveMut = trpc.bankImport.approveTransaction.useMutation({
     onSuccess: () => {
       toast.success("Transaktion freigegeben und verbucht.");
-      utils.bankImport.getTransactionsByStatus.invalidate();
-      utils.bankImport.getPendingTransactions.invalidate();
-      utils.documents.list.invalidate();
+      utils.bankImport.invalidate();
+      utils.documents.invalidate();
+      utils.journal.invalidate();
+      utils.reports.invalidate();
+      utils.accounts.invalidate();
     },
     onError: (e) => toast.error(`Freigabe fehlgeschlagen: ${e.message}`),
   });
@@ -108,7 +111,7 @@ export default function Workflow() {
     if (initialAction === "ai-match" && !autoMatchMut.isPending) {
       autoMatchMut.mutate({ threshold: 50 });
       // Action aus URL entfernen, damit es nicht beim Re-Render erneut feuert
-      setLocation("/workflow", { replace: true } as any);
+      setLocation("/belege-bank", { replace: true } as any);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialAction]);
@@ -305,7 +308,7 @@ export default function Workflow() {
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-[11.5px]" style={{ color: "var(--ink-3)" }}>
                         {meta?.amount != null && (
-                          <span className="mono font-medium">{formatCHF(parseAmount(meta.amount))}</span>
+                          <span className="mono font-medium">{formatCHF(parseAmount(meta.amount), meta.currency ?? "CHF")}</span>
                         )}
                         {meta?.date && <span>{meta.date}</span>}
                         <span className="truncate flex-1">{d.filename}</span>
@@ -411,7 +414,7 @@ export default function Workflow() {
                         className="mono text-[13px] font-medium"
                         style={{ color: isInbound ? "var(--pos)" : "var(--neg)" }}
                       >
-                        {isInbound ? "+" : ""}{formatCHF(amount)}
+                        {isInbound ? "+" : ""}{formatCHF(amount, t.currency ?? "CHF")}
                       </div>
                       {canApprove && (
                         <button
@@ -451,8 +454,8 @@ export default function Workflow() {
             {selectedDocId && selectedTxId
               ? "Beleg und Banktransaktion ausgewählt — bereit zum Verknüpfen."
               : selectedDocId
-                ? "Beleg ausgewählt. Wähle nun eine passende Banktransaktion rechts."
-                : "Banktransaktion ausgewählt. Wähle nun einen passenden Beleg links."}
+                ? "Beleg ausgewählt. Wählen Sie nun eine passende Banktransaktion rechts."
+                : "Banktransaktion ausgewählt. Wählen Sie nun einen passenden Beleg links."}
           </div>
           <button
             onClick={() => { setSelectedDocId(null); setSelectedTxId(null); }}
@@ -502,7 +505,7 @@ export default function Workflow() {
   );
 }
 
-function parseMeta(s: string | null | undefined): { counterparty?: string; amount?: number | string; date?: string } | null {
+function parseMeta(s: string | null | undefined): { counterparty?: string; amount?: number | string; date?: string; currency?: string } | null {
   if (!s) return null;
   try { return JSON.parse(s); } catch { return null; }
 }

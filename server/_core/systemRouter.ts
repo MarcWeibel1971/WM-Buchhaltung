@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ENV } from "./env";
 import { notifyOwner } from "./notification";
 import { adminProcedure, publicProcedure, router } from "./trpc";
 
@@ -12,6 +13,12 @@ export const systemRouter = router({
     .query(() => ({
       ok: true,
     })),
+
+  // AP3.3: KI-Verfügbarkeit (Forge-LLM oder OpenRouter/Nemotron) –
+  // der Client blendet KI-Features ohne konfigurierten Key aus.
+  aiStatus: publicProcedure.query(() => ({
+    available: Boolean(ENV.forgeApiKey || process.env.OPENROUTER_API_KEY),
+  })),
 
   notifyOwner: adminProcedure
     .input(

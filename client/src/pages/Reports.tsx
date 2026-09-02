@@ -76,17 +76,17 @@ function formatCHF(val: number) {
   return new Intl.NumberFormat("de-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
 }
 
-// ─── KI-Insights-Komponente ─────────────────────────────────────────────────
+// ─── Kennzahlen-Analyse (regelbasiert, keine KI) ───────────────────────────
 type InsightLevel = 'positive' | 'warning' | 'info';
 interface Insight { level: InsightLevel; text: string; }
 
-function KIInsights({ insights }: { insights: Insight[] }) {
+function KennzahlenAnalyse({ insights }: { insights: Insight[] }) {
   if (!insights.length) return null;
   return (
     <div className="klax-card p-4 mt-4">
       <div className="flex items-center gap-2 mb-3">
-        <Sparkles className="h-4 w-4" style={{ color: 'var(--klax-accent)' }} />
-        <span className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--klax-accent)' }}>KI-Insights</span>
+        <Info className="h-4 w-4" style={{ color: 'var(--klax-accent)' }} />
+        <span className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: 'var(--klax-accent)' }}>Kennzahlen-Analyse</span>
       </div>
       <div className="space-y-2">
         {insights.map((ins, i) => (
@@ -245,7 +245,7 @@ export default function Reports() {
   const totalExpensesPrev = isPrev?.expenses.reduce((s, e) => s + e.balance, 0) ?? 0;
   const profitPrev = totalRevenuePrev - totalExpensesPrev;
 
-  // KI-Insights berechnen
+  // Kennzahlen-Analyse berechnen (regelbasiert)
   const insights = useMemo(() => {
     const result: Array<{ level: 'positive' | 'warning' | 'info'; text: string }> = [];
     if (!bs || !is) return result;
@@ -366,8 +366,8 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* KI-Insights */}
-      <KIInsights insights={insights} />
+      {/* Kennzahlen-Analyse (regelbasiert) */}
+      <KennzahlenAnalyse insights={insights} />
 
       <Tabs defaultValue="income-statement">
         <TabsList>

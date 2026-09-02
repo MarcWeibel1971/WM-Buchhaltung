@@ -124,6 +124,8 @@ export default function BankImport() {
 
   const { fiscalYear, setFiscalYear, fiscalYearInfos, isCurrentYearOpen } = useFiscalYear();
   const { data: importAutomation } = trpc.importAutomation.get.useQuery();
+  // AP3.3: KI-Features ohne konfigurierten API-Key ausblenden
+  const { data: aiStatus } = trpc.system.aiStatus.useQuery();
   const { data: bankAccounts } = trpc.bankImport.getBankAccounts.useQuery();
   // Always filter by selected fiscal year (consistent across all views)
   const txFiscalYear = fiscalYear || undefined;
@@ -158,6 +160,15 @@ export default function BankImport() {
   });
 
   const utils = trpc.useUtils();
+  // AP3.6: nach Bank-Aktionen alle betroffenen Queries invalidieren,
+  // damit Dashboard/Workflow-Statistiken ohne Reload aktualisieren.
+  const invalidateAfterBankAction = () => {
+    utils.bankImport.invalidate();
+    utils.documents.invalidate();
+    utils.journal.invalidate();
+    utils.reports.invalidate();
+    utils.accounts.invalidate();
+  };
 
   const detectTransfersMutation = trpc.bankImport.detectTransfers.useMutation({
     onSuccess: (data) => {
@@ -175,6 +186,7 @@ export default function BankImport() {
         toast.success(`${(data as any).invoiceMatched} Zahlungseingang/Zahlungseingänge via QR-Referenz einer Rechnung zugeordnet`, { duration: 6000 });
       }
       refetchTxs();
+      invalidateAfterBankAction();
       setImporting(false);
       if (data.imported > 0) {
         // Run configured auto-actions sequentially after import
@@ -191,7 +203,9 @@ export default function BankImport() {
         }
         // 2. KI categorization for remaining uncategorized
         if (cfg.autoKiCategorize) {
-          setTimeout(() => categorizeMutation.mutate({ transactionIds: [] }), cfg.autoRefreshLearned ? 2000 : 0);
+          if (aiStatus?.available) {
+            setTimeout(() => categorizeMutation.mutate({ transactionIds: [] }), cfg.autoRefreshLearned ? 2000 : 0);
+          }
         }
         // 3. Generate booking texts
         if (cfg.autoGenerateBookingTexts) {
@@ -228,7 +242,7 @@ export default function BankImport() {
     onSuccess: () => {
       toast.success("Transaktion verbucht");
       refetchTxs();
-      utils.reports.dashboard.invalidate();
+      invalidateAfterBankAction();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -238,7 +252,7 @@ export default function BankImport() {
       toast.success(`${data.approved} Transaktionen verbucht, ${data.failed} fehlgeschlagen`);
       setSelectedTxIds(new Set());
       refetchTxs();
-      utils.reports.dashboard.invalidate();
+      invalidateAfterBankAction();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -248,19 +262,20 @@ export default function BankImport() {
       toast.success("Transaktion aktualisiert");
       setEditTx(null);
       refetchTxs();
+      invalidateAfterBankAction();
     },
     onError: (e) => toast.error(e.message),
   });
 
   const ignoreMutation = trpc.bankImport.ignoreTransaction.useMutation({
-    onSuccess: () => { toast.success("Transaktion ignoriert"); refetchTxs(); },
+    onSuccess: () => { toast.success("Transaktion ignoriert"); refetchTxs(); invalidateAfterBankAction(); },
   });
 
   const unapproveMutation = trpc.bankImport.unapproveTransaction.useMutation({
     onSuccess: () => {
       toast.success("Verbuchung rückgängig gemacht – Transaktion ist wieder ausstehend");
       refetchTxs();
-      utils.reports.dashboard.invalidate();
+      invalidateAfterBankAction();
     },
     onError: (e: any) => toast.error(e.message),
   });
@@ -872,7 +887,7 @@ export default function BankImport() {
               </SelectContent>
             </Select>
             {/* Pending-only actions */}
-            {isPending && pendingIds.length > 0 && (
+            {isPending && pendingIds.length > 0 && aiStatus?.available && (
               <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs"
                 disabled={categorizeMutation.isPending}
                 onClick={() => withSnapshot("KI kategorisieren", () => categorizeMutation.mutate({ transactionIds: pendingIds }))}>
@@ -962,7 +977,7 @@ export default function BankImport() {
                   <span className="inline-flex items-center">Haben-Konto<SortIcon col="credit" /></span>
                 </th>
                 <th className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>
-                  <span className="inline-flex items-center justify-end">Betrag CHF<SortIcon col="amount" /></span>
+                  <span className="inline-flex items-center justify-end">Betrag<SortIcon col="amount" /></span>
                 </th>
                 <th className="text-right cursor-pointer select-none" onClick={() => toggleSort("status")}>
                   <span className="inline-flex items-center justify-end">Status<SortIcon col="status" /></span>
@@ -1251,7 +1266,7 @@ export default function BankImport() {
                   <Input value={editTx.transactionDate ? new Date(editTx.transactionDate).toLocaleDateString("de-CH") : "–"} disabled className="bg-muted" />
                 </div>
                 <div>
-                  <Label className="text-xs">Betrag CHF</Label>
+                  <Label className="text-xs">Betrag {editTx?.currency ?? "CHF"}</Label>
                   <Input value={formatCHF(editTx.amount)} disabled className="bg-muted" />
                 </div>
               </div>

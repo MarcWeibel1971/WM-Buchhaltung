@@ -144,17 +144,16 @@ export default function OpenPositions() {
           <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--warn)" }}>{suggestionCount}</div>
           <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-4)" }}>bereit zum Auslösen</div>
         </div>
-        <div className="klax-card p-4" style={{ background: "var(--ai-soft)", borderColor: "var(--ai-line)" }}>
-          <div className="text-[10.5px] uppercase tracking-wider font-medium flex items-center gap-1" style={{ color: "var(--ai)" }}>
-            <span className="w-3.5 h-3.5 rounded-sm flex items-center justify-center" style={{ background: "var(--ai)", color: "#fff" }}>
-              <span className="text-[8px]">★</span>
-            </span>
-            KLAX-Prognose
+        <div className="klax-card p-4">
+          <div className="text-[10.5px] uppercase tracking-wider font-medium" style={{ color: "var(--ink-3)" }}>
+            Älteste Überfälligkeit
           </div>
-          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--ai)" }}>
-            {Math.round(((overdueOnly.length || 0) / Math.max(positions.length, 1)) * 100)}%
+          <div className="display mono text-[24px] font-medium mt-1.5" style={{ color: "var(--ink)" }}>
+            {overdueOnly.length > 0 ? `${Math.max(...overdueOnly.map(p => p.daysOverdue ?? 0))} Tage` : "–"}
           </div>
-          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-3)" }}>Mahn-Wahrscheinlichkeit</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--ink-3)" }}>
+            {overdueOnly.length > 0 ? "seit Fälligkeit vergangen" : "keine überfälligen Rechnungen"}
+          </div>
         </div>
       </div>
 

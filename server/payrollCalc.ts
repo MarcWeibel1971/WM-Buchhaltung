@@ -3,8 +3,13 @@
  *
  * Quellen: insurance_settings der jeweiligen Organisation
  * (AHV/IV/EO/ALV als Prozentsätze, BVG als fixe Monatsbeträge, KTG/UVG
- * als Prozentsätze). Ohne hinterlegten AHV-Satz wird der Fallback
- * 6.4 % verwendet und eine Warnung zurückgegeben.
+ * als Prozentsätze).
+ *
+ * Fallback (AP3.7 dokumentiert): Ohne hinterlegten Satz werden 6.4 %
+ * je Seite verwendet = AHV/IV/EO 5.3 % + ALV 1.1 % (Stand 2026, unter
+ * dem ALV-Schwellenwert). Der Fallback ist bewusst konservativ und wird
+ * IMMER mit einer Warnung an den Client zurückgegeben, damit der Satz
+ * unter Einstellungen → Versicherungen hinterlegt wird.
  */
 import { and, eq } from "drizzle-orm";
 import { insuranceSettings } from "../drizzle/schema";

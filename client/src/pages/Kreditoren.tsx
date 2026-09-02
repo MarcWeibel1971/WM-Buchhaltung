@@ -48,6 +48,13 @@ export default function Kreditoren() {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showCamtImport, setShowCamtImport] = useState(false);
+  // AP3.5: manuelle Erfassung Eingangsrechnung (ohne Upload)
+  const [showManual, setShowManual] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    counterparty: "", counterpartyIban: "", referenceNumber: "",
+    totalAmount: "", currency: "CHF", documentDate: new Date().toISOString().slice(0, 10),
+    dueDate: "", description: "",
+  });
   const [camtResults, setCamtResults] = useState<any>(null);
 
   // Editable invoice data (city, country, address, zip per invoice)
@@ -56,6 +63,37 @@ export default function Kreditoren() {
   const markPaidMut = trpc.qrBill.markInvoicePaid.useMutation({
     onSuccess: () => refetchInvoices(),
   });
+
+  const createManualMut = trpc.qrBill.createManualInvoiceIn.useMutation({
+    onSuccess: () => {
+      toast.success("Eingangsrechnung erfasst – bereit für die Zahlung.");
+      setShowManual(false);
+      setManualForm({
+        counterparty: "", counterpartyIban: "", referenceNumber: "",
+        totalAmount: "", currency: "CHF", documentDate: new Date().toISOString().slice(0, 10),
+        dueDate: "", description: "",
+      });
+      refetchInvoices();
+    },
+    onError: (e) => toast.error(`Erfassung fehlgeschlagen: ${e.message}`),
+  });
+
+  const submitManual = () => {
+    const amount = parseFloat(manualForm.totalAmount);
+    if (!manualForm.counterparty.trim()) { toast.error("Lieferant fehlt."); return; }
+    if (!manualForm.counterpartyIban.trim()) { toast.error("IBAN fehlt."); return; }
+    if (!isFinite(amount) || amount <= 0) { toast.error("Betrag fehlt oder ungültig."); return; }
+    createManualMut.mutate({
+      counterparty: manualForm.counterparty.trim(),
+      counterpartyIban: manualForm.counterpartyIban.trim(),
+      referenceNumber: manualForm.referenceNumber.trim() || undefined,
+      totalAmount: amount,
+      currency: manualForm.currency as "CHF" | "EUR",
+      documentDate: manualForm.documentDate,
+      dueDate: manualForm.dueDate || undefined,
+      description: manualForm.description.trim() || undefined,
+    });
+  };
 
   const camtImportMut = trpc.qrBill.importCamt054.useMutation({
     onSuccess: (data) => {
@@ -230,7 +268,81 @@ export default function Kreditoren() {
             ISO 20022 Zahlungsdatei (pain.001) aus offenen Eingangsrechnungen erstellen
           </p>
         </div>
+        <Button
+          variant={showManual ? "secondary" : "outline"}
+          size="sm"
+          onClick={() => setShowManual(!showManual)}
+        >
+          {showManual ? "Schliessen" : "Manuell erfassen"}
+        </Button>
       </div>
+
+      {/* AP3.5: Manuelle Erfassungsmaske Eingangsrechnung */}
+      {showManual && (
+        <div className="klax-card p-4 space-y-3">
+          <h2 className="text-sm font-semibold">Eingangsrechnung manuell erfassen</h2>
+          <p className="text-[12px]" style={{ color: "var(--ink-3)" }}>
+            Für Rechnungen ohne Beleg-Upload. IBAN und Betrag genügen für die Zahlungsdatei.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Lieferant *</Label>
+              <Input value={manualForm.counterparty}
+                onChange={e => setManualForm({ ...manualForm, counterparty: e.target.value })}
+                placeholder="z. B. Bürobedarf AG" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">IBAN *</Label>
+              <Input value={manualForm.counterpartyIban}
+                onChange={e => setManualForm({ ...manualForm, counterpartyIban: e.target.value })}
+                placeholder="CH.." className="font-mono" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Betrag *</Label>
+              <div className="flex gap-2">
+                <Input type="number" step="0.05" min="0" value={manualForm.totalAmount}
+                  onChange={e => setManualForm({ ...manualForm, totalAmount: e.target.value })} />
+                <Select value={manualForm.currency}
+                  onValueChange={v => setManualForm({ ...manualForm, currency: v })}>
+                  <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CHF">CHF</SelectItem>
+                    <SelectItem value="EUR">EUR</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Rechnungsdatum *</Label>
+              <Input type="date" value={manualForm.documentDate}
+                onChange={e => setManualForm({ ...manualForm, documentDate: e.target.value })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Fälligkeitsdatum</Label>
+              <Input type="date" value={manualForm.dueDate}
+                onChange={e => setManualForm({ ...manualForm, dueDate: e.target.value })} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Referenz / Beschreibung</Label>
+              <Input value={manualForm.referenceNumber}
+                onChange={e => setManualForm({ ...manualForm, referenceNumber: e.target.value })}
+                placeholder="Referenznr." />
+            </div>
+            <div className="space-y-1 sm:col-span-2 lg:col-span-3">
+              <Label className="text-xs">Beschreibung</Label>
+              <Input value={manualForm.description}
+                onChange={e => setManualForm({ ...manualForm, description: e.target.value })}
+                placeholder="Wofür ist die Rechnung?" />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={submitManual} disabled={createManualMut.isPending}
+              className="bg-green-600 hover:bg-green-700">
+              {createManualMut.isPending ? "Speichert…" : "Erfassen"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Settings bar */}
       <div className="klax-card p-4">
@@ -297,7 +409,17 @@ export default function Kreditoren() {
             </thead>
               <tbody>
                 {displayedInvoices.length === 0 ? (
-                  <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Keine Eingangsrechnungen gefunden</td></tr>
+                  <tr><td colSpan={9} className="p-8 text-center">
+                    <div className="text-muted-foreground mb-3">Noch keine Eingangsrechnungen vorhanden.</div>
+                    <div className="flex gap-2 justify-center">
+                      <Button size="sm" variant="outline" onClick={() => { window.location.href = "/belege-bank?action=upload"; }}>
+                        <Upload className="h-3.5 w-3.5 mr-1" /> Beleg hochladen
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setShowManual(true)}>
+                        <Pencil className="h-3.5 w-3.5 mr-1" /> Manuell erfassen
+                      </Button>
+                    </div>
+                  </td></tr>
                 ) : displayedInvoices.map(inv => {
                   const isSelected = selectedIds.has(inv.id);
                   const noIban = !inv.counterpartyIban;

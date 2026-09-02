@@ -118,7 +118,7 @@ export default function Login() {
           <p className="text-[15px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
             KLAX verarbeitet Belege automatisch, matcht Bankbewegungen und
             bereitet Buchungsvorschläge für die Freigabe vor.
-            Du entscheidest – die KI arbeitet.
+            Sie entscheiden – die KI arbeitet.
           </p>
           <ul className="space-y-3 text-[13.5px]" style={{ color: "var(--ink-2)" }}>
             {[
@@ -157,7 +157,7 @@ export default function Login() {
               Willkommen zurück
             </h2>
             <p className="text-[13.5px] mt-1.5" style={{ color: "var(--ink-3)" }}>
-              Melde dich mit deiner E-Mail-Adresse und deinem Passwort an.
+              Melden Sie sich mit Ihrer E-Mail-Adresse und Ihrem Passwort an.
             </p>
           </div>
 
@@ -176,7 +176,7 @@ export default function Login() {
               >
                 <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                 <div className="text-[13px]">
-                  Bitte bestätige zuerst deine E-Mail-Adresse.{" "}
+                  Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.{" "}
                   <button
                     type="button"
                     onClick={handleResendVerification}

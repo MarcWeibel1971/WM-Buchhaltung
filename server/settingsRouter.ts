@@ -629,54 +629,25 @@ export const settingsRouter = router({
         }
       }
 
-      // Rebuild the Eröffnungsbilanz journal entry for this fiscal year (scoped to org)
-      const existingEntries = await db.select({ id: journalEntries.id })
+      // Audit (Bilanz doppelt gezählt): Früher wurde zusätzlich zu den
+      // opening_balances-Zeilen ein freigegebener Journal-Eintrag
+      // "Eröffnungsbilanz" direkt auf den Bilanzkonten erzeugt. getAccountBalance()
+      // addiert opening_balances UND freigegebene Journalzeilen → jeder
+      // Eröffnungssaldo erschien doppelt in Bilanz und Kontoblatt.
+      // opening_balances ist die einzige Quelle für Eröffnungssaldi (auch der
+      // Saldovortrag aus dem Jahresabschluss schreibt nur dorthin). Alte
+      // System-Einträge werden hier bereinigt; Migration 0042 räumt Bestände auf.
+      const legacyEntries = await db.select({ id: journalEntries.id, description: journalEntries.description })
         .from(journalEntries)
         .where(and(
           eq(journalEntries.organizationId, ctx.organizationId),
           eq(journalEntries.fiscalYear, input.fiscalYear),
           eq(journalEntries.source, 'system'),
         ));
-
-      // Only delete entries that are Eröffnungsbilanz (by description).
-      // NOTE (Phase 1 GeBüV): This system operation bypasses journal-immutability
-      // because it rebuilds the opening balance entry. Should require admin rights
-      // and be audit-logged in Phase 1c.
-      for (const e of existingEntries) {
-        const entry = await db.select({ description: journalEntries.description })
-          .from(journalEntries).where(eq(journalEntries.id, e.id)).limit(1);
-        if (entry[0]?.description?.includes('Eröffnungsbilanz')) {
+      for (const e of legacyEntries) {
+        if (e.description?.includes('Eröffnungsbilanz')) {
           await db.delete(journalLines).where(eq(journalLines.entryId, e.id));
           await db.delete(journalEntries).where(eq(journalEntries.id, e.id));
-        }
-      }
-
-      // Create new Eröffnungsbilanz journal entry
-      const nonZeroBalances = input.balances.filter(b => b.balance !== 0);
-      if (nonZeroBalances.length > 0) {
-        const startDate = `${input.fiscalYear}-01-01`;
-        const [newEntry] = await db.insert(journalEntries).values({
-          organizationId: ctx.organizationId,
-          bookingDate: startDate,
-          valueDate: startDate,
-          description: `Eröffnungsbilanz per 01.01.${input.fiscalYear}`,
-          status: 'approved',
-          source: 'system',
-          fiscalYear: input.fiscalYear,
-        }).$returningId();
-
-        for (const b of nonZeroBalances) {
-          const acc = allAccounts.find(a => a.id === b.accountId);
-          if (!acc) continue;
-          // Assets: debit side; Liabilities/Equity: credit side
-          const side = acc.accountType === 'asset' ? 'debit' : 'credit';
-          await db.insert(journalLines).values({
-            entryId: newEntry.id,
-            accountId: b.accountId,
-            side,
-            amount: String(Math.abs(b.balance)),
-            description: `Eröffnungssaldo ${b.accountId}`,
-          });
         }
       }
 

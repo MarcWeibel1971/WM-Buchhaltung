@@ -4,16 +4,29 @@
  * Unterstützt LUKB, UBS, Raiffeisen, PostFinance, ZKB und alle SIX-Mitglieder.
  */
 import { z } from "zod";
-import { router, protectedProcedure } from "./_core/trpc";
+import { router, orgProcedure, adminProcedure } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
 import { getDb } from "./db";
 import { ebicsConfig } from "../drizzle/schema";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import crypto from "crypto";
 import { encryptSecret } from "./secrets";
 
+// Audit: adminProcedure garantiert keine Organisation – explizit prüfen.
+function requireOrgId(organizationId: number | null | undefined): number {
+  if (organizationId == null) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Keine aktive Organisation. Bitte zuerst eine Organisation einrichten oder auswählen.",
+    });
+  }
+  return organizationId;
+}
+
 export const ebicsRouter = router({
   // ─── Alle Konfigurationen abrufen ─────────────────────────────────────────
-  getConfigs: protectedProcedure.query(async () => {
+  // Audit: alle Prozeduren mandantenbezogen (orgProcedure + organizationId-Filter)
+  getConfigs: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) return [];
     const configs = await db
@@ -32,12 +45,13 @@ export const ebicsRouter = router({
         createdAt: ebicsConfig.createdAt,
       })
       .from(ebicsConfig)
+      .where(eq(ebicsConfig.organizationId, ctx.organizationId))
       .orderBy(desc(ebicsConfig.createdAt));
     return configs;
   }),
 
   // ─── Konfiguration speichern (erstellen oder aktualisieren) ───────────────
-  saveConfig: protectedProcedure
+  saveConfig: orgProcedure
     .input(
       z.object({
         id: z.number().optional(),
@@ -51,10 +65,10 @@ export const ebicsRouter = router({
         autoFetchOrderType: z.string().default("C53"),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
-    if (!db) throw new Error("DB nicht verfügbar");
-    if (input.id) {
+      if (!db) throw new Error("DB nicht verfügbar");
+      if (input.id) {
         // Update
         await db
           .update(ebicsConfig)
@@ -67,14 +81,14 @@ export const ebicsRouter = router({
             isActive: input.isActive,
             updatedAt: new Date(),
           })
-          .where(eq(ebicsConfig.id, input.id));
+          .where(and(eq(ebicsConfig.organizationId, ctx.organizationId), eq(ebicsConfig.id, input.id)));
         return { id: input.id };
       } else {
         // Insert
         const [inserted] = await db
           .insert(ebicsConfig)
           .values({
-            organizationId: 1, // Default-Organisation
+            organizationId: ctx.organizationId, // Audit: aktive Organisation statt hardcoded 1
             bankName: input.bankName,
             hostId: input.hostId,
             bankUrl: input.hostUrl,
@@ -89,19 +103,25 @@ export const ebicsRouter = router({
     }),
 
   // ─── Konfiguration löschen ────────────────────────────────────────────────
-  deleteConfig: protectedProcedure
+  // Audit: Löschen nur für Org-Admins, org-scoped
+  deleteConfig: adminProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const orgId = requireOrgId(ctx.organizationId);
       const db = await getDb();
       if (!db) throw new Error("DB nicht verfügbar");
-      await db.delete(ebicsConfig).where(eq(ebicsConfig.id, input.id));
+      await db
+        .delete(ebicsConfig)
+        .where(and(eq(ebicsConfig.organizationId, orgId), eq(ebicsConfig.id, input.id)));
       return { success: true };
     }),
 
   // ─── RSA-Schlüsselpaar generieren + INI-Brief erstellen ───────────────────
-  generateKeys: protectedProcedure
+  // Audit: Schlüsselgenerierung nur für Org-Admins, org-scoped
+  generateKeys: adminProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      const orgId = requireOrgId(ctx.organizationId);
       const db = await getDb();
       if (!db) throw new Error("DB nicht verfügbar");
       // RSA-4096 Schlüsselpaar generieren (Signatur-Schlüssel)
@@ -134,7 +154,7 @@ export const ebicsRouter = router({
       const [cfg] = await db
         .select()
         .from(ebicsConfig)
-        .where(eq(ebicsConfig.id, input.id))
+        .where(and(eq(ebicsConfig.organizationId, orgId), eq(ebicsConfig.id, input.id)))
         .limit(1);
 
       if (!cfg) throw new Error("Konfiguration nicht gefunden");
@@ -150,7 +170,7 @@ export const ebicsRouter = router({
           initStatus: "ini_sent",
           updatedAt: new Date(),
         })
-        .where(eq(ebicsConfig.id, input.id));
+        .where(and(eq(ebicsConfig.organizationId, orgId), eq(ebicsConfig.id, input.id)));
 
       // INI-Brief generieren
       const now = new Date();
@@ -194,15 +214,15 @@ Die privaten Schlüssel verbleiben in KLAX und werden niemals übertragen.
     }),
 
   // ─── Kontoauszug jetzt abrufen ────────────────────────────────────────────
-  fetchNow: protectedProcedure
+  fetchNow: orgProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("DB nicht verfügbar");
       const [cfg] = await db
         .select()
         .from(ebicsConfig)
-        .where(eq(ebicsConfig.id, input.id))
+        .where(and(eq(ebicsConfig.organizationId, ctx.organizationId), eq(ebicsConfig.id, input.id)))
         .limit(1);
 
       if (!cfg) throw new Error("Konfiguration nicht gefunden");
@@ -216,7 +236,7 @@ Die privaten Schlüssel verbleiben in KLAX und werden niemals übertragen.
       await db
         .update(ebicsConfig)
         .set({ lastSyncAt: new Date(), updatedAt: new Date() })
-        .where(eq(ebicsConfig.id, input.id));
+        .where(and(eq(ebicsConfig.organizationId, ctx.organizationId), eq(ebicsConfig.id, input.id)));
 
       return {
         transactionsImported: 0,

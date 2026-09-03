@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { todayISO } from "@/lib/date";
 import { trpc } from "@/lib/trpc";
 import { useRoute, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,13 @@ import {
 import { toast } from "sonner";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
+type DocumentTypeValue = "invoice_in" | "invoice_out" | "receipt" | "bank_statement" | "credit_card_statement" | "other";
+const DOCUMENT_TYPE_VALUES: DocumentTypeValue[] = ["invoice_in", "invoice_out", "receipt", "bank_statement", "credit_card_statement", "other"];
+function toDocumentType(value: string | null | undefined): DocumentTypeValue {
+  return (DOCUMENT_TYPE_VALUES as string[]).includes(value ?? "") ? (value as DocumentTypeValue) : "other";
+}
 interface DocumentMetadata {
+  [key: string]: string | number | boolean | null | undefined;
   documentDate?: string | null;
   dueDate?: string | null;
   invoiceNumber?: string | null;
@@ -87,7 +94,7 @@ export default function DocumentDetail() {
   // Local editable state
   const [editedMeta, setEditedMeta] = useState<DocumentMetadata>({});
   const [editedNotes, setEditedNotes] = useState("");
-  const [editedDocType, setEditedDocType] = useState("other");
+  const [editedDocType, setEditedDocType] = useState<DocumentTypeValue>("other");
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState(urlTab);
   const [bookingDebitId, setBookingDebitId] = useState<number | null>(null);
@@ -265,7 +272,7 @@ export default function DocumentDetail() {
       }
       setEditedMeta(meta);
       setEditedNotes(data.document.notes || "");
-      setEditedDocType(data.document.documentType || "other");
+      setEditedDocType(toDocumentType(data.document.documentType));
       setIsDirty(false);
       
       // Pre-fill booking fields from bookingSuggestion (for both linked tx and direct booking)
@@ -354,7 +361,9 @@ export default function DocumentDetail() {
     if (!docId) return;
     updateMutation.mutate({
       documentId: docId,
-      metadata: editedMeta,
+      metadata: Object.fromEntries(
+        Object.entries(editedMeta).filter(([, v]) => v !== undefined),
+      ) as Record<string, string | number | boolean | null>,
       notes: editedNotes,
       documentType: editedDocType,
     });
@@ -432,7 +441,7 @@ export default function DocumentDetail() {
     } else {
       // Direct booking without bank transaction (Barauslage)
       const amount = docAmount > 0 ? String(docAmount) : "0";
-      const bookingDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
+      const bookingDate = editedMeta.documentDate || todayISO();
       bookDirectMutation.mutate({
         documentId: doc.id,
         debitAccountId: bookingDebitId,
@@ -696,7 +705,7 @@ export default function DocumentDetail() {
                     <Select
                       value={editedDocType}
                       onValueChange={(val) => {
-                        setEditedDocType(val);
+                        setEditedDocType(toDocumentType(val));
                         setIsDirty(true);
                       }}
                     >
@@ -1325,7 +1334,7 @@ export default function DocumentDetail() {
                         className="w-full bg-green-600 hover:bg-green-700 text-white gap-1.5"
                         disabled={kkItems.some(i => !i.debitAccountId) || approveCcFromBankImportMutation.isPending || approveWithItemsMutation.isPending}
                         onClick={() => {
-                          const statementDate = editedMeta.documentDate || new Date().toISOString().split('T')[0];
+                          const statementDate = editedMeta.documentDate || todayISO();
                           const counterparty = editedMeta.counterparty || doc.filename;
                           const items = kkItems.map(i => ({
                             date: i.date,

@@ -256,7 +256,9 @@ export const qrBillRouter = router({
       if (!comp) throw new TRPCError({ code: "BAD_REQUEST", message: "Firmeneinstellungen fehlen." });
 
       // Load bank accounts for IBAN
-      const bankAccs = await db.select().from(bankAccounts).where(eq(bankAccounts.isActive, true));
+      // Audit: org-scoped
+      const bankAccs = await db.select().from(bankAccounts)
+        .where(and(eq(bankAccounts.organizationId, ctx.organizationId), eq(bankAccounts.isActive, true)));
 
       let paymentItems: Array<{
         creditorName: string;
@@ -273,9 +275,12 @@ export const qrBillRouter = router({
 
       if (input.paymentType === "salary" && input.year && input.month) {
         // Build payment items from payroll entries
-        const emps = await db.select().from(employees).where(eq(employees.isActive, true));
+        // Audit: org-scoped
+        const emps = await db.select().from(employees)
+          .where(and(eq(employees.organizationId, ctx.organizationId), eq(employees.isActive, true)));
         const payrolls = await db.select().from(payrollEntries)
           .where(and(
+            eq(payrollEntries.organizationId, ctx.organizationId),
             eq(payrollEntries.year, input.year),
             eq(payrollEntries.month, input.month),
           ));

@@ -5,6 +5,7 @@ import path from "path";
 import { ENV } from "./env";
 import { createLogger } from "./logger";
 import { resolveLocalKey } from "../storage";
+import { sdk } from "./sdk";
 
 const logger = createLogger("storageProxy");
 
@@ -21,6 +22,16 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export function registerStorageProxy(app: Express) {
   app.get("/manus-storage/*", async (req, res) => {
+    // Audit: Belege, Rechnungs-PDFs und Vorlagen sind vertrauliche
+    // Finanzdaten – Auslieferung nur mit gültiger Session. Der Schlüssel
+    // allein (nanoid) ist kein Zugriffsschutz, sobald ein Link geteilt oder
+    // in Logs/Verlauf sichtbar wird.
+    try {
+      await sdk.authenticateRequest(req);
+    } catch {
+      res.status(401).send("Nicht authentifiziert");
+      return;
+    }
     const key = decodeURIComponent(req.path.replace(/^\/manus-storage\//, ""));
     if (!key) {
       res.status(400).send("Missing storage key");

@@ -117,4 +117,6 @@ cc_mappings_*.txt
 eroeffnungsbilanz_*.txt
 test_overlay.mjs
 todo.md
-\n# Lokaler Beleg-Speicher (AP2.2 Self-Hosting-Fallback)\ndata/uploads/\n
+
+# Lokaler Beleg-Speicher (AP2.2 Self-Hosting-Fallback)
+data/uploads/

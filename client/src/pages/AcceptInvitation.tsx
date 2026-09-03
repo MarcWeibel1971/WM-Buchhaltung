@@ -1,5 +1,8 @@
 import { useRoute } from "wouter";
+import { useState } from "react";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +28,23 @@ export default function AcceptInvitation() {
     { token },
     { enabled: !!token, retry: false }
   );
+  // Audit (Einladungs-Flow): Eingeloggte Nutzer treten direkt bei – vorher gab
+  // es keine accept-Prozedur und Eingeladene landeten im Onboarding.
+  const { user, isAuthenticated } = useAuth();
+  const utils = trpc.useUtils();
+  const [joined, setJoined] = useState(false);
+  const acceptMutation = trpc.invitations.accept.useMutation({
+    onSuccess: async () => {
+      try { sessionStorage.removeItem("pendingInvitationToken"); } catch { /* ignore */ }
+      setJoined(true);
+      await Promise.all([utils.auth.me.invalidate(), utils.organizations.listMine.invalidate()]);
+      toast.success("Sie sind der Organisation beigetreten.");
+      window.location.href = "/";
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const emailMatches =
+    !!user?.email && !!invitation?.email && user.email.toLowerCase() === invitation.email.toLowerCase();
 
   const handleRegister = () => {
     // Redirect to register page with token pre-filled in URL
@@ -124,13 +144,34 @@ export default function AcceptInvitation() {
 
           {/* Action buttons */}
           <div className="space-y-2 pt-2">
-            <Button className="w-full" onClick={handleRegister}>
-              <UserPlus className="h-4 w-4 mr-2" />
-              Konto erstellen &amp; beitreten
-            </Button>
-            <Button variant="outline" className="w-full" onClick={handleLogin}>
-              Bereits registriert? Anmelden
-            </Button>
+            {isAuthenticated ? (
+              <>
+                {!emailMatches && (
+                  <p className="text-xs text-destructive">
+                    Sie sind als {user?.email} angemeldet. Die Einladung gilt für {invitation.email}.
+                    Bitte melden Sie sich mit dieser Adresse an.
+                  </p>
+                )}
+                <Button
+                  className="w-full"
+                  disabled={!emailMatches || acceptMutation.isPending || joined}
+                  onClick={() => acceptMutation.mutate({ token })}
+                >
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  {acceptMutation.isPending ? "Beitreten…" : "Einladung annehmen"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button className="w-full" onClick={handleRegister}>
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Konto erstellen &amp; beitreten
+                </Button>
+                <Button variant="outline" className="w-full" onClick={handleLogin}>
+                  Bereits registriert? Anmelden
+                </Button>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>

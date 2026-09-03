@@ -5,6 +5,7 @@ import { subscriptions } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import { createLogger } from "./_core/logger";
+import { ENV } from "./_core/env";
 
 const logger = createLogger("stripeWebhook");
 
@@ -27,6 +28,13 @@ stripeWebhookRouter.post(
     } catch (err: any) {
       logger.error("[Stripe Webhook] Signature verification failed:", err.message);
       res.status(400).json({ error: `Webhook Error: ${err.message}` });
+      return;
+    }
+
+    // Audit: Test-Events dürfen keine Produktionsdaten verändern (und umgekehrt)
+    if (event.livemode !== ENV.isProduction) {
+      logger.warn(`[Stripe Webhook] livemode=${event.livemode} passt nicht zur Umgebung (production=${ENV.isProduction}) – Event ${event.id} verworfen`);
+      res.status(400).json({ error: "Event livemode does not match environment" });
       return;
     }
 
@@ -61,6 +69,13 @@ stripeWebhookRouter.post(
             .limit(1);
 
           if (existing) {
+            // Audit: Idempotenz – ist dieselbe Stripe-Subscription bereits
+            // hinterlegt (Retry/Duplikat des Events), den Status nicht
+            // überschreiben (er könnte inzwischen "active" sein).
+            if (existing.stripeSubscriptionId && existing.stripeSubscriptionId === subscriptionId) {
+              logger.info(`[Stripe Webhook] Checkout bereits verarbeitet: org=${orgId} sub=${subscriptionId}`);
+              break;
+            }
             await db
               .update(subscriptions)
               .set({

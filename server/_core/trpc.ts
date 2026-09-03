@@ -61,8 +61,29 @@ const requireOrganization = t.middleware(async opts => {
 export const orgProcedure = t.procedure.use(requireOrganization);
 
 /**
+ * platformAdminProcedure (Audit 2026-09): Zugriff AUSSCHLIESSLICH für globale
+ * Plattform-Admins (users.role = 'admin'). Für alles, was mandantenübergreifend
+ * wirkt (globale Buchungsregeln, System-Benachrichtigungen, Plattform-Wartung).
+ * `adminProcedure` reicht dafür nicht: jeder Nutzer wird beim Anlegen einer
+ * Organisation deren Owner und würde damit durchgelassen.
+ */
+export const platformAdminProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    if (!ctx.user) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+    }
+    if (ctx.user.role !== "admin") {
+      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    }
+    return next({ ctx: { ...ctx, user: ctx.user } });
+  }),
+);
+
+/**
  * adminProcedure (Audit P1-5): Zugriff für globale Admins (users.role = 'admin')
- * ODER Benutzer mit Rolle owner/admin in der aktuell aktiven Organisation.
+ * ODER Benutzer mit Rolle owner/admin in der aktuell aktiven Organisation
+ * (= Org-Admin). Für plattformweite Funktionen `platformAdminProcedure` nutzen.
  */
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {

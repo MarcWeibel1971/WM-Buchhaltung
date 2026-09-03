@@ -6,18 +6,16 @@
 import express from "express";
 import crypto from "crypto";
 import Stripe from "stripe";
-import { getDb } from "./db";
+import { getDb, createJournalEntry, approveJournalEntry } from "./db";
 import {
   posConfig,
   posTransactions,
   bankTransactions,
   bankAccounts,
-  journalEntries,
-  journalLines,
   accounts,
-  type InsertJournalEntry,
+  userOrganizations,
 } from "../drizzle/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray, asc } from "drizzle-orm";
 import { decryptSecret } from "./secrets";
 import { createLogger } from "./_core/logger";
 
@@ -89,16 +87,41 @@ posWebhookRouter.post(
 );
 
 // ─── SumUp Webhook ────────────────────────────────────────────────────────────
+// Audit: Signatur ist Pflicht und wird über den RAW-Body geprüft (HMAC-SHA256,
+// hex). Die passende Konfiguration wird – wie beim Stripe-Branch – über die
+// Signatur ermittelt; ohne Treffer 401.
+export function verifySumUpSignature(rawBody: Buffer, signature: string, secret: string): boolean {
+  try {
+    const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+    const sigBuf = Buffer.from(signature.trim().toLowerCase(), "utf8");
+    const expBuf = Buffer.from(expected, "utf8");
+    if (sigBuf.length !== expBuf.length) return false;
+    return crypto.timingSafeEqual(sigBuf, expBuf);
+  } catch {
+    return false;
+  }
+}
+
 posWebhookRouter.post(
   "/sumup",
-  express.json(),
+  express.raw({ type: "application/json" }),
   async (req, res) => {
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "DB not available" });
 
     // SumUp sendet HMAC-SHA256 Signatur im Header X-SumUp-Signature
-    const signature = req.headers["x-sumup-signature"] as string;
-    const body = req.body;
+    const signatureHeader = req.headers["x-sumup-signature"];
+    const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+    if (!signature) {
+      return res.status(400).json({ error: "Missing X-SumUp-Signature" });
+    }
+
+    const rawBody: Buffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.from(typeof req.body === "string" ? req.body : "", "utf8");
+    if (rawBody.length === 0) {
+      return res.status(400).json({ error: "Empty body" });
+    }
 
     // Alle aktiven SumUp Konfigurationen laden
     const configs = await db
@@ -106,20 +129,35 @@ posWebhookRouter.post(
       .from(posConfig)
       .where(and(eq(posConfig.provider, "sumup"), eq(posConfig.isActive, true)));
 
-    if (configs.length === 0) {
-      return res.status(400).json({ error: "No SumUp configuration found" });
+    let matchedConfig: typeof configs[0] | null = null;
+    for (const cfg of configs) {
+      if (!cfg.webhookSecret) continue;
+      let secret: string;
+      try {
+        secret = decryptSecret(cfg.webhookSecret);
+      } catch {
+        continue;
+      }
+      if (verifySumUpSignature(rawBody, signature, secret)) {
+        matchedConfig = cfg;
+        break;
+      }
     }
 
-    // Signatur verifizieren (falls webhookSecret gesetzt)
-    let matchedConfig = configs[0];
-    if (signature && matchedConfig.webhookSecret) {
-      const expected = crypto
-        .createHmac("sha256", decryptSecret(matchedConfig.webhookSecret))
-        .update(JSON.stringify(body))
-        .digest("hex");
-      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-        return res.status(400).json({ error: "Invalid signature" });
+    if (!matchedConfig) {
+      logger.warn("[POS Webhook] SumUp: Keine Konfiguration mit gültiger Signatur gefunden");
+      return res.status(401).json({ error: "Invalid signature" });
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(rawBody.toString("utf8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return res.status(400).json({ error: "Invalid JSON payload" });
       }
+      body = parsed as Record<string, unknown>;
+    } catch {
+      return res.status(400).json({ error: "Invalid JSON payload" });
     }
 
     try {
@@ -275,6 +313,9 @@ async function handleSumUpPayment(
 }
 
 // ─── Journal-Eintrag für POS-Zahlung erstellen ───────────────────────────────
+// Audit: Soll = Buchungskonto des konfigurierten Bankkontos (bankAccounts.accountId),
+// Haben = Ertragskonto. Buchung läuft über createJournalEntry/approveJournalEntry
+// (Belegnummer, Soll=Haben-Check, Periodensperre) statt über einen Raw-Insert.
 async function createPosJournalEntry(
   db: Awaited<ReturnType<typeof getDb>>,
   cfg: typeof posConfig.$inferSelect,
@@ -284,21 +325,26 @@ async function createPosJournalEntry(
 ) {
   if (!db || !cfg.bankAccountId || !cfg.revenueAccountId) return;
 
-  // Bankkonto-Nummer ermitteln
+  // Bankkonto (org-scoped) und dessen Buchungskonto ermitteln
   const [bankAcc] = await db
     .select()
     .from(bankAccounts)
-    .where(eq(bankAccounts.id, cfg.bankAccountId))
+    .where(and(
+      eq(bankAccounts.organizationId, cfg.organizationId),
+      eq(bankAccounts.id, cfg.bankAccountId),
+    ))
     .limit(1);
+  if (!bankAcc) {
+    logger.warn(`[POS Webhook] Bankkonto #${cfg.bankAccountId} nicht gefunden – keine Buchung`);
+    return;
+  }
 
-  // Konto-Nummer für Bankkonto ermitteln
-  // Bankkonto als Buchungskonto (Kasse/Bank) – wir nutzen das erste Konto der Klasse 1
   const [debitAcc] = await db
     .select()
     .from(accounts)
     .where(and(
       eq(accounts.organizationId, cfg.organizationId),
-      eq(accounts.id, cfg.revenueAccountId ?? 0)
+      eq(accounts.id, bankAcc.accountId)
     ))
     .limit(1);
 
@@ -312,34 +358,43 @@ async function createPosJournalEntry(
     ))
     .limit(1);
 
-  if (!debitAcc || !creditAcc) return;
+  if (!debitAcc || !creditAcc) {
+    logger.warn(`[POS Webhook] Soll-/Haben-Konto fehlt (Org ${cfg.organizationId}) – keine Buchung`);
+    return;
+  }
 
-  // Journal-Eintrag erstellen
-  const [entry] = await db.insert(journalEntries).values({
-    organizationId: cfg.organizationId,
-    bookingDate: date.toISOString().split("T")[0],
-    description: `POS-Zahlung: ${reference}`,
-    sourceRef: reference,
-    status: "approved",
-    source: "manual",
-    fiscalYear: date.getFullYear(),
-  }).$returningId();
-
-  if (!entry?.id) return;
+  const bookingDate = date.toISOString().split("T")[0];
+  const lineDescription = `POS-Einnahme: ${reference}`;
 
   // Buchungszeilen: Soll Bankkonto / Haben Ertragskonto
-  await db.insert(journalLines).values({
-    entryId: entry.id,
-    accountId: debitAcc.id,
-    side: "debit",
-    amount,
-    description: `POS-Einnahme: ${reference}`,
+  const entryId = await createJournalEntry({
+    organizationId: cfg.organizationId,
+    bookingDate,
+    description: `POS-Zahlung: ${reference}`,
+    sourceRef: reference,
+    status: "pending",
+    source: "system",
+    lines: [
+      { accountId: debitAcc.id, side: "debit", amount, description: lineDescription },
+      { accountId: creditAcc.id, side: "credit", amount, description: lineDescription },
+    ],
   });
-  await db.insert(journalLines).values({
-    entryId: entry.id,
-    accountId: creditAcc.id,
-    side: "credit",
-    amount,
-    description: `POS-Einnahme: ${reference}`,
-  });
+
+  // Freigabe im Namen des Org-Owners (bzw. eines Org-Admins) – ein Webhook hat
+  // keinen eingeloggten User. Ohne Owner/Admin bleibt die Buchung "pending".
+  const [approver] = await db
+    .select({ userId: userOrganizations.userId })
+    .from(userOrganizations)
+    .where(and(
+      eq(userOrganizations.organizationId, cfg.organizationId),
+      inArray(userOrganizations.role, ["owner", "admin"]),
+    ))
+    .orderBy(asc(userOrganizations.id))
+    .limit(1);
+
+  if (approver) {
+    await approveJournalEntry(cfg.organizationId, entryId, approver.userId);
+  } else {
+    logger.warn(`[POS Webhook] Kein Owner/Admin für Org ${cfg.organizationId} – Buchung #${entryId} bleibt pending`);
+  }
 }

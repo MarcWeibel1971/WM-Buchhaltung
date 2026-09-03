@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { Upload, FileText, Image, X, Loader2, Paperclip, Eye, Camera, CheckCircle2, AlertCircle, Files, Sparkles, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -431,10 +431,11 @@ export function DocumentList({ journalEntryId, bankTransactionId, refreshKey }: 
     { enabled: !!(journalEntryId || bankTransactionId) }
   );
 
-  // Refetch when refreshKey changes
-  if (refreshKey !== undefined) {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-  }
+  // Audit: Belegliste nach Upload aktualisieren (der frühere leere Block
+  // hatte keine Wirkung).
+  useEffect(() => {
+    if (refreshKey !== undefined) void refetch();
+  }, [refreshKey, refetch]);
 
   if (!docs?.length) return null;
 

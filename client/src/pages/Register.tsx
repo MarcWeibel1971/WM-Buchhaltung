@@ -8,6 +8,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Mail, Lock, User, ArrowRight, AlertCircle, CheckCircle } from "lucide-react";
 
+/** Audit (Einladungs-Flow): Token aus `/register?invitationToken=…` bis zum Login merken. */
+function rememberInvitationToken(): void {
+  const token = new URLSearchParams(window.location.search).get("invitationToken");
+  if (!token) return;
+  try { sessionStorage.setItem("pendingInvitationToken", token); } catch { /* ignore */ }
+}
+
 export default function Register() {
   const [, navigate] = useLocation();
   const [name, setName] = useState("");
@@ -22,6 +29,7 @@ export default function Register() {
 
   const registerMutation = trpc.auth.register.useMutation({
     onSuccess: () => {
+      rememberInvitationToken();
       setSuccess(true);
       setError(null);
     },

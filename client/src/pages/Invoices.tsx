@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { todayISO } from "@/lib/date";
 import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -473,7 +474,7 @@ function PaymentDialog(props: {
   isPending: boolean;
 }) {
   const [amount, setAmount] = useState<string>(String(props.openAmount.toFixed(2)));
-  const [paidDate, setPaidDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [paidDate, setPaidDate] = useState<string>(todayISO());
 
   return (
     <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>

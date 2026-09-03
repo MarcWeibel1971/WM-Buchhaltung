@@ -61,10 +61,16 @@ COPY --from=builder --chown=app:nodejs /app/dist               ./dist
 # Template-PDF für Rechnungsgenerierung (swissqrbill nutzt das als Vorlage).
 COPY --from=builder --chown=app:nodejs /app/server/templates   ./server/templates
 
+# Lokaler Beleg-Speicher (Fallback ohne Forge-Storage). Muss dem Runtime-User
+# gehören, sonst schlägt jeder Upload mit EACCES fehl. In docker-compose.yml
+# als Volume gemountet (LOCAL_STORAGE_DIR).
+RUN mkdir -p /app/data/uploads && chown -R app:nodejs /app/data
+
 USER app
 
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    LOCAL_STORAGE_DIR=/app/data/uploads
 
 EXPOSE 3000
 

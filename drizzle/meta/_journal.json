@@ -295,6 +295,13 @@
       "when": 1788331625797,
       "tag": "0041_delete_phantom_default_org",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "5",
+      "when": 1788331626797,
+      "tag": "0042_remove_opening_balance_journal_entries",
+      "breakpoints": true
     }
   ]
 }

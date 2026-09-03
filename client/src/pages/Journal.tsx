@@ -1,4 +1,6 @@
 import { trpc } from "@/lib/trpc";
+import { parseSwissAmount, toAmountString } from "@/lib/amount";
+import { todayISO } from "@/lib/date";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { useSearch } from "wouter";
@@ -679,8 +681,8 @@ function EditEntryDialog({ entry, accounts, onClose, onSaved }: {
     onError: (e) => toast.error(e.message),
   });
 
-  const debitTotal = lines.filter(l => l.side === "debit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
-  const creditTotal = lines.filter(l => l.side === "credit").reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
+  const debitTotal = lines.filter(l => l.side === "debit").reduce((s, l) => s + (parseSwissAmount(l.amount) ?? 0), 0);
+  const creditTotal = lines.filter(l => l.side === "credit").reduce((s, l) => s + (parseSwissAmount(l.amount) ?? 0), 0);
   const balanced = Math.abs(debitTotal - creditTotal) < 0.01;
 
   // For simple 2-line bookings: sync amount between debit and credit
@@ -792,7 +794,7 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
 }) {
   const isSingle = mode === "single";
   const [description, setDescription] = useState("");
-  const [bookingDate, setBookingDate] = useState(new Date().toISOString().split("T")[0]);
+  const [bookingDate, setBookingDate] = useState(todayISO());
 
   // Single mode: simple debit/credit with one amount
   const [singleDebitAccountId, setSingleDebitAccountId] = useState<string>("");
@@ -830,15 +832,15 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
   });
 
   // Validation for single mode
-  const singleAmountNum = parseFloat(singleAmount || "0");
+  const singleAmountNum = parseSwissAmount(singleAmount) ?? 0;
   const singleValid = isSingle && description.trim() && singleDebitAccountId && singleCreditAccountId && singleAmountNum > 0;
 
   // Validation for collective mode
-  const habenAmountNum = parseFloat(habenAmount || "0");
-  const sollTotal = sollLines.reduce((s, l) => s + parseFloat(l.amount || "0"), 0);
+  const habenAmountNum = parseSwissAmount(habenAmount) ?? 0;
+  const sollTotal = sollLines.reduce((s, l) => s + (parseSwissAmount(l.amount) ?? 0), 0);
   const differenz = habenAmountNum - sollTotal;
   const isBalanced = Math.abs(differenz) < 0.01 && habenAmountNum > 0;
-  const validSollLines = sollLines.filter(l => l.accountId && parseFloat(l.amount || "0") > 0);
+  const validSollLines = sollLines.filter(l => l.accountId && (parseSwissAmount(l.amount) ?? 0) > 0);
   const collectiveValid = !isSingle && isBalanced && description.trim() && habenAccountId && validSollLines.length >= 1;
 
   // Build preview lines for the table
@@ -860,7 +862,7 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
     // Soll lines
     for (const sl of sollLines) {
       if (!sl.accountId) continue;
-      const amt = parseFloat(sl.amount || "0");
+      const amt = (parseSwissAmount(sl.amount) ?? 0);
       if (amt <= 0) continue;
       const acct = accounts.find(a => String(a.id) === sl.accountId);
       lines.push({
@@ -880,8 +882,8 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
         bookingDate,
         description,
         lines: [
-          { accountId: parseInt(singleDebitAccountId), side: "debit", amount: singleAmount },
-          { accountId: parseInt(singleCreditAccountId), side: "credit", amount: singleAmount },
+          { accountId: parseInt(singleDebitAccountId), side: "debit", amount: toAmountString(singleAmountNum) },
+          { accountId: parseInt(singleCreditAccountId), side: "credit", amount: toAmountString(singleAmountNum) },
         ],
       });
     } else {
@@ -891,16 +893,16 @@ function CreateEntryDialog({ mode, accounts, onClose, onSaved }: {
       lines.push({
         accountId: parseInt(habenAccountId),
         side: "credit",
-        amount: habenAmount,
+        amount: toAmountString(habenAmountNum),
       });
       // Debit lines (expenses)
       for (const sl of sollLines) {
-        const amt = parseFloat(sl.amount || "0");
+        const amt = (parseSwissAmount(sl.amount) ?? 0);
         if (!sl.accountId || amt <= 0) continue;
         lines.push({
           accountId: parseInt(sl.accountId),
           side: "debit",
-          amount: sl.amount,
+          amount: toAmountString(amt),
           description: sl.text || undefined,
           vatRate: sl.vatRate || undefined,
         });

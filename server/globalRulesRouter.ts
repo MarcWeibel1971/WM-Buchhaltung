@@ -5,7 +5,9 @@
  */
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { adminProcedure, router } from "./_core/trpc";
+// Audit: globale Regeln wirken mandantenübergreifend – Schreibzugriffe nur für
+// Plattform-Admins (users.role = 'admin'), Lesen bleibt auf adminProcedure.
+import { adminProcedure, platformAdminProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import { bookingRules, accounts } from "../drizzle/schema";
 import { and, eq, desc, sql, like } from "drizzle-orm";
@@ -88,7 +90,7 @@ export const globalRulesRouter = router({
   }),
 
   // ── Create a global rule ───────────────────────────────────────────────────
-  create: adminProcedure
+  create: platformAdminProcedure
     .input(globalRuleInput)
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -129,7 +131,7 @@ export const globalRulesRouter = router({
     }),
 
   // ── Update a global rule ───────────────────────────────────────────────────
-  update: adminProcedure
+  update: platformAdminProcedure
     .input(globalRuleInput.extend({ id: z.number().int() }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -148,7 +150,7 @@ export const globalRulesRouter = router({
     }),
 
   // ── Delete a global rule ───────────────────────────────────────────────────
-  delete: adminProcedure
+  delete: platformAdminProcedure
     .input(z.object({ id: z.number().int() }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -163,7 +165,7 @@ export const globalRulesRouter = router({
     }),
 
   // ── Toggle active/inactive ─────────────────────────────────────────────────
-  toggle: adminProcedure
+  toggle: platformAdminProcedure
     .input(z.object({ id: z.number().int(), isActive: z.boolean() }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -181,7 +183,7 @@ export const globalRulesRouter = router({
 
   // ── Bulk import global rules ───────────────────────────────────────────────
   // Allows admin to import multiple rules at once (e.g., from training sessions)
-  bulkImport: adminProcedure
+  bulkImport: platformAdminProcedure
     .input(z.object({
       rules: z.array(globalRuleInput).min(1).max(500),
       overwriteExisting: z.boolean().default(false),
@@ -242,20 +244,29 @@ export const globalRulesRouter = router({
 
   // ── Promote org rule to global ─────────────────────────────────────────────
   // Admin can promote a well-tested org-specific rule to a global rule
-  promoteToGlobal: adminProcedure
+  // Audit: organizationId nicht mehr aus dem Input – die Quellregel muss zur
+  // aktiven Organisation des Plattform-Admins gehören.
+  promoteToGlobal: platformAdminProcedure
     .input(z.object({
       ruleId: z.number().int(),
-      organizationId: z.number().int(), // Which org the rule belongs to
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const organizationId = ctx.organizationId;
+      if (organizationId == null) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Keine aktive Organisation. Bitte zuerst eine Organisation auswählen.",
+        });
+      }
 
       // Get the org rule
       const [orgRule] = await db.select().from(bookingRules)
         .where(and(
           eq(bookingRules.id, input.ruleId),
-          eq(bookingRules.organizationId, input.organizationId),
+          eq(bookingRules.organizationId, organizationId),
           eq(bookingRules.scope, "org"),
         ))
         .limit(1);
@@ -270,12 +281,12 @@ export const globalRulesRouter = router({
 
       if (orgRule.debitAccountId) {
         const [acc] = await db.select({ number: accounts.number }).from(accounts)
-          .where(eq(accounts.id, orgRule.debitAccountId)).limit(1);
+          .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, orgRule.debitAccountId))).limit(1);
         debitNum = acc?.number;
       }
       if (orgRule.creditAccountId) {
         const [acc] = await db.select({ number: accounts.number }).from(accounts)
-          .where(eq(accounts.id, orgRule.creditAccountId)).limit(1);
+          .where(and(eq(accounts.organizationId, organizationId), eq(accounts.id, orgRule.creditAccountId))).limit(1);
         creditNum = acc?.number;
       }
 

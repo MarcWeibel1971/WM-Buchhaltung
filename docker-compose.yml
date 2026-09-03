@@ -7,7 +7,7 @@
 #
 # Vorbereitung:
 #   1. cp .env.example .env
-#   2. Werte in .env setzen (JWT_SECRET, OAuth, S3, LLM, ...)
+#   2. Werte in .env setzen (JWT_SECRET, APP_URL, SECRETS_MASTER_KEY, E-Mail, KI, ...)
 #   3. docker compose up -d
 #   4. Logs: docker compose logs -f app
 #
@@ -49,7 +49,10 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "mysql://${MYSQL_USER:-wmuser}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-wm_buchhaltung}"
-    command: ["pnpm", "db:push"]
+    # Nur bestehende Migrationen anwenden. `pnpm db:push` würde zusätzlich
+    # `drizzle-kit generate` ausführen und im Container neue Migrationsdateien
+    # erzeugen, die nie ins Repo gelangen.
+    command: ["pnpm", "drizzle-kit", "migrate"]
     restart: "no"
 
   app:
@@ -69,18 +72,34 @@ services:
       PORT: 3000
       DATABASE_URL: "mysql://${MYSQL_USER:-wmuser}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-wm_buchhaltung}"
       JWT_SECRET:             ${JWT_SECRET:?JWT_SECRET muss in .env gesetzt sein}
+      # Öffentliche URL für Links in E-Mails (Verifizierung, Reset, Einladung).
+      APP_URL:                ${APP_URL:-}
+      # Secret-Verschlüsselung (EBICS/POS) – openssl rand -hex 32
+      SECRETS_MASTER_KEY:     ${SECRETS_MASTER_KEY:-}
+      # E-Mail-Versand (Resend oder SMTP)
+      EMAIL_PROVIDER:         ${EMAIL_PROVIDER:-}
+      RESEND_API_KEY:         ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL:      ${RESEND_FROM_EMAIL:-}
+      SMTP_HOST:              ${SMTP_HOST:-}
+      SMTP_PORT:              ${SMTP_PORT:-}
+      SMTP_SECURE:            ${SMTP_SECURE:-}
+      SMTP_USER:              ${SMTP_USER:-}
+      SMTP_PASS:              ${SMTP_PASS:-}
+      SMTP_FROM:              ${SMTP_FROM:-}
+      # KI (optional)
+      BUILT_IN_FORGE_API_URL: ${BUILT_IN_FORGE_API_URL:-}
+      BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-}
+      OPENROUTER_API_KEY:     ${OPENROUTER_API_KEY:-}
+      # Manus-OAuth (optional)
       VITE_APP_ID:            ${VITE_APP_ID:-}
       OAUTH_SERVER_URL:       ${OAUTH_SERVER_URL:-}
       OWNER_OPEN_ID:          ${OWNER_OPEN_ID:-}
-      BUILT_IN_FORGE_API_URL: ${BUILT_IN_FORGE_API_URL:-}
-      BUILT_IN_FORGE_API_KEY: ${BUILT_IN_FORGE_API_KEY:-}
-      AWS_REGION:             ${AWS_REGION:-eu-central-1}
-      AWS_ACCESS_KEY_ID:      ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY:  ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_S3_BUCKET:          ${AWS_S3_BUCKET:-}
-      AWS_ENDPOINT_URL:       ${AWS_ENDPOINT_URL:-}
+      # Lokaler Beleg-Speicher (persistentes Volume, siehe unten)
+      LOCAL_STORAGE_DIR:      /app/data/uploads
       LOG_LEVEL:              ${LOG_LEVEL:-info}
       SENTRY_DSN:             ${SENTRY_DSN:-}
+    volumes:
+      - uploads_data:/app/data/uploads
     # Standardmässig nur lokal; vor einen Reverse Proxy (Caddy / Nginx /
     # Traefik) setzen, der TLS terminiert. Siehe DEPLOYMENT.md.
     ports:
@@ -94,4 +113,8 @@ services:
 
 volumes:
   mysql_data:
+    driver: local
+  # Belege/PDFs im lokalen Storage-Modus – ohne Volume gehen Uploads beim
+  # Neuerstellen des Containers verloren.
+  uploads_data:
     driver: local

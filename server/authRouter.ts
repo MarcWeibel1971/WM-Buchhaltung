@@ -19,6 +19,7 @@ import { eq, and } from "drizzle-orm";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { publicProcedure, router } from "./_core/trpc";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { resolvePublicOrigin } from "./_core/publicUrl";
 import { sdk } from "./_core/sdk";
 import { ENV } from "./_core/env";
 import { getDb } from "./db";
@@ -73,11 +74,14 @@ export const authRouter = router({
         origin: z.string().url(), // Frontend origin for email links
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Datenbank nicht verfügbar" });
 
       const normalizedEmail = input.email.toLowerCase().trim();
+      // Audit: Origin für E-Mail-Links niemals ungeprüft vom Client übernehmen
+      // (sonst Token-Diebstahl über fremde Domain → Account-Übernahme).
+      const origin = resolvePublicOrigin(ctx.req, input.origin);
 
       // Check if email already exists
       const existing = await db
@@ -112,7 +116,7 @@ export const authRouter = router({
 
         // Send verification email
         try {
-          await sendVerificationEmail(normalizedEmail, verifyToken, input.origin, input.name);
+          await sendVerificationEmail(normalizedEmail, verifyToken, origin, input.name);
         } catch (e) {
           logger.error("[Auth] Failed to send verification email:", e);
         }
@@ -143,7 +147,7 @@ export const authRouter = router({
 
       // Send verification email
       try {
-        await sendVerificationEmail(normalizedEmail, verifyToken, input.origin, input.name);
+        await sendVerificationEmail(normalizedEmail, verifyToken, origin, input.name);
       } catch (e) {
         logger.error("[Auth] Failed to send verification email:", e);
       }
@@ -282,11 +286,12 @@ export const authRouter = router({
         origin: z.string().url(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Datenbank nicht verfügbar" });
 
       const normalizedEmail = input.email.toLowerCase().trim();
+      const origin = resolvePublicOrigin(ctx.req, input.origin);
 
       const result = await db
         .select()
@@ -315,7 +320,7 @@ export const authRouter = router({
         .where(eq(users.id, user.id));
 
       try {
-        await sendPasswordResetEmail(normalizedEmail, resetToken, input.origin, user.name || undefined);
+        await sendPasswordResetEmail(normalizedEmail, resetToken, origin, user.name || undefined);
       } catch (e) {
         logger.error("[Auth] Failed to send password reset email:", e);
       }
@@ -354,7 +359,8 @@ export const authRouter = router({
       const user = result[0];
 
       // Check expiry
-      if (user.passwordResetExpiry && new Date() > user.passwordResetExpiry) {
+      // Audit: fehlendes Ablaufdatum gilt als abgelaufen
+      if (!user.passwordResetExpiry || new Date() > user.passwordResetExpiry) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Der Reset-Link ist abgelaufen. Bitte fordern Sie einen neuen an.",
@@ -389,11 +395,12 @@ export const authRouter = router({
         origin: z.string().url(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Datenbank nicht verfügbar" });
 
       const normalizedEmail = input.email.toLowerCase().trim();
+      const origin = resolvePublicOrigin(ctx.req, input.origin);
 
       const result = await db
         .select()
@@ -426,7 +433,7 @@ export const authRouter = router({
         .where(eq(users.id, user.id));
 
       try {
-        await sendVerificationEmail(normalizedEmail, verifyToken, input.origin, user.name || undefined);
+        await sendVerificationEmail(normalizedEmail, verifyToken, origin, user.name || undefined);
       } catch (e) {
         logger.error("[Auth] Failed to resend verification email:", e);
       }

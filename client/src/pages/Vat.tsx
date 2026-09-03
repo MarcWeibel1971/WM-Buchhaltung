@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { escapeHtml } from "@/lib/escapeHtml";
 import { useState, useRef } from "react";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { Plus, Check, FileText, Calculator, Download, Trash2, ChevronDown, ChevronRight, Printer } from "lucide-react";
@@ -507,8 +508,8 @@ function VatDetailInline({ detail, isLoading, vatMethod, saldoRate, period }: {
         .section-title { background: #f5f5f5; padding: 6px 8px; font-weight: 600; margin: 8px 0 4px; }
         @media print { body { margin: 10mm; } }
       </style></head><body>
-      <h3>${company?.companyName ?? 'Meine Firma'}</h3>
-      <p style="color:#888;font-size:9px;">${company?.vatNumber ? 'MWST-Nr.: ' + company.vatNumber : ''}</p>
+      <h3>${escapeHtml(company?.companyName ?? 'Meine Firma')}</h3>
+      <p style="color:#888;font-size:9px;">${company?.vatNumber ? 'MWST-Nr.: ' + escapeHtml(company.vatNumber) : ''}</p>
       <h3>MWST-Abrechnung ${period.period} ${period.year}</h3>
       <p style="color:#666;font-size:10px;">Periode: ${formatDate(period.startDate)} – ${formatDate(period.endDate)}${vatMethod === "saldo" ? ` | Saldosteuersatz ${saldoRate}%` : ''}</p>
       ${printContent.innerHTML}

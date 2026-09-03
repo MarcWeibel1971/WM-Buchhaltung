@@ -5111,7 +5111,7 @@ function RemindersTab() {
                     min={0}
                     step="0.01"
                     value={form[feeKey]}
-                    onChange={e => setField(feeKey, parseFloat(e.target.value))}
+                    onChange={e => { const v = parseFloat(e.target.value); setField(feeKey, Number.isFinite(v) ? v : 0); }}
                   />
                   <p className="text-xs text-muted-foreground mt-1">
                     Wird zur Gesamtforderung addiert (Stufe 1 meist 0).

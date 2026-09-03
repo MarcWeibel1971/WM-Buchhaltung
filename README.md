@@ -12,8 +12,10 @@ DSG-konformes Audit-Logging.
   Wouter (Routing), tRPC client
 - **Backend:** Node.js, Express, tRPC, Drizzle ORM
 - **Datenbank:** MySQL 8
-- **Object Storage:** S3-kompatibel (AWS S3, MinIO, Cloudflare R2)
-- **Auth:** OAuth via Manus SDK, Session-Cookies
+- **Datei-Storage:** lokales Verzeichnis (`LOCAL_STORAGE_DIR`, Default `./data/uploads`)
+  oder Forge-Storage der Manus-Plattform
+- **Auth:** E-Mail/Passwort (bcrypt, E-Mail-Verifizierung) und optional OAuth via
+  Manus SDK; Session-Cookies (HttpOnly, SameSite=Lax)
 - **PDF / Swiss-Specifics:** swissqrbill, pdf-lib, jsPDF
 
 ## Voraussetzungen
@@ -21,8 +23,9 @@ DSG-konformes Audit-Logging.
 - Node.js ≥ 20
 - pnpm ≥ 10
 - MySQL ≥ 8 (lokal oder remote)
-- S3-Bucket (oder S3-kompatibler Storage) für Dokumenten-Uploads
-- Zugriff auf die OAuth-Gegenstelle (Manus SDK)
+- Ein beschreibbares Verzeichnis (oder Volume) für Dokumenten-Uploads
+- Optional: E-Mail-Provider (Resend oder SMTP) für Registrierungs-, Rechnungs-
+  und Mahn-E-Mails
 
 ## Quickstart (Entwicklung)
 
@@ -34,8 +37,8 @@ pnpm install
 cp .env.example .env
 # ... .env mit echten Werten füllen ...
 
-# 3. Datenbank-Schema ausrollen
-pnpm db:push
+# 3. Datenbank-Migrationen ausrollen
+pnpm drizzle-kit migrate
 
 # 4. Dev-Server starten (http://localhost:3000)
 pnpm dev
@@ -50,7 +53,9 @@ pnpm dev
 | `pnpm start` | Startet den produktiven Server aus `dist/` |
 | `pnpm check` | TypeScript-Typecheck (`tsc --noEmit`) |
 | `pnpm test` | Führt die Vitest-Testsuite aus |
-| `pnpm db:push` | Generiert und migriert das Drizzle-Schema |
+| `pnpm drizzle-kit migrate` | Wendet die Migrationen aus `drizzle/` an (Produktion) |
+| `pnpm db:push` | Generiert eine neue Migration aus `drizzle/schema.ts` und wendet sie an (Entwicklung) |
+| `pnpm test:core-chain` | E2E-Kernkette gegen einen laufenden Server |
 | `pnpm format` | Prettier über das gesamte Repository |
 
 ## Environment-Variablen
@@ -58,11 +63,14 @@ pnpm dev
 Alle erforderlichen Variablen sind in `.env.example` dokumentiert. Die
 wichtigsten:
 
-- `DATABASE_URL` – MySQL-Verbindungsstring
-- `JWT_SECRET` – Signing-Secret für Session-Cookies (mind. 64 zufällige Hex)
-- `VITE_APP_ID`, `OAUTH_SERVER_URL` – OAuth-Konfiguration
-- `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY` – LLM-Endpoint
-- `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET`
+- `DATABASE_URL` – MySQL-Verbindungsstring (Pflicht)
+- `JWT_SECRET` – Signing-Secret für Session-Cookies (Pflicht, `openssl rand -hex 64`)
+- `APP_URL` – öffentliche Basis-URL für Links in E-Mails (für Produktion dringend empfohlen)
+- `SECRETS_MASTER_KEY` – Verschlüsselung von EBICS-/POS-Secrets (`openssl rand -hex 32`)
+- `EMAIL_PROVIDER`, `RESEND_API_KEY` bzw. `SMTP_*` – E-Mail-Versand
+- `LOCAL_STORAGE_DIR` – Ablage für Belege/PDFs (persistentes Volume)
+- `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY` oder `OPENROUTER_API_KEY` – KI-Features
+- `VITE_APP_ID`, `OAUTH_SERVER_URL` – nur für Manus-OAuth
 
 ## Projektstruktur
 
@@ -96,7 +104,12 @@ curl http://localhost:3000/api/health
 - `express-rate-limit` schützt `/api/trpc`, `/api/upload` und `/api/oauth`
 - JSON-Body-Parser ist auf 2 MB limitiert; File-Uploads werden von `multer`
   mit separatem 20-MB-Limit verarbeitet
-- Session-Cookies sind `httpOnly` und `secure` (hinter HTTPS-Proxy)
+- Session-Cookies sind `httpOnly`, `secure` (hinter HTTPS-Proxy) und `SameSite=Lax`
+- Login, Registrierung und Passwort-Reset haben einen eigenen Brute-Force-Limiter
+  (20 Versuche / 15 Minuten / IP)
+- Links in E-Mails (Verifizierung, Reset, Einladung) werden serverseitig aus
+  `APP_URL` gebaut, nie aus Client-Angaben
+- Dokumente unter `/manus-storage/*` werden nur mit gültiger Session ausgeliefert
 - Alle geschäftlichen tRPC-Prozeduren erfordern eine gültige Session
 - Dokumenten-Uploads werden MIME-gefiltert (PDF, JPEG, PNG, WEBP)
 
@@ -115,8 +128,8 @@ Die App unterstützt die typischen Anforderungen an ein Schweizer KMU-Buchhaltun
 
 ## Deployment
 
-Details zum produktiven Deployment (Docker, CI/CD, Backups) folgen in einer
-separaten `DEPLOYMENT.md`.
+Details zum produktiven Deployment (Docker, CI/CD, Backups): `DEPLOYMENT.md`,
+Self-Hosting ohne Plattform-Keys: `SELFHOSTING.md`, Backup-Policy: `BACKUP.md`.
 
 ## Lizenz
 

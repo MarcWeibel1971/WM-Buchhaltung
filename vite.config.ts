@@ -150,7 +150,14 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+// Audit: Manus-Plattform-Plugins (Runtime-Injection ~300 kB inline in
+// index.html, JSX-Loc-Attribute, Debug-Collector) nur im Dev-Modus laden.
+// Im Produktions-Build wurden sie bisher mitgebündelt – ohne Nutzen für
+// Self-Hosting und mit CSP-Verstoss (Inline-Script) unter helmet.
+const isProductionBuild = process.env.NODE_ENV === "production";
+const plugins = isProductionBuild
+  ? [react(), tailwindcss()]
+  : [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
 
 export default defineConfig({
   plugins,

@@ -28,6 +28,7 @@ import {
   autoMatchDocuments, applyMatches, getMatchedDocument, improveBookingSuggestionFromDocument, unmatchDocument, calculateMatchScore,
   deleteJournalEntry, revertBankTransaction, deleteCcStatement, revertCcStatement,
   findOpenInvoiceByQRReference, applyInvoicePayment,
+  assertFiscalYearOpen,
 } from "./db";
 import { normalizeQRReference, validateManualReference } from "../shared/qrReference";
 import { bankTransactions, journalEntries, journalLines, payrollEntries, vatPeriods, creditCardStatements, employees, accounts, openingBalances, bookingRules, bankAccounts, insuranceSettings, importHistory, companySettings, documents, avatarSettings, importAutomationSettings, organizations, invoices } from "../drizzle/schema";
@@ -318,10 +319,11 @@ const journalRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      // Audit: org-gefilterte Helfer (Mandantentrennung)
       if (input.lines) {
-        await updateJournalEntryLines(input.entryId, input.lines);
+        await updateJournalEntryLines(ctx.organizationId, input.entryId, input.lines);
       }
-      await approveJournalEntry(input.entryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, input.entryId, ctx.user.id);
       return { success: true };
     }),
 
@@ -329,7 +331,8 @@ const journalRouter = router({
     .input(z.object({ entryId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-      await rejectJournalEntry(input.entryId);
+      // Audit: org-gefiltert; verbuchte Einträge können nicht abgelehnt werden (GeBüV)
+      await rejectJournalEntry(ctx.organizationId, input.entryId);
       return { success: true };
     }),
 
@@ -350,9 +353,10 @@ const journalRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       // GeBüV (Art. 957d OR): verbuchte Einträge sind unveränderlich.
-      const [existing] = await db.select({ status: journalEntries.status })
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [existing] = await db.select({ status: journalEntries.status, bookingDate: journalEntries.bookingDate })
         .from(journalEntries)
-        .where(eq(journalEntries.id, input.entryId))
+        .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, input.entryId)))
         .limit(1);
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
@@ -365,11 +369,30 @@ const journalRouter = router({
       }
       const updateData: Record<string, unknown> = {};
       if (input.description) updateData.description = input.description;
-      if (input.bookingDate) updateData.bookingDate = toDateStr(input.bookingDate);
-      if (Object.keys(updateData).length > 0) {
-        await db.update(journalEntries).set(updateData).where(eq(journalEntries.id, input.entryId));
+      if (input.bookingDate) {
+        const newDate = toDateStr(input.bookingDate);
+        if (!newDate) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Ungültiges Buchungsdatum" });
+        }
+        if (newDate !== existing.bookingDate) {
+          // Audit: Geschäftsjahr aus dem neuen Datum ableiten und Periodensperre
+          // (GeBüV) durchsetzen – sonst könnte ein Eintrag still in ein anderes
+          // oder abgeschlossenes Geschäftsjahr verschoben werden.
+          const newYear = new Date(newDate).getFullYear();
+          try {
+            await assertFiscalYearOpen(ctx.organizationId, newYear, newDate);
+          } catch (e) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : String(e) });
+          }
+          updateData.bookingDate = newDate;
+          updateData.fiscalYear = newYear;
+        }
       }
-      if (input.lines) await updateJournalEntryLines(input.entryId, input.lines);
+      if (Object.keys(updateData).length > 0) {
+        await db.update(journalEntries).set(updateData)
+          .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, input.entryId)));
+      }
+      if (input.lines) await updateJournalEntryLines(ctx.organizationId, input.entryId, input.lines);
       return { success: true };
     }),
   // Delete a journal entry (only allowed for pending entries – GeBüV).
@@ -381,9 +404,10 @@ const journalRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       // GeBüV (Art. 957d OR): verbuchte Einträge dürfen nicht gelöscht werden.
+      // Audit: org-gefiltert (Mandantentrennung)
       const [existing] = await db.select({ status: journalEntries.status })
         .from(journalEntries)
-        .where(eq(journalEntries.id, input.entryId))
+        .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, input.entryId)))
         .limit(1);
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
@@ -396,17 +420,17 @@ const journalRouter = router({
       }
       // Revert any linked bank transactions back to pending
       const linkedTxs = await db.select().from(bankTransactions)
-        .where(eq(bankTransactions.journalEntryId, input.entryId));
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.journalEntryId, input.entryId)));
       for (const tx of linkedTxs) {
-        await revertBankTransaction(tx.id);
+        await revertBankTransaction(ctx.organizationId, tx.id);
       }
       // Revert any linked CC statements back to pending
       const linkedStmts = await db.select().from(creditCardStatements)
-        .where(eq(creditCardStatements.journalEntryId, input.entryId));
+        .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.journalEntryId, input.entryId)));
       for (const stmt of linkedStmts) {
-        await revertCcStatement(stmt.id);
+        await revertCcStatement(ctx.organizationId, stmt.id);
       }
-      await deleteJournalEntry(input.entryId);
+      await deleteJournalEntry(ctx.organizationId, input.entryId);
       return { success: true };
     }),
   // Revert zurück auf pending. GeBüV (Art. 957d OR): Verbuchte (approved)
@@ -417,9 +441,10 @@ const journalRouter = router({
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Audit: org-gefiltert (Mandantentrennung)
       const [existing] = await db.select({ status: journalEntries.status })
         .from(journalEntries)
-        .where(eq(journalEntries.id, input.entryId))
+        .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, input.entryId)))
         .limit(1);
       if (!existing) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
@@ -432,11 +457,11 @@ const journalRouter = router({
       }
       await db.update(journalEntries)
         .set({ status: "pending", approvedBy: null, approvedAt: null })
-        .where(eq(journalEntries.id, input.entryId));
+        .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, input.entryId)));
       // Also clear journalEntryId from linked documents so they no longer show as "verbucht"
       await db.update(documents)
         .set({ journalEntryId: null, matchStatus: "unmatched" })
-        .where(eq(documents.journalEntryId, input.entryId));
+        .where(and(eq(documents.organizationId, ctx.organizationId), eq(documents.journalEntryId, input.entryId)));
       return { success: true };
     }),
 
@@ -451,9 +476,12 @@ const journalRouter = router({
       let approved = 0;
       let skipped = 0;
       for (const id of input.entryIds) {
-        const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
+        // Audit: org-gefiltert – fremde IDs werden übersprungen
+        const [entry] = await db.select().from(journalEntries)
+          .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, id)))
+          .limit(1);
         if (!entry || entry.status !== "pending") { skipped++; continue; }
-        await approveJournalEntry(id, ctx.user.id);
+        await approveJournalEntry(ctx.organizationId, id, ctx.user.id);
         approved++;
       }
       return { approved, skipped };
@@ -470,19 +498,20 @@ const journalRouter = router({
       let skipped = 0;
       for (const id of input.entryIds) {
         try {
+          // Audit: org-gefiltert – fremde IDs lösen in deleteJournalEntry einen Fehler aus (→ skipped)
           // Revert linked bank transactions back to pending
           const linkedTxs = await db.select().from(bankTransactions)
-            .where(eq(bankTransactions.journalEntryId, id));
+            .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.journalEntryId, id)));
           for (const tx of linkedTxs) {
-            await revertBankTransaction(tx.id);
+            await revertBankTransaction(ctx.organizationId, tx.id);
           }
           // Revert linked CC statements back to pending
           const linkedStmts = await db.select().from(creditCardStatements)
-            .where(eq(creditCardStatements.journalEntryId, id));
+            .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.journalEntryId, id)));
           for (const stmt of linkedStmts) {
-            await revertCcStatement(stmt.id);
+            await revertCcStatement(ctx.organizationId, stmt.id);
           }
-          await deleteJournalEntry(id);
+          await deleteJournalEntry(ctx.organizationId, id);
           deleted++;
         } catch {
           skipped++;
@@ -501,17 +530,20 @@ const journalRouter = router({
       let reverted = 0;
       let skipped = 0;
       for (const id of input.entryIds) {
-        const [entry] = await db.select().from(journalEntries).where(eq(journalEntries.id, id)).limit(1);
+        // Audit: org-gefiltert – fremde IDs werden übersprungen
+        const [entry] = await db.select().from(journalEntries)
+          .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, id)))
+          .limit(1);
         // GeBüV (Art. 957d OR): approved Einträge sind unveränderbar – nur
         // Stornobuchung. Pending-Einträge zurückzusetzen ist eine No-Op.
         if (!entry || entry.status === "approved") { skipped++; continue; }
         await db.update(journalEntries)
           .set({ status: "pending", approvedBy: null, approvedAt: null })
-          .where(eq(journalEntries.id, id));
+          .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, id)));
         // Also clear journalEntryId from linked documents
         await db.update(documents)
           .set({ journalEntryId: null, matchStatus: "unmatched" })
-          .where(eq(documents.journalEntryId, id));
+          .where(and(eq(documents.organizationId, ctx.organizationId), eq(documents.journalEntryId, id)));
         reverted++;
       }
       return { reverted, skipped };
@@ -530,8 +562,11 @@ const journalRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Build conditions
-      const conditions = [eq(journalEntries.fiscalYear, input.fiscalYear)];
+      // Build conditions (Audit: immer org-gefiltert)
+      const conditions = [
+        eq(journalEntries.organizationId, ctx.organizationId),
+        eq(journalEntries.fiscalYear, input.fiscalYear),
+      ];
       if (input.statusFilter === "approved") {
         conditions.push(eq(journalEntries.status, "approved"));
       }
@@ -554,8 +589,9 @@ const journalRouter = router({
         .from(journalLines)
         .where(inArray(journalLines.entryId, entryIds));
 
-      // Get all accounts for lookup
-      const allAccounts = await db.select().from(accounts);
+      // Get all accounts for lookup (Audit: nur Konten dieser Organisation)
+      const allAccounts = await db.select().from(accounts)
+        .where(eq(accounts.organizationId, ctx.organizationId));
       const accountMap = new Map(allAccounts.map(a => [a.id, a]));
 
       // Build CSV rows
@@ -720,7 +756,11 @@ const journalRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const conditions = [eq(journalEntries.fiscalYear, input.fiscalYear)];
+      // Audit: immer org-gefiltert
+      const conditions = [
+        eq(journalEntries.organizationId, ctx.organizationId),
+        eq(journalEntries.fiscalYear, input.fiscalYear),
+      ];
       if (input.statusFilter === "approved") {
         conditions.push(eq(journalEntries.status, "approved"));
       }
@@ -741,7 +781,9 @@ const journalRouter = router({
         .from(journalLines)
         .where(inArray(journalLines.entryId, entryIds));
 
-      const allAccounts = await db.select().from(accounts);
+      // Audit: nur Konten dieser Organisation
+      const allAccounts = await db.select().from(accounts)
+        .where(eq(accounts.organizationId, ctx.organizationId));
       const accountMap = new Map(allAccounts.map(a => [a.id, a]));
 
       const csvRows: string[] = [];
@@ -794,12 +836,12 @@ const journalRouter = router({
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const conditions = [];
+      // Audit: immer org-gefiltert
+      const conditions = [eq(journalEntries.organizationId, ctx.organizationId)];
       if (input.status) conditions.push(eq(journalEntries.status, input.status));
       if (input.fiscalYear) conditions.push(eq(journalEntries.fiscalYear, input.fiscalYear));
       if (input.search) conditions.push(like(journalEntries.description, `%${input.search}%`));
-      const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-      const rows = await db.select({ id: journalEntries.id }).from(journalEntries).where(whereClause);
+      const rows = await db.select({ id: journalEntries.id }).from(journalEntries).where(and(...conditions));
       return { ids: rows.map(r => r.id) };
     }),
 });
@@ -845,7 +887,9 @@ const bankImportRouter = router({
       if (input.name !== undefined) updateData.name = input.name;
       if (input.iban !== undefined) updateData.iban = input.iban;
       if (input.bank !== undefined) updateData.bank = input.bank;
-      await db.update(bankAccounts).set(updateData).where(eq(bankAccounts.id, input.id));
+      // Audit: org-gefiltert (Mandantentrennung)
+      await db.update(bankAccounts).set(updateData)
+        .where(and(eq(bankAccounts.organizationId, ctx.organizationId), eq(bankAccounts.id, input.id)));
       return { success: true };
     }),
 
@@ -879,15 +923,18 @@ const bankImportRouter = router({
       const transferTxs = txs.filter(t => t.transferPartnerId);
       if (transferTxs.length === 0) return txs.map(t => withInvoice(t));
       const partnerIds = transferTxs.map(t => t.transferPartnerId!);
+      // Audit: org-gefiltert
       const partners = await db.select({ id: bankTransactions.id, bankAccountId: bankTransactions.bankAccountId })
-        .from(bankTransactions).where(inArray(bankTransactions.id, partnerIds));
+        .from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), inArray(bankTransactions.id, partnerIds)));
       // Get all bank accounts involved (own + partner)
       const allBaIds = Array.from(new Set([
         ...transferTxs.map(t => t.bankAccountId),
         ...partners.map(p => p.bankAccountId),
       ]));
       const bas = await db.select({ id: bankAccounts.id, name: bankAccounts.name, accountId: bankAccounts.accountId })
-        .from(bankAccounts).where(inArray(bankAccounts.id, allBaIds));
+        .from(bankAccounts)
+        .where(and(eq(bankAccounts.organizationId, ctx.organizationId), inArray(bankAccounts.id, allBaIds)));
       const partnerMap = new Map(partners.map(p => [p.id, bas.find(b => b.id === p.bankAccountId)]));
       const ownBaMap = new Map(bas.map(b => [b.id, b]));
       return txs.map(t => {
@@ -929,6 +976,15 @@ const bankImportRouter = router({
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Audit: Das Ziel-Bankkonto muss zur aktiven Organisation gehören, sonst
+      // könnten Transaktionen in ein fremdes Bankkonto importiert werden.
+      const [targetBankAccount] = await db.select({ id: bankAccounts.id }).from(bankAccounts)
+        .where(and(eq(bankAccounts.organizationId, ctx.organizationId), eq(bankAccounts.id, input.bankAccountId)))
+        .limit(1);
+      if (!targetBankAccount) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Bankkonto nicht gefunden oder gehört nicht zur aktiven Organisation" });
+      }
       const batchId = input.importBatchId ?? `import-${Date.now()}`;
       let imported = 0, duplicates = 0, skipped = 0;
       let dateMin: string | null = null, dateMax: string | null = null;
@@ -939,8 +995,13 @@ const bankImportRouter = router({
         if (!dateMin || transactionDate < dateMin) dateMin = transactionDate;
         if (!dateMax || transactionDate > dateMax) dateMax = transactionDate;
         const valueDate = tx.valueDate ? (normaliseDate(tx.valueDate) ?? undefined) : undefined;
+        // Audit: Betrag für den Duplikat-Hash normalisieren ("100" und "100.00"
+        // sind dieselbe Buchung). Formel sonst unverändert, damit bereits
+        // importierte Auszüge weiterhin als Duplikat erkannt werden.
+        const amountNum = Number(tx.amount);
+        const hashAmount = Number.isFinite(amountNum) ? amountNum.toFixed(2) : String(tx.amount);
         const hash = crypto.createHash("sha256")
-          .update(`${input.bankAccountId}-${transactionDate}-${tx.amount}-${tx.description}`)
+          .update(`${input.bankAccountId}-${transactionDate}-${hashAmount}-${tx.description}`)
           .digest("hex");
         const saved = await saveBankTransaction({
           organizationId: ctx.organizationId,
@@ -993,16 +1054,20 @@ const bankImportRouter = router({
       if (db && imported > 0) {
         try {
           // Get newly imported pending transactions from this batch
+          // Audit: org-gefiltert
           const newTxns = await db.select().from(bankTransactions)
             .where(and(
+              eq(bankTransactions.organizationId, ctx.organizationId),
               eq(bankTransactions.importBatchId, batchId),
               eq(bankTransactions.status, 'pending'),
             ));
 
           // Get documents that are invoices (have aiMetadata with totalAmount)
           // Focus on pain001 status (exported but not yet confirmed) and unmatched
+          // Audit: nur Belege dieser Organisation
           const invoiceDocs = await db.select().from(documents)
             .where(and(
+              eq(documents.organizationId, ctx.organizationId),
               sql`${documents.aiMetadata} IS NOT NULL`,
               sql`${documents.matchStatus} IN ('pain001', 'unmatched')`,
             ));
@@ -1050,12 +1115,12 @@ const bankImportRouter = router({
                 bankTransactionId: txn.id,
                 matchStatus: 'matched',
                 matchScore: bestMatch.score,
-              }).where(eq(documents.id, bestMatch.docId));
+              }).where(and(eq(documents.organizationId, ctx.organizationId), eq(documents.id, bestMatch.docId)));
 
               await db.update(bankTransactions).set({
                 matchedDocumentId: bestMatch.docId,
                 matchScore: bestMatch.score,
-              }).where(eq(bankTransactions.id, txn.id));
+              }).where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, txn.id)));
 
               autoMatched++;
               // Remove matched doc from candidates
@@ -1078,13 +1143,15 @@ const bankImportRouter = router({
         try {
           const creditTxns = (await db.select().from(bankTransactions)
             .where(and(
+              eq(bankTransactions.organizationId, ctx.organizationId),
               eq(bankTransactions.importBatchId, batchId),
               eq(bankTransactions.status, 'pending'),
             ))).filter(t => parseFloat(t.amount as string) > 0 && !!t.reference);
 
           if (creditTxns.length > 0) {
             const [bankAcc] = await db.select().from(bankAccounts)
-              .where(eq(bankAccounts.id, input.bankAccountId)).limit(1);
+              .where(and(eq(bankAccounts.organizationId, ctx.organizationId), eq(bankAccounts.id, input.bankAccountId)))
+              .limit(1);
             const debitorenAcc = await getAccountByNumber(ctx.organizationId, "1100");
 
             for (const txn of creditTxns) {
@@ -1103,12 +1170,12 @@ const bankImportRouter = router({
                 suggestedDebitAccountId: bankAcc?.accountId ?? txn.suggestedDebitAccountId,
                 suggestedCreditAccountId: debitorenAcc?.id ?? txn.suggestedCreditAccountId,
                 suggestedBookingText: `Zahlungseingang ${inv.invoiceNumber ?? `Rechnung #${inv.id}`}${isFullPayment ? "" : ` (Rechnung offen: CHF ${openAmount.toFixed(2)})`}`,
-              }).where(eq(bankTransactions.id, txn.id));
+              }).where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, txn.id)));
               invoiceMatched++;
             }
           }
         } catch (e) {
-          console.error("QR-Referenz-Abgleich nach Import fehlgeschlagen:", e);
+          logger.error("QR-Referenz-Abgleich nach Import fehlgeschlagen:", e);
         }
       }
 
@@ -1117,29 +1184,31 @@ const bankImportRouter = router({
 
   getImportHistory: orgProcedure
     .input(z.object({ bankAccountId: z.number().optional() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return [];
-      const conditions = input.bankAccountId
-        ? [eq(importHistory.bankAccountId, input.bankAccountId)]
-        : [];
+      // Audit: immer org-gefiltert
+      const conditions = [eq(importHistory.organizationId, ctx.organizationId)];
+      if (input.bankAccountId) conditions.push(eq(importHistory.bankAccountId, input.bankAccountId));
       const rows = await db.select().from(importHistory)
-        .where(conditions.length ? conditions[0] : undefined)
+        .where(and(...conditions))
         .orderBy(desc(importHistory.createdAt))
         .limit(50);
       // Enrich with bank account names
-      const accts = await db.select().from(bankAccounts);
+      const accts = await db.select().from(bankAccounts)
+        .where(eq(bankAccounts.organizationId, ctx.organizationId));
       const acctMap = Object.fromEntries(accts.map(a => [a.id, a.name]));
       return rows.map(r => ({ ...r, bankAccountName: acctMap[r.bankAccountId] ?? "Unbekannt" }));
     }),
 
   getLastImport: orgProcedure
     .input(z.object({ bankAccountId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return null;
+      // Audit: org-gefiltert
       const [row] = await db.select().from(importHistory)
-        .where(eq(importHistory.bankAccountId, input.bankAccountId))
+        .where(and(eq(importHistory.organizationId, ctx.organizationId), eq(importHistory.bankAccountId, input.bankAccountId)))
         .orderBy(desc(importHistory.createdAt))
         .limit(1);
       return row ?? null;
@@ -1265,7 +1334,7 @@ Regeln:
                 suggestedCreditAccountId: creditAccount.id,
                 aiConfidence: suggestion.confidence,
                 aiReasoning: suggestion.reasoning,
-              }).where(eq(bankTransactions.id, tx.id));
+              }).where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, tx.id)));
 
               results.push({ txId: tx.id, success: true, confidence: suggestion.confidence });
             }
@@ -1291,7 +1360,10 @@ Regeln:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [tx] = await db.select().from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, input.transactionId)))
+        .limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       // ── Fremdwährungs-Guard (Phase 2.5): keine unumgerechneten Beträge buchen ──
       if (!isSupportedBookingCurrency(tx.currency)) {
@@ -1313,15 +1385,18 @@ Regeln:
         source: "bank_import",
         sourceRef: `bank-tx-${tx.id}`,
         fiscalYear: year,
-        status: "approved",
+        // Audit: Eintrag als pending anlegen – approveJournalEntry setzt
+        // approved + Belegnummer atomar. So bleibt bei einem Fehler nie ein
+        // "approved" Eintrag ohne Belegnummer zurück (GeBüV).
+        status: "pending",
         lines: [
           { accountId: input.debitAccountId, side: "debit", amount: amount.toFixed(2) },
           { accountId: input.creditAccountId, side: "credit", amount: amount.toFixed(2) },
         ],
       });
 
-      await approveBankTransaction(input.transactionId, entryId);
-      await approveJournalEntry(entryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
+      await approveBankTransaction(ctx.organizationId, input.transactionId, entryId);
 
       // ── Debitoren-Abgleich (Phase 2.1): Zahlungseingang auf der verknüpften
       // Rechnung verbuchen (paidAmount/Status/paidDate). Schlägt das fehl (z. B.
@@ -1339,10 +1414,10 @@ Regeln:
           if (result) {
             invoicePayment = { status: result.status, openAmount: result.openAmount };
           } else {
-            console.warn(`Invoice payment skipped: invoice ${tx.matchedInvoiceId} not in payable status`);
+            logger.warn(`Invoice payment skipped: invoice ${tx.matchedInvoiceId} not in payable status`);
           }
         } catch (e) {
-          console.error("applyInvoicePayment failed:", e);
+          logger.error("applyInvoicePayment failed:", e);
         }
       }
 
@@ -1350,7 +1425,8 @@ Regeln:
       if (tx.counterparty) {
         try {
           // Get bank account IDs to exclude from rules (derived from transaction, not rule)
-          const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)).map(ba => ba.accountId);
+          const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)
+            .where(eq(bankAccounts.organizationId, ctx.organizationId))).map(ba => ba.accountId);
           const cpClean = tx.counterparty.trim();
           const bookingText = input.description ?? tx.description ?? undefined;
           const ruleData: Parameters<typeof upsertBookingRule>[0] = {
@@ -1388,7 +1464,10 @@ Regeln:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [tx] = await db.select().from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, input.transactionId)))
+        .limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       // ── Fremdwährungs-Guard (Phase 2.5): keine unumgerechneten Beträge buchen ──
       if (!isSupportedBookingCurrency(tx.currency)) {
@@ -1409,12 +1488,13 @@ Regeln:
         source: "bank_import",
         sourceRef: `bank-tx-${tx.id}`,
         fiscalYear: year,
-        status: "approved",
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: "pending",
         lines: input.lines,
       });
 
-      await approveBankTransaction(input.transactionId, entryId);
-      await approveJournalEntry(entryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
+      await approveBankTransaction(ctx.organizationId, input.transactionId, entryId);
 
       return { success: true, entryId };
     }),
@@ -1425,7 +1505,9 @@ Regeln:
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      await db.update(bankTransactions).set({ status: "ignored" }).where(eq(bankTransactions.id, input.transactionId));
+      // Audit: org-gefiltert
+      await db.update(bankTransactions).set({ status: "ignored" })
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, input.transactionId)));
       return { success: true };
     }),
 
@@ -1436,15 +1518,18 @@ Regeln:
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.transactionId)).limit(1);
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [tx] = await db.select().from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, input.transactionId)))
+        .limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       if (tx.status !== "matched") throw new TRPCError({ code: "BAD_REQUEST", message: "Transaktion ist nicht verbucht" });
       // Delete the linked journal entry
       if (tx.journalEntryId) {
-        await deleteJournalEntry(tx.journalEntryId);
+        await deleteJournalEntry(ctx.organizationId, tx.journalEntryId);
       }
       // Revert transaction to pending
-      await revertBankTransaction(input.transactionId);
+      await revertBankTransaction(ctx.organizationId, input.transactionId);
       return { success: true };
     }),
 
@@ -1473,18 +1558,22 @@ Regeln:
         if (refCheck.canonical) data.reference = refCheck.canonical;
       }
       // Mark as manually edited so refresh won't overwrite
-      await updateBankTransaction(transactionId, { ...data, manuallyEdited: true });
+      // Audit: org-gefiltert – updateBankTransaction wirft bei fremder Transaktion
+      await updateBankTransaction(ctx.organizationId, transactionId, { ...data, manuallyEdited: true });
 
       // Also immediately learn/update the booking rule from this edit
       // so that future refreshes apply the NEW mapping to similar transactions
       const db = await getDb();
       if (db) {
-        const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, transactionId)).limit(1);
+        const [tx] = await db.select().from(bankTransactions)
+          .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, transactionId)))
+          .limit(1);
         if (tx && tx.counterparty) {
           try {
             // Get bank account IDs to exclude them from rule learning
             // (bank accounts are derived from the transaction, not from rules)
-            const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)).map(ba => ba.accountId);
+            const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)
+              .where(eq(bankAccounts.organizationId, ctx.organizationId))).map(ba => ba.accountId);
 
             const ruleData: Parameters<typeof upsertBookingRule>[0] = {
               organizationId: ctx.organizationId,
@@ -1527,13 +1616,17 @@ Regeln:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Get bank account IDs to exclude from rules
-      const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)).map(ba => ba.accountId);
+      // Get bank account IDs to exclude from rules (Audit: org-gefiltert)
+      const bankAccountIds = (await db.select({ accountId: bankAccounts.accountId }).from(bankAccounts)
+        .where(eq(bankAccounts.organizationId, ctx.organizationId))).map(ba => ba.accountId);
 
       const results = [];
       for (const item of input.transactions) {
         try {
-          const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, item.transactionId)).limit(1);
+          // Audit: org-gefiltert – fremde Transaktionen gelten als "nicht ausstehend"
+          const [tx] = await db.select().from(bankTransactions)
+            .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, item.transactionId)))
+            .limit(1);
           if (!tx || tx.status !== "pending") { results.push({ txId: item.transactionId, success: false, error: "Nicht ausstehend" }); continue; }
 
           const amount = Math.abs(parseFloat(tx.amount as string));
@@ -1548,15 +1641,16 @@ Regeln:
             source: "bank_import",
             sourceRef: `bank-tx-${tx.id}`,
             fiscalYear: year,
-            status: "approved",
+            // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+            status: "pending",
             lines: [
               { accountId: item.debitAccountId, side: "debit", amount: amount.toFixed(2) },
               { accountId: item.creditAccountId, side: "credit", amount: amount.toFixed(2) },
             ],
           });
 
-          await approveBankTransaction(item.transactionId, entryId);
-          await approveJournalEntry(entryId, ctx.user.id);
+          await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
+          await approveBankTransaction(ctx.organizationId, item.transactionId, entryId);
           results.push({ txId: item.transactionId, success: true, entryId });
 
           // ── Learn booking rule from this approval ──
@@ -1635,7 +1729,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
           const rawContent = response.choices[0]?.message?.content;
           const bookingText = (typeof rawContent === "string" ? rawContent : "").trim().replace(/^"|"$/g, "");
           if (bookingText) {
-            await updateBankTransaction(tx.id, { description: bookingText });
+            await updateBankTransaction(ctx.organizationId, tx.id, { description: bookingText });
             results.push({ txId: tx.id, success: true, bookingText });
           } else {
             results.push({ txId: tx.id, success: false });
@@ -1660,10 +1754,14 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
 
       // Load bank accounts for auto-filling the correct bank account per transaction
       const allBankAccounts = await db.select({ id: bankAccounts.id, accountId: bankAccounts.accountId, name: bankAccounts.name })
-        .from(bankAccounts);
+        .from(bankAccounts)
+        .where(eq(bankAccounts.organizationId, ctx.organizationId));
 
-      // Get all pending transactions
-      const conditions = [eq(bankTransactions.status, "pending" as const)];
+      // Get all pending transactions (Audit: org-gefiltert)
+      const conditions = [
+        eq(bankTransactions.organizationId, ctx.organizationId),
+        eq(bankTransactions.status, "pending" as const),
+      ];
       if (input.bankAccountId) {
         conditions.push(eq(bankTransactions.bankAccountId, input.bankAccountId));
       }
@@ -1789,7 +1887,8 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         if (changed) {
           updateData.aiReasoning = `Gelernte Regel: ${matchedRule.counterpartyPattern} (${matchedRule.usageCount}x verwendet)`;
           updateData.aiConfidence = 98; // High confidence for learned rules
-          await db.update(bankTransactions).set(updateData).where(eq(bankTransactions.id, tx.id));
+          await db.update(bankTransactions).set(updateData)
+            .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, tx.id)));
           await incrementRuleUsage(matchedRule.id);
           updated++;
         }
@@ -1817,7 +1916,10 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         description: bankTransactions.description,
         isTransfer: bankTransactions.isTransfer,
       }).from(bankTransactions)
-        .where(and(eq(bankTransactions.status, 'pending')));
+        .where(and(
+          eq(bankTransactions.organizationId, ctx.organizationId), // Audit: org-gefiltert
+          eq(bankTransactions.status, 'pending'),
+        ));
 
       // Find matching pairs: same absolute amount, opposite sign, within 2 days, different bank accounts
       const found: Array<{idA: number, idB: number, amount: number}> = [];
@@ -1842,8 +1944,10 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       // Mark found pairs as transfers
       let marked = 0;
       for (const { idA, idB } of found) {
-        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idB }).where(eq(bankTransactions.id, idA));
-        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idA }).where(eq(bankTransactions.id, idB));
+        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idB })
+          .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, idA)));
+        await db.update(bankTransactions).set({ isTransfer: true, transferPartnerId: idA })
+          .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, idB)));
         marked += 2;
       }
 
@@ -1863,12 +1967,15 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       const db = dbRaw2;
 
       // Get this transaction
-      const [txA] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.txId));
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [txA] = await db.select().from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, input.txId)));
       if (!txA) throw new TRPCError({ code: "NOT_FOUND", message: "Transaktion nicht gefunden" });
       if (!txA.isTransfer || !txA.transferPartnerId) throw new TRPCError({ code: "BAD_REQUEST", message: "Keine Transfer-Transaktion" });
 
       // Get partner transaction
-      const [txB] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, txA.transferPartnerId));
+      const [txB] = await db.select().from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, txA.transferPartnerId)));
       if (!txB) throw new TRPCError({ code: "NOT_FOUND", message: "Partner-Transaktion nicht gefunden" });
 
       // Check if already booked (either one)
@@ -1877,8 +1984,10 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       }
 
       // Get bank accounts to find accounting account IDs
-      const [baA] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, txA.bankAccountId));
-      const [baB] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, txB.bankAccountId));
+      const [baA] = await db.select().from(bankAccounts)
+        .where(and(eq(bankAccounts.organizationId, ctx.organizationId), eq(bankAccounts.id, txA.bankAccountId)));
+      const [baB] = await db.select().from(bankAccounts)
+        .where(and(eq(bankAccounts.organizationId, ctx.organizationId), eq(bankAccounts.id, txB.bankAccountId)));
       if (!baA || !baB) throw new TRPCError({ code: "NOT_FOUND", message: "Bankkonto nicht gefunden" });
 
       const amtA = parseFloat(txA.amount as string);
@@ -1907,22 +2016,24 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
         description,
         source: 'bank_import',
         fiscalYear: fy,
-        status: 'approved',
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: 'pending',
         lines: [
           { accountId: debitAccountId, side: 'debit', amount: amount.toFixed(2), description },
           { accountId: creditAccountId, side: 'credit', amount: amount.toFixed(2), description },
         ],
       });
-      await approveJournalEntry(newEntryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, newEntryId, ctx.user.id);
 
-      // Mark both transactions as matched
-      const db2 = db!;
-      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txA.id));
-      await db2.update(bankTransactions).set({ status: 'matched', journalEntryId: newEntryId }).where(eq(bankTransactions.id, txB.id));
+      // Mark both transactions as matched (Audit: org-gefilterte Helfer)
+      await approveBankTransaction(ctx.organizationId, txA.id, newEntryId);
+      await approveBankTransaction(ctx.organizationId, txB.id, newEntryId);
 
       // Retrieve the allocated entry number for the response
-      const [savedEntry] = await db2.select({ entryNumber: journalEntries.entryNumber })
-        .from(journalEntries).where(eq(journalEntries.id, newEntryId)).limit(1);
+      const [savedEntry] = await db.select({ entryNumber: journalEntries.entryNumber })
+        .from(journalEntries)
+        .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, newEntryId)))
+        .limit(1);
 
       return { success: true, entryId: newEntryId, entryNumber: savedEntry?.entryNumber ?? null };
     }),
@@ -1945,7 +2056,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
   listUnmatchedTransactions: orgProcedure
     .input(z.object({
       search: z.string().optional(),
-      limit: z.number().default(50),
+      limit: z.number().int().min(1).max(500).default(50),
     }))
     .query(async ({ input, ctx }) => {
       const db = await getDb();
@@ -1987,7 +2098,8 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       const bankAccountIds = Array.from(new Set(rows.map(r => r.bankAccountId).filter(Boolean)));
       let bankAccountMap: Record<number, string> = {};
       if (bankAccountIds.length > 0) {
-        const bankRows = await db.select({ id: ba.id, name: ba.name }).from(ba).where(inArray(ba.id, bankAccountIds as number[]));
+        const bankRows = await db.select({ id: ba.id, name: ba.name }).from(ba)
+          .where(and(eqOp(ba.organizationId, ctx.organizationId), inArray(ba.id, bankAccountIds as number[])));
         bankAccountMap = Object.fromEntries(bankRows.map(b => [b.id, b.name]));
       }
 
@@ -2005,9 +2117,9 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      // Get all pending transactions
+      // Get all pending transactions (Audit: org-gefiltert)
       const pending = await db.select().from(bankTransactions)
-        .where(eq(bankTransactions.status, 'pending'));
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.status, 'pending')));
       // Store snapshot in memory (server-side cache)
       const snapshotId = `snap_${Date.now()}`;
       undoSnapshots.set(ctx.user.id as number, {
@@ -2070,7 +2182,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
           matchedDocumentId: txSnap.matchedDocumentId,
           matchScore: txSnap.matchScore,
           status: txSnap.status as "pending" | "matched" | "ignored",
-        }).where(eq(bankTransactions.id, txSnap.id));
+        }).where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, txSnap.id))); // Audit: org-gefiltert
         restored++;
       }
       // Remove snapshot after restore
@@ -2113,7 +2225,7 @@ Antworte NUR mit dem Buchungstext, nichts anderes.`
       if (ids.length > 0) {
         // Unlink any matched documents
         await db.update(documents).set({ bankTransactionId: null, matchStatus: 'unmatched', matchScore: null })
-          .where(inArray(documents.bankTransactionId, ids));
+          .where(and(eq(documents.organizationId, ctx.organizationId), inArray(documents.bankTransactionId, ids)));
         await db.delete(bankTransactions)
           .where(and(
             eq(bankTransactions.organizationId, ctx.organizationId),
@@ -2194,8 +2306,12 @@ const creditCardRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [stmt] = await db.select().from(creditCardStatements)
+        .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.id, input.statementId)))
+        .limit(1);
       if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
+      if (stmt.status === "approved") throw new TRPCError({ code: "CONFLICT", message: "Abrechnung ist bereits verbucht" });
       // ── Fremdwährungs-Guard (Phase 2.5) ──
       if (!isSupportedBookingCurrency(stmt.currency)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: unsupportedBookingCurrencyMessage(stmt.currency) });
@@ -2214,15 +2330,17 @@ const creditCardRouter = router({
         source: "credit_card",
         sourceRef: `cc-stmt-${stmt.id}`,
         fiscalYear: year,
-        status: "approved",
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: "pending",
         lines: [
           { accountId: input.debitAccountId, side: "debit", amount: amount.toFixed(2), description: "Kreditkartenaufwand" },
           { accountId: visaAccount.id, side: "credit", amount: amount.toFixed(2), description: `Durchlaufkonto ${visaAccount.name}` },
         ],
       });
 
-      await db.update(creditCardStatements).set({ status: "approved", journalEntryId: entryId }).where(eq(creditCardStatements.id, input.statementId));
-      await approveJournalEntry(entryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
+      await db.update(creditCardStatements).set({ status: "approved", journalEntryId: entryId })
+        .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.id, input.statementId)));
 
       return { success: true, entryId };
     }),
@@ -2533,15 +2651,16 @@ Antworte NUR als JSON-Array:
         source: "credit_card",
         sourceRef: `cc-items-${Date.now()}`,
         fiscalYear: year,
-        status: "approved",
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: "pending",
         lines: [...debitLines, creditLine],
       });
 
-      await approveJournalEntry(entryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
 
-      // Mark bank transaction as matched if provided
+      // Mark bank transaction as matched if provided (Audit: org-gefiltert)
       if (input.bankTransactionId) {
-        await approveBankTransaction(input.bankTransactionId, entryId);
+        await approveBankTransaction(ctx.organizationId, input.bankTransactionId, entryId);
       }
 
       // Save as credit card statement
@@ -2582,9 +2701,21 @@ Antworte NUR als JSON-Array:
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Get the bank transaction to find the amount and date
-      const [tx] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, input.bankTransactionId)).limit(1);
+      // Get the bank transaction to find the amount and date (Audit: org-gefiltert)
+      const [tx] = await db.select().from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, input.bankTransactionId)))
+        .limit(1);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Banktransaktion nicht gefunden" });
+      if (tx.status === "matched" && tx.journalEntryId) {
+        throw new TRPCError({ code: "CONFLICT", message: `Diese Transaktion wurde bereits verbucht (Journal-Eintrag #${tx.journalEntryId}). Doppelbuchung verhindert.` });
+      }
+      // Audit: bestehende Abrechnung muss zur Organisation gehören
+      if (input.statementId) {
+        const [existingStmt] = await db.select({ id: creditCardStatements.id }).from(creditCardStatements)
+          .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.id, input.statementId)))
+          .limit(1);
+        if (!existingStmt) throw new TRPCError({ code: "NOT_FOUND", message: "Kreditkartenabrechnung nicht gefunden" });
+      }
 
       const visaAccount = await resolveCcClearingAccount(ctx.organizationId);
       if (!visaAccount) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Kreditkarten-Durchlaufkonto nicht gefunden (Einstellungen → Konten-Mapping)" });
@@ -2606,13 +2737,14 @@ Antworte NUR als JSON-Array:
         source: "bank_import",
         sourceRef: `bank-tx-${tx.id}`,
         fiscalYear: year,
-        status: "approved",
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: "pending",
         lines: [
           { accountId: visaAccount.id, side: "debit", amount: paidAmount.toFixed(2), description: visaAccount.name },
           { accountId: bankAccount.id, side: "credit", amount: paidAmount.toFixed(2), description: bankAccount.name },
         ],
       });
-      await approveJournalEntry(entry1Id, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entry1Id, ctx.user.id);
 
       // ── Entry 2: Diverse Aufwandkonten (Soll) / 1082 Durchlaufkonto (Haben) ──
       const itemsTotal = input.items.reduce((s, i) => s + Math.abs(parseFloat(i.amount)), 0);
@@ -2629,22 +2761,23 @@ Antworte NUR als JSON-Array:
         source: "credit_card",
         sourceRef: `cc-items-${Date.now()}`,
         fiscalYear: year,
-        status: "approved",
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: "pending",
         lines: [
           ...debitLines,
           { accountId: visaAccount.id, side: "credit", amount: itemsTotal.toFixed(2), description: `${visaAccount.name} – ${input.counterparty}` },
         ],
       });
-      await approveJournalEntry(entry2Id, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entry2Id, ctx.user.id);
 
-      // Mark bank transaction as matched (linked to entry1)
-      await approveBankTransaction(input.bankTransactionId, entry1Id);
+      // Mark bank transaction as matched (linked to entry1) – Audit: org-gefiltert
+      await approveBankTransaction(ctx.organizationId, input.bankTransactionId, entry1Id);
 
-      // Save or update credit card statement
+      // Save or update credit card statement (Audit: org-gefiltert)
       if (input.statementId) {
         await db.update(creditCardStatements)
           .set({ status: "approved", journalEntryId: entry2Id })
-          .where(eq(creditCardStatements.id, input.statementId));
+          .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.id, input.statementId)));
       } else {
         await db.insert(creditCardStatements).values({
           organizationId: ctx.organizationId,
@@ -2666,19 +2799,26 @@ Antworte NUR als JSON-Array:
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [stmt] = await db.select().from(creditCardStatements)
+        .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.id, input.statementId)))
+        .limit(1);
       if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
       if (stmt.status !== "approved") throw new TRPCError({ code: "BAD_REQUEST", message: "Abrechnung ist nicht verbucht" });
-      // Delete the linked journal entry
+      // Delete the linked journal entry (org-gefiltert; wirft bei verbuchtem Eintrag – GeBüV)
       if (stmt.journalEntryId) {
-        await deleteJournalEntry(stmt.journalEntryId);
+        await deleteJournalEntry(ctx.organizationId, stmt.journalEntryId);
       }
       // Revert CC statement to pending
-      await revertCcStatement(input.statementId);
+      await revertCcStatement(ctx.organizationId, input.statementId);
       // Also revert linked bank transaction if any
-      const [linkedTx] = await db.select().from(bankTransactions).where(eq(bankTransactions.journalEntryId, stmt.journalEntryId!)).limit(1);
-      if (linkedTx) {
-        await revertBankTransaction(linkedTx.id);
+      if (stmt.journalEntryId) {
+        const [linkedTx] = await db.select().from(bankTransactions)
+          .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.journalEntryId, stmt.journalEntryId)))
+          .limit(1);
+        if (linkedTx) {
+          await revertBankTransaction(ctx.organizationId, linkedTx.id);
+        }
       }
       return { success: true };
     }),
@@ -2690,10 +2830,13 @@ Antworte NUR als JSON-Array:
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const [stmt] = await db.select().from(creditCardStatements).where(eq(creditCardStatements.id, input.statementId)).limit(1);
+      // Audit: org-gefiltert (Mandantentrennung)
+      const [stmt] = await db.select().from(creditCardStatements)
+        .where(and(eq(creditCardStatements.organizationId, ctx.organizationId), eq(creditCardStatements.id, input.statementId)))
+        .limit(1);
       if (!stmt) throw new TRPCError({ code: "NOT_FOUND" });
       if (stmt.status === "approved") throw new TRPCError({ code: "BAD_REQUEST", message: "Verbuchte Abrechnung kann nicht gel\u00f6scht werden. Zuerst Verbuchung r\u00fcckg\u00e4ngig machen." });
-      await deleteCcStatement(input.statementId);
+      await deleteCcStatement(ctx.organizationId, input.statementId);
       return { success: true };
     }),
 });
@@ -2791,6 +2934,7 @@ const payrollRouter = router({
         .from(payrollEntries)
         .where(
           and(
+            eq(payrollEntries.organizationId, ctx.organizationId), // Audit: org-gefiltert
             eq(payrollEntries.year, input.year),
             eq(payrollEntries.employeeId, input.employeeId)
           )
@@ -2960,24 +3104,28 @@ const payrollRouter = router({
       }
 
       // ── Source 1: Journal entries (if any exist) ──
+      // Audit: alle Quellen org-gefiltert (Mandantentrennung)
       const lohnEntries = await db
         .select()
         .from(journalEntries)
         .where(
           and(
+            eq(journalEntries.organizationId, ctx.organizationId),
             eq(journalEntries.fiscalYear, input.year),
             sql`(${journalEntries.description} LIKE '%Lohn%' OR ${journalEntries.description} LIKE '%Akontozahlung%' OR ${journalEntries.description} LIKE '%Gehalt%')`
           )
         );
 
-      const salaryAccounts = await db.select().from(accounts).where(
-        sql`${accounts.number} IN ('4000','4001','4002','4003','4004','4005')`
-      );
+      const salaryAccounts = await db.select().from(accounts).where(and(
+        eq(accounts.organizationId, ctx.organizationId),
+        sql`${accounts.number} IN ('4000','4001','4002','4003','4004','4005')`,
+      ));
       const salaryAccIds = new Set(salaryAccounts.map(a => a.id));
 
-      const personalBankAccounts = await db.select().from(accounts).where(
-        sql`${accounts.number} IN ('1031','1032','1033','1071','1081','1082','1083')`
-      );
+      const personalBankAccounts = await db.select().from(accounts).where(and(
+        eq(accounts.organizationId, ctx.organizationId),
+        sql`${accounts.number} IN ('1031','1032','1033','1071','1081','1082','1083')`,
+      ));
       const personalBankAccIds = new Set(personalBankAccounts.map(a => a.id));
 
       type PayrollKey = string;
@@ -3020,6 +3168,7 @@ const payrollRouter = router({
         const yearEnd = `${input.year}-12-31`;
         const lohnTxns = await db.select().from(bankTransactions).where(
           and(
+            eq(bankTransactions.organizationId, ctx.organizationId), // Audit: org-gefiltert
             sql`(${bankTransactions.description} LIKE '%Lohn%' OR ${bankTransactions.description} LIKE '%Akontozahlung%' OR ${bankTransactions.description} LIKE '%Gehalt%')`,
             sql`${bankTransactions.transactionDate} >= ${yearStart}`,
             sql`${bankTransactions.transactionDate} <= ${yearEnd}`
@@ -3093,9 +3242,10 @@ const payrollRouter = router({
           continue;
         }
 
-        // Check if payroll entry already exists
+        // Check if payroll entry already exists (Audit: org-gefiltert)
         const existing = await db.select().from(payrollEntries).where(
           and(
+            eq(payrollEntries.organizationId, ctx.organizationId),
             eq(payrollEntries.employeeId, emp.id),
             eq(payrollEntries.year, g.year),
             eq(payrollEntries.month, g.month)
@@ -3119,7 +3269,7 @@ const payrollRouter = router({
           await db.update(payrollEntries).set({
             ...payrollData,
             notes: `Aktualisiert aus ${g.source === 'journal' ? 'Journal' : 'Banktransaktionen'} (${g.sourceCount} Buchung${g.sourceCount !== 1 ? "en" : ""})`,
-          }).where(eq(payrollEntries.id, existing[0].id));
+          }).where(and(eq(payrollEntries.organizationId, ctx.organizationId), eq(payrollEntries.id, existing[0].id)));
           updated++;
         } else {
           await db.insert(payrollEntries).values({
@@ -3199,7 +3349,7 @@ const payrollRouter = router({
             ktgUvgEmployer: ktgEmpr.toFixed(2),
             totalEmployerCost: (Math.round(totalEmployerCost * 100) / 100).toFixed(2),
             notes: `Abzüge neu berechnet (AHV ${(ahvEmpRate * 100).toFixed(1)}%, BVG CHF ${bvgEmpMonthly.toFixed(2)}/Mt.)`,
-          }).where(eq(payrollEntries.id, entry.id));
+          }).where(and(eq(payrollEntries.organizationId, ctx.organizationId), eq(payrollEntries.id, entry.id))); // Audit: org-gefiltert
           recalculated++;
         }
       }
@@ -3269,12 +3419,13 @@ const payrollRouter = router({
         source: "payroll",
         sourceRef: `payroll-${p.id}`,
         fiscalYear: p.year,
-        status: "approved",
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: "pending",
         lines,
       });
 
+      await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
       await db.update(payrollEntries).set({ status: "approved", journalEntryId: entryId }).where(and(eq(payrollEntries.id, input.payrollId), eq(payrollEntries.organizationId, ctx.organizationId)));
-      await approveJournalEntry(entryId, ctx.user.id);
 
       return { success: true, entryId };
     }),
@@ -3316,6 +3467,7 @@ const payrollRouter = router({
         bankAccountId: bankTransactions.bankAccountId,
       }).from(bankTransactions).where(
         and(
+          eq(bankTransactions.organizationId, ctx.organizationId), // Audit: org-gefiltert
           sql`${bankTransactions.transactionDate} >= ${yearStart}`,
           sql`${bankTransactions.transactionDate} <= ${yearEnd}`,
           sql`(${bankTransactions.description} LIKE ${'%Lohn%'} OR ${bankTransactions.suggestedBookingText} LIKE ${'%Lohn%'})`
@@ -3335,8 +3487,9 @@ const payrollRouter = router({
         return true;
       });
 
-      // Enrich with bank account name
-      const bankAccs = await db.select().from(bankAccounts);
+      // Enrich with bank account name (Audit: org-gefiltert)
+      const bankAccs = await db.select().from(bankAccounts)
+        .where(eq(bankAccounts.organizationId, ctx.organizationId));
       const bankAccMap = new Map(bankAccs.map(b => [b.id, b.name]));
 
       return matched.map(tx => ({
@@ -3356,12 +3509,19 @@ const payrollRouter = router({
       const [emp] = await db.select().from(employees).where(and(eq(employees.id, input.employeeId), eq(employees.organizationId, ctx.organizationId)));
       if (!emp) throw new TRPCError({ code: 'NOT_FOUND', message: 'Mitarbeiter nicht gefunden' });
 
-      // Fetch company settings
-      const [company] = await db.select().from(companySettings);
+      // Fetch company settings (Audit: org-gefiltert – sonst landet eine fremde
+      // Firmenadresse auf dem Lohnausweis)
+      const [company] = await db.select().from(companySettings)
+        .where(eq(companySettings.organizationId, ctx.organizationId))
+        .limit(1);
 
-      // Fetch payroll entries for the year
+      // Fetch payroll entries for the year (Audit: org-gefiltert)
       const rows = await db.select().from(payrollEntries)
-        .where(and(eq(payrollEntries.year, input.year), eq(payrollEntries.employeeId, input.employeeId)))
+        .where(and(
+          eq(payrollEntries.organizationId, ctx.organizationId),
+          eq(payrollEntries.year, input.year),
+          eq(payrollEntries.employeeId, input.employeeId),
+        ))
         .orderBy(payrollEntries.month);
 
       // Calculate totals
@@ -3657,6 +3817,7 @@ const vatRouter = router({
         defaultVatRate: accounts.defaultVatRate,
       }).from(accounts)
         .where(and(
+          eq(accounts.organizationId, ctx.organizationId), // Audit: org-gefiltert
           eq(accounts.isVatRelevant, true),
           eq(accounts.accountType, "revenue"),
         ));
@@ -3667,6 +3828,9 @@ const vatRouter = router({
       let turnover81 = 0;
       let turnover26 = 0;
       let turnover38 = 0;
+      // Audit: Umsatz mit MWST-Satz 0 (steuerbefreit/ausgenommen) gehört in
+      // turnoverExempt, nicht in den 2.6%-Topf.
+      let turnoverExempt = 0;
 
       if (vatAccountIds.length > 0) {
         // Get all credit-side lines on VAT-relevant revenue accounts for these entries
@@ -3694,7 +3858,9 @@ const vatRouter = router({
 
           totalTurnover += signedAmt;
 
-          if (effectiveRate >= 7) {
+          if (effectiveRate <= 0) {
+            turnoverExempt += signedAmt;
+          } else if (effectiveRate >= 7) {
             turnover81 += signedAmt;
           } else if (effectiveRate >= 3) {
             turnover38 += signedAmt;
@@ -3707,11 +3873,15 @@ const vatRouter = router({
       // Calculate VAT due based on method
       let vatDue81 = 0, vatDue26 = 0, vatDue38 = 0;
 
-      if (vatMethod === "saldo") {
-        // Saldosteuersatz: one flat rate on total turnover
-        // All turnover goes into turnover81 bucket for simplicity
-        const totalVat = totalTurnover * (saldoRate / 100);
-        turnover81 = totalTurnover;
+      // Audit: Pauschalsteuersatz (pauschal) funktioniert wie der Saldosteuersatz:
+      // ein Satz auf den steuerbaren Bruttoumsatz, kein Vorsteuerabzug.
+      const isFlatRate = vatMethod === "saldo" || vatMethod === "pauschal";
+      if (isFlatRate) {
+        // Saldo-/Pauschalsteuersatz: one flat rate on taxable turnover
+        // (steuerbefreiter Umsatz bleibt in turnoverExempt).
+        const taxableTurnover = totalTurnover - turnoverExempt;
+        const totalVat = taxableTurnover * (saldoRate / 100);
+        turnover81 = taxableTurnover;
         turnover26 = 0;
         turnover38 = 0;
         vatDue81 = totalVat;
@@ -3724,9 +3894,10 @@ const vatRouter = router({
 
       // Input tax (Vorsteuer) – sum of vatAmount on debit-side lines on expense accounts
       let inputTax = 0;
-      if (vatMethod === "effective") {
+      if (!isFlatRate) {
         const expenseAccounts = await db.select({ id: accounts.id }).from(accounts)
           .where(and(
+            eq(accounts.organizationId, ctx.organizationId), // Audit: org-gefiltert
             eq(accounts.isVatRelevant, true),
             eq(accounts.accountType, "expense"),
           ));
@@ -3747,7 +3918,7 @@ const vatRouter = router({
           }
         }
       }
-      // For Saldosteuersatz: no Vorsteuer deduction
+      // For Saldo-/Pauschalsteuersatz: no Vorsteuer deduction
 
       const netVatPayable = (vatDue81 + vatDue26 + vatDue38) - inputTax;
 
@@ -3760,6 +3931,7 @@ const vatRouter = router({
         turnover81: turnover81.toFixed(2),
         turnover26: turnover26.toFixed(2),
         turnover38: turnover38.toFixed(2),
+        turnoverExempt: turnoverExempt.toFixed(2),
         vatDue81: vatDue81.toFixed(2),
         vatDue26: vatDue26.toFixed(2),
         vatDue38: vatDue38.toFixed(2),
@@ -3884,8 +4056,8 @@ const vatRouter = router({
               category = 'revenue';
               const signedAmt = line.side === 'credit' ? amt : -amt;
               entryTotalAmount += signedAmt;
-              // Calculate VAT for this line
-              if (vatMethod === 'saldo') {
+              // Calculate VAT for this line (Audit: pauschal wie saldo; 0% → keine MWST)
+              if (vatMethod === 'saldo' || vatMethod === 'pauschal') {
                 entryVatAmount += signedAmt * (saldoRate / 100);
               } else {
                 const rate = effectiveRate ?? 8.1;
@@ -3941,33 +4113,50 @@ const vatRouter = router({
       if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      await db.delete(vatPeriods).where(eq(vatPeriods.id, input.id));
+      // Audit: org-gefiltert; eingereichte/bezahlte Perioden sind unveränderlich
+      const [vp] = await db.select({ status: vatPeriods.status }).from(vatPeriods)
+        .where(and(eq(vatPeriods.organizationId, ctx.organizationId), eq(vatPeriods.id, input.id)))
+        .limit(1);
+      if (!vp) throw new TRPCError({ code: "NOT_FOUND", message: "MWST-Periode nicht gefunden" });
+      if (vp.status === "submitted" || vp.status === "paid") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Eingereichte oder bezahlte MWST-Perioden können nicht gelöscht werden.",
+        });
+      }
+      await db.delete(vatPeriods)
+        .where(and(eq(vatPeriods.organizationId, ctx.organizationId), eq(vatPeriods.id, input.id)));
       return { success: true };
     }),
 });
 
 // ─── Documents Router ─────────────────────────────────────────────────────────
+// Audit: gültige Werte von documents.documentType (drizzle/schema.ts)
+const DOCUMENT_TYPE_ENUM = z.enum(["invoice_in", "invoice_out", "receipt", "bank_statement", "credit_card_statement", "other"]);
+
 const documentsRouter = router({
   list: orgProcedure
     .input(z.object({
       journalEntryId: z.number().optional(),
       bankTransactionId: z.number().optional(),
-      documentType: z.string().optional(),
+      // Audit: nur gültige DB-Enum-Werte (documents.documentType)
+      documentType: DOCUMENT_TYPE_ENUM.optional(),
       fiscalYear: z.number().optional(),
-      limit: z.number().default(200),
+      limit: z.number().int().min(1).max(500).default(200),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { and, eq: eqOp, desc: descOp } = await import("drizzle-orm");
-      const conditions = [];
+      // Audit: immer org-gefiltert (Mandantentrennung)
+      const conditions = [eqOp(docs.organizationId, ctx.organizationId)];
       if (input.journalEntryId) conditions.push(eqOp(docs.journalEntryId, input.journalEntryId));
       if (input.bankTransactionId) conditions.push(eqOp(docs.bankTransactionId, input.bankTransactionId));
-      if (input.documentType) conditions.push(eqOp(docs.documentType, input.documentType as any));
+      if (input.documentType) conditions.push(eqOp(docs.documentType, input.documentType));
       if (input.fiscalYear) conditions.push(eqOp(docs.fiscalYear, input.fiscalYear));
       const rows = await db.select().from(docs)
-        .where(conditions.length ? and(...conditions) : undefined)
+        .where(and(...conditions))
         .orderBy(descOp(docs.createdAt))
         .limit(input.limit);
       return rows;
@@ -3975,12 +4164,12 @@ const documentsRouter = router({
 
   getAiMetadata: orgProcedure
     .input(z.object({ documentId: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [doc] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
       let metadata = null;
       if (doc.aiMetadata) {
@@ -3995,15 +4184,32 @@ const documentsRouter = router({
       journalEntryId: z.number().optional(),
       bankTransactionId: z.number().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
+      // Audit: Dokument und Verknüpfungsziele müssen zur Organisation gehören
+      const [doc] = await db.select({ id: docs.id }).from(docs)
+        .where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)))
+        .limit(1);
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
+      if (input.journalEntryId) {
+        const [je] = await db.select({ id: journalEntries.id }).from(journalEntries)
+          .where(and(eq(journalEntries.organizationId, ctx.organizationId), eq(journalEntries.id, input.journalEntryId)))
+          .limit(1);
+        if (!je) throw new TRPCError({ code: "NOT_FOUND", message: "Journal-Eintrag nicht gefunden" });
+      }
+      if (input.bankTransactionId) {
+        const [tx] = await db.select({ id: bankTransactions.id }).from(bankTransactions)
+          .where(and(eq(bankTransactions.organizationId, ctx.organizationId), eq(bankTransactions.id, input.bankTransactionId)))
+          .limit(1);
+        if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Banktransaktion nicht gefunden" });
+      }
       await db.update(docs).set({
         journalEntryId: input.journalEntryId,
         bankTransactionId: input.bankTransactionId,
-      }).where(eqOp(docs.id, input.documentId));
+      }).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       return { success: true };
     }),
 
@@ -4013,14 +4219,14 @@ const documentsRouter = router({
       documentId: z.number(),
       fiscalYear: z.number(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
       await db.update(docs).set({
         fiscalYear: input.fiscalYear,
-      }).where(eqOp(docs.id, input.documentId));
+      }).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       return { success: true };
     }),
 
@@ -4045,23 +4251,29 @@ const documentsRouter = router({
           eqOp(txnsTbl.status, 'pending'),
         ));
       const matches = await autoMatchDocuments(ctx.organizationId, input.threshold);
-      const applied = await applyMatches(matches);
+      const applied = await applyMatches(ctx.organizationId, matches);
       return { matched: applied, total: matches.length, details: matches, debug: { unmatchedDocs: unmatchedDocs.length, pendingTxns: pendingTxns.length } };
     }),
 
   // Unmatch a document from a transaction
   unmatch: orgProcedure
     .input(z.object({ documentId: z.number() }))
-    .mutation(async ({ input }) => {
-      await unmatchDocument(input.documentId);
+    .mutation(async ({ input, ctx }) => {
+      // Audit: org-gefiltert – wirft bei fremdem Dokument
+      try {
+        await unmatchDocument(ctx.organizationId, input.documentId);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new TRPCError({ code: msg.includes("nicht gefunden") ? "NOT_FOUND" : "INTERNAL_SERVER_ERROR", message: msg });
+      }
       return { success: true };
     }),
 
   // Get match info for a bank transaction (document details + improved suggestion)
   getMatchInfo: orgProcedure
     .input(z.object({ transactionId: z.number() }))
-    .query(async ({ input }) => {
-      const doc = await getMatchedDocument(input.transactionId);
+    .query(async ({ input, ctx }) => {
+      const doc = await getMatchedDocument(ctx.organizationId, input.transactionId);
       if (!doc) return { matched: false, document: null, improvements: null };
       let metadata = null;
       if (doc.aiMetadata) {
@@ -4075,18 +4287,20 @@ const documentsRouter = router({
   listUnmatched: orgProcedure
     .input(z.object({
       search: z.string().optional(),
-      limit: z.number().default(50),
+      limit: z.number().int().min(1).max(500).default(50),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { and, eq: eqOp, or, like, desc: descOp, isNull } = await import("drizzle-orm");
+      // Audit: immer org-gefiltert
       const conditions = [
+        eqOp(docs.organizationId, ctx.organizationId),
         or(
           eqOp(docs.matchStatus, 'unmatched'),
           isNull(docs.matchStatus),
-        ),
+        )!,
       ];
       if (input.search) {
         const q = `%${input.search}%`;
@@ -4113,7 +4327,7 @@ const documentsRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs, suppliers: suppliersTbl, accounts: acctsTbl } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [doc] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
       let metadata = null;
       if (doc.aiMetadata) {
@@ -4122,7 +4336,8 @@ const documentsRouter = router({
       // Load linked supplier if exists
       let supplier = null;
       if (doc.supplierId) {
-        const [s] = await db.select().from(suppliersTbl).where(eqOp(suppliersTbl.id, doc.supplierId));
+        const [s] = await db.select().from(suppliersTbl)
+          .where(and(eqOp(suppliersTbl.organizationId, ctx.organizationId), eqOp(suppliersTbl.id, doc.supplierId)));
         if (s) supplier = s;
       }
       // Get booking suggestion: Auto-Learn rule has PRIORITY, then matched Txn, then LLM suggestion
@@ -4137,7 +4352,8 @@ const documentsRouter = router({
           let acctNumber = null;
           const acctId = rule.debitAccountId || rule.creditAccountId;
           if (acctId) {
-            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, acctId));
+            const [acct] = await db.select().from(acctsTbl)
+              .where(and(eqOp(acctsTbl.organizationId, ctx.organizationId), eqOp(acctsTbl.id, acctId)));
             if (acct) { acctName = acct.name; acctNumber = acct.number; }
           }
           bookingSuggestion = {
@@ -4154,11 +4370,13 @@ const documentsRouter = router({
       // 2. Try matched bank transaction's account suggestion (if no auto-learn rule found)
       if (!bookingSuggestion && doc.bankTransactionId) {
         const { bankTransactions: txnsTbl } = await import("../drizzle/schema");
-        const [txn] = await db.select().from(txnsTbl).where(eqOp(txnsTbl.id, doc.bankTransactionId));
+        const [txn] = await db.select().from(txnsTbl)
+          .where(and(eqOp(txnsTbl.organizationId, ctx.organizationId), eqOp(txnsTbl.id, doc.bankTransactionId)));
         if (txn) {
           const sugAcctId = txn.suggestedDebitAccountId || txn.suggestedCreditAccountId;
           if (sugAcctId) {
-            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, sugAcctId));
+            const [acct] = await db.select().from(acctsTbl)
+              .where(and(eqOp(acctsTbl.organizationId, ctx.organizationId), eqOp(acctsTbl.id, sugAcctId)));
             if (acct) {
               bookingSuggestion = {
                 accountId: acct.id,
@@ -4176,11 +4394,13 @@ const documentsRouter = router({
       // 3. Also check via matchedDocumentId (reverse lookup: find txn that has this doc matched)
       if (!bookingSuggestion) {
         const { bankTransactions: txnsTbl } = await import("../drizzle/schema");
-        const [matchedTxn] = await db.select().from(txnsTbl).where(eqOp(txnsTbl.matchedDocumentId, doc.id));
+        const [matchedTxn] = await db.select().from(txnsTbl)
+          .where(and(eqOp(txnsTbl.organizationId, ctx.organizationId), eqOp(txnsTbl.matchedDocumentId, doc.id)));
         if (matchedTxn) {
           const sugAcctId = matchedTxn.suggestedDebitAccountId || matchedTxn.suggestedCreditAccountId;
           if (sugAcctId) {
-            const [acct] = await db.select().from(acctsTbl).where(eqOp(acctsTbl.id, sugAcctId));
+            const [acct] = await db.select().from(acctsTbl)
+              .where(and(eqOp(acctsTbl.organizationId, ctx.organizationId), eqOp(acctsTbl.id, sugAcctId)));
             if (acct) {
               bookingSuggestion = {
                 accountId: acct.id,
@@ -4227,7 +4447,8 @@ const documentsRouter = router({
       // Check via bankTransactionId on document
       if (doc.bankTransactionId) {
         const { bankTransactions: txnsTbl2 } = await import("../drizzle/schema");
-        const [txn] = await db.select().from(txnsTbl2).where(eqOp(txnsTbl2.id, doc.bankTransactionId));
+        const [txn] = await db.select().from(txnsTbl2)
+          .where(and(eqOp(txnsTbl2.organizationId, ctx.organizationId), eqOp(txnsTbl2.id, doc.bankTransactionId)));
         if (txn) linkedTransaction = {
           id: txn.id,
           transactionDate: txn.transactionDate as string,
@@ -4245,7 +4466,8 @@ const documentsRouter = router({
       // Also check reverse lookup
       if (!linkedTransaction) {
         const { bankTransactions: txnsTbl3 } = await import("../drizzle/schema");
-        const [matchedTxn2] = await db.select().from(txnsTbl3).where(eqOp(txnsTbl3.matchedDocumentId, doc.id));
+        const [matchedTxn2] = await db.select().from(txnsTbl3)
+          .where(and(eqOp(txnsTbl3.organizationId, ctx.organizationId), eqOp(txnsTbl3.matchedDocumentId, doc.id)));
         if (matchedTxn2) linkedTransaction = {
           id: matchedTxn2.id,
           transactionDate: matchedTxn2.transactionDate as string,
@@ -4265,7 +4487,8 @@ const documentsRouter = router({
       let linkedBankAccount: { id: number; accountId: number | null; name: string } | null = null;
       if (linkedTransaction?.bankAccountId) {
         const { bankAccounts: baTbl } = await import("../drizzle/schema");
-        const [ba] = await db.select().from(baTbl).where(eqOp(baTbl.id, linkedTransaction.bankAccountId));
+        const [ba] = await db.select().from(baTbl)
+          .where(and(eqOp(baTbl.organizationId, ctx.organizationId), eqOp(baTbl.id, linkedTransaction.bankAccountId)));
         if (ba) linkedBankAccount = { id: ba.id, accountId: ba.accountId, name: ba.bank || ba.name || `Konto ${ba.id}` };
       }
       
@@ -4284,16 +4507,21 @@ const documentsRouter = router({
       const journalEntryId = doc.journalEntryId || linkedTransaction?.journalEntryId || null;
       if (journalEntryId) {
         const { journalEntries: jeTbl, journalLines: jlTbl } = await import("../drizzle/schema");
-        const [je] = await db.select({ status: jeTbl.status }).from(jeTbl).where(eqOp(jeTbl.id, journalEntryId)).limit(1);
+        // Audit: Journal-Eintrag nur innerhalb der Organisation laden
+        const [je] = await db.select({ status: jeTbl.status }).from(jeTbl)
+          .where(and(eqOp(jeTbl.organizationId, ctx.organizationId), eqOp(jeTbl.id, journalEntryId)))
+          .limit(1);
         if (je) journalEntryStatus = je.status;
 
-        // Load journal lines to get actual booked accounts
-        const lines = await db.select().from(jlTbl).where(eqOp(jlTbl.entryId, journalEntryId));
+        // Load journal lines to get actual booked accounts (nur wenn der Eintrag zur Org gehört)
+        const lines = je ? await db.select().from(jlTbl).where(eqOp(jlTbl.entryId, journalEntryId)) : [];
         const debitLine = lines.find(l => l.side === 'debit');
         const creditLine = lines.find(l => l.side === 'credit');
 
-        const debitAcct = debitLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl).where(eqOp(acctsTbl.id, debitLine.accountId)).limit(1).then(r => r[0]) : null;
-        const creditAcct = creditLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl).where(eqOp(acctsTbl.id, creditLine.accountId)).limit(1).then(r => r[0]) : null;
+        const debitAcct = debitLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl)
+          .where(and(eqOp(acctsTbl.organizationId, ctx.organizationId), eqOp(acctsTbl.id, debitLine.accountId))).limit(1).then(r => r[0]) : null;
+        const creditAcct = creditLine ? await db.select({ id: acctsTbl.id, number: acctsTbl.number, name: acctsTbl.name }).from(acctsTbl)
+          .where(and(eqOp(acctsTbl.organizationId, ctx.organizationId), eqOp(acctsTbl.id, creditLine.accountId))).limit(1).then(r => r[0]) : null;
 
         if (debitAcct || creditAcct) {
           journalEntryAccounts = {
@@ -4314,19 +4542,20 @@ const documentsRouter = router({
   updateMetadata: orgProcedure
     .input(z.object({
       documentId: z.number(),
-      metadata: z.record(z.string(), z.any()).optional(),
+      // Audit: keine beliebigen Objekte/Funktionen in den Metadaten – nur Primitive
+      metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
       notes: z.string().optional(),
-      documentType: z.string().optional(),
+      documentType: DOCUMENT_TYPE_ENUM.optional(),
       supplierId: z.number().nullable().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
       
       // Get current document
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [doc] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
 
       const updates: Record<string, any> = {};
@@ -4343,26 +4572,36 @@ const documentsRouter = router({
 
       if (input.notes !== undefined) updates.notes = input.notes;
       if (input.documentType !== undefined) updates.documentType = input.documentType;
-      if (input.supplierId !== undefined) updates.supplierId = input.supplierId;
+      if (input.supplierId !== undefined) {
+        // Audit: Lieferant muss zur Organisation gehören
+        if (input.supplierId !== null) {
+          const { suppliers: suppliersTbl } = await import("../drizzle/schema");
+          const [sup] = await db.select({ id: suppliersTbl.id }).from(suppliersTbl)
+            .where(and(eqOp(suppliersTbl.organizationId, ctx.organizationId), eqOp(suppliersTbl.id, input.supplierId)))
+            .limit(1);
+          if (!sup) throw new TRPCError({ code: "NOT_FOUND", message: "Lieferant nicht gefunden" });
+        }
+        updates.supplierId = input.supplierId;
+      }
 
       if (Object.keys(updates).length > 0) {
-        await db.update(docs).set(updates).where(eqOp(docs.id, input.documentId));
+        await db.update(docs).set(updates).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       }
 
       // Return updated document
-      const [updated] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [updated] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       return { success: true, document: updated };
     }),
 
   // Re-analyze a document with AI (re-extract metadata)
   reanalyze: orgProcedure
     .input(z.object({ documentId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [doc] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
 
       const isPdf = doc.mimeType === "application/pdf";
@@ -4462,8 +4701,8 @@ Antworte NUR mit dem JSON-Objekt, ohne Erkl\u00e4rungen.`,
         extractedText = parsed.rawText ?? null;
       } catch { /* ignore */ }
 
-      await db.update(docs).set({ aiMetadata, extractedText }).where(eqOp(docs.id, input.documentId));
-      const [updated] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      await db.update(docs).set({ aiMetadata, extractedText }).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
+      const [updated] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       let metadata = null;
       if (updated.aiMetadata) {
         try { metadata = JSON.parse(updated.aiMetadata); } catch { /* ignore */ }
@@ -4555,7 +4794,7 @@ Antworte NUR mit dem JSON-Objekt.`,
           const aiMetadata = typeof content === "string" ? content : JSON.stringify(content);
           let extractedText: string | null = null;
           try { const parsed = JSON.parse(aiMetadata); extractedText = parsed.rawText ?? null; } catch { /* ignore */ }
-          await db.update(docs).set({ aiMetadata, extractedText }).where(eqOp(docs.id, doc.id));
+          await db.update(docs).set({ aiMetadata, extractedText }).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, doc.id)));
           results.push({ id: doc.id, filename: doc.filename, success: true });
         } catch (e: any) {
           results.push({ id: doc.id, filename: doc.filename, success: false, error: e.message?.slice(0, 100) });
@@ -4570,18 +4809,19 @@ Antworte NUR mit dem JSON-Objekt.`,
       documentId: z.number(),
       transactionId: z.number(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs, bankTransactions: txns } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
 
       // Verify document exists
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [doc] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
 
-      // Verify transaction exists
-      const [tx] = await db.select().from(txns).where(eqOp(txns.id, input.transactionId));
+      // Verify transaction exists (Audit: org-gefiltert)
+      const [tx] = await db.select().from(txns)
+        .where(and(eqOp(txns.organizationId, ctx.organizationId), eqOp(txns.id, input.transactionId)));
       if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Transaktion nicht gefunden" });
 
       // Update document
@@ -4591,15 +4831,15 @@ Antworte NUR mit dem JSON-Objekt.`,
           matchStatus: 'manual',
           matchScore: 100,
         })
-        .where(eqOp(docs.id, input.documentId));
+        .where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
 
-      // Update bank transaction
+      // Update bank transaction (Audit: org-gefiltert)
       await db.update(txns)
         .set({
           matchedDocumentId: input.documentId,
           matchScore: 100,
         })
-        .where(eqOp(txns.id, input.transactionId));
+        .where(and(eqOp(txns.organizationId, ctx.organizationId), eqOp(txns.id, input.transactionId)));
 
       return { success: true };
     }),
@@ -4624,7 +4864,7 @@ Antworte NUR mit dem JSON-Objekt.`,
       const { eq: eqOp } = await import("drizzle-orm");
       
       // Verify document exists
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [doc] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
       // ── Fremdwährungs-Guard (Phase 2.5): Währung aus den KI-Metadaten ──
       let docCurrency: string | null = null;
@@ -4669,10 +4909,11 @@ Antworte NUR mit dem JSON-Objekt.`,
         description: input.description || `Beleg: ${doc.filename}`,
         source: "manual",
         fiscalYear: year,
-        status: "approved",
+        // Audit: pending anlegen, approveJournalEntry setzt approved + Belegnummer
+        status: "pending",
         lines,
       });
-      await approveJournalEntry(entryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
       
       // Link document to journal entry
       await db.update(docs)
@@ -4680,7 +4921,7 @@ Antworte NUR mit dem JSON-Objekt.`,
           journalEntryId: entryId,
           matchStatus: 'manual',
         })
-        .where(eqOp(docs.id, input.documentId));
+        .where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       
       return { entryId };
     }),
@@ -4695,7 +4936,7 @@ Antworte NUR mit dem JSON-Objekt.`,
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { documents: docs } = await import("../drizzle/schema");
       const { eq: eqOp } = await import("drizzle-orm");
-      const [doc] = await db.select().from(docs).where(eqOp(docs.id, input.documentId));
+      const [doc] = await db.select().from(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       if (!doc) throw new TRPCError({ code: "NOT_FOUND", message: "Dokument nicht gefunden" });
       // Delete S3 file if key exists
       if (doc.s3Key) {
@@ -4704,7 +4945,7 @@ Antworte NUR mit dem JSON-Objekt.`,
           await storageDelete(doc.s3Key);
         } catch { /* S3 delete failed, continue */ }
       }
-      await db.delete(docs).where(eqOp(docs.id, input.documentId));
+      await db.delete(docs).where(and(eqOp(docs.organizationId, ctx.organizationId), eqOp(docs.id, input.documentId)));
       return { success: true };
     }),
 
@@ -4719,8 +4960,11 @@ Antworte NUR mit dem JSON-Objekt.`,
       const { documents: docs } = await import("../drizzle/schema");
       const { inArray: inArrayOp } = await import("drizzle-orm");
       // Load docs to get S3 keys
+      // Audit: nur Dokumente dieser Organisation
       const rows = await db.select({ id: docs.id, s3Key: docs.s3Key }).from(docs)
-        .where(inArrayOp(docs.id, input.ids));
+        .where(and(eq(docs.organizationId, ctx.organizationId), inArrayOp(docs.id, input.ids)));
+      if (rows.length === 0) return { deleted: 0 };
+      const ownedIds = rows.map(r => r.id);
       // Delete S3 files
       for (const row of rows) {
         if (row.s3Key) {
@@ -4730,7 +4974,7 @@ Antworte NUR mit dem JSON-Objekt.`,
           } catch { /* S3 delete failed, continue */ }
         }
       }
-       await db.delete(docs).where(inArrayOp(docs.id, input.ids));
+      await db.delete(docs).where(and(eq(docs.organizationId, ctx.organizationId), inArrayOp(docs.id, ownedIds)));
       return { deleted: rows.length };
     }),
 

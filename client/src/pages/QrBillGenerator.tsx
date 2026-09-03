@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { todayISO } from "@/lib/date";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -64,7 +65,7 @@ export default function QrBillGenerator() {
   const [recipientZip, setRecipientZip] = useState("");
   const [recipientCity, setRecipientCity] = useState("");
 
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invoiceDate, setInvoiceDate] = useState(todayISO());
   const [invoiceSubject, setInvoiceSubject] = useState("Rechnung");
   const [salutation, setSalutation] = useState("");
   // AP3.1: Textbausteine als waehlbare Vorlagen (Sie/Du)

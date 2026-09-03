@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { parseSwissAmount } from "@/lib/amount";
+import { todayISO } from "@/lib/date";
 import { trpc } from "@/lib/trpc";
 import { useFiscalYear } from "@/contexts/FiscalYearContext";
 import { toast } from "sonner";
@@ -45,7 +47,7 @@ export default function TimeTracking() {
   // Entry form
   const [eCustomerId, setECustomerId] = useState("");
   const [eServiceId, setEServiceId] = useState("");
-  const [eDate, setEDate] = useState(new Date().toISOString().slice(0, 10));
+  const [eDate, setEDate] = useState(todayISO());
   const [eHours, setEHours] = useState("");
   const [eDescription, setEDescription] = useState("");
   const [eHourlyRate, setEHourlyRate] = useState("");
@@ -101,7 +103,7 @@ export default function TimeTracking() {
     setEditEntry(null);
     setECustomerId("");
     setEServiceId("");
-    setEDate(new Date().toISOString().slice(0, 10));
+    setEDate(todayISO());
     setEHours("");
     setEDescription("");
     setEHourlyRate("");
@@ -140,24 +142,31 @@ export default function TimeTracking() {
       toast.error("Bitte alle Pflichtfelder ausfüllen");
       return;
     }
+    // Audit: "1,5" oder "1'200" ergaben mit Number() NaN → Zod-Fehler vom Server.
+    const hours = parseSwissAmount(eHours);
+    const hourlyRate = parseSwissAmount(eHourlyRate);
+    if (hours == null || hours <= 0 || hourlyRate == null || hourlyRate < 0) {
+      toast.error("Stunden und Stundensatz müssen gültige Zahlen sein");
+      return;
+    }
     if (editEntry) {
       updateEntry.mutate({
         id: editEntry.id,
         customerId: Number(eCustomerId),
         serviceId: eServiceId ? Number(eServiceId) : undefined,
         date: eDate,
-        hours: Number(eHours),
+        hours,
         description: eDescription || undefined,
-        hourlyRate: Number(eHourlyRate),
+        hourlyRate,
       });
     } else {
       createEntry.mutate({
         customerId: Number(eCustomerId),
         serviceId: eServiceId ? Number(eServiceId) : undefined,
         date: eDate,
-        hours: Number(eHours),
+        hours,
         description: eDescription || undefined,
-        hourlyRate: Number(eHourlyRate),
+        hourlyRate,
         fiscalYear,
       });
     }

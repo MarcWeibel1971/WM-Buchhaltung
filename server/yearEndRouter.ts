@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, orgProcedure } from "./_core/trpc";
-import { getDb, allocateEntryNumber } from "./db";
+import { getDb, assertFiscalYearOpen, createJournalEntry, approveJournalEntry } from "./db";
 import {
   fiscalYears,
   yearEndBookings,
@@ -14,13 +15,75 @@ import {
 } from "../drizzle/schema";
 import { eq, and, sql, gte, lte, like, or, desc, asc, ne, isNull } from "drizzle-orm";
 
+// Audit: Schlüssel für die Idempotenz-Prüfung von Jahresabschluss-Vorschlägen.
+// Abschreibungen: ein Vorschlag pro Anlagekonto (Haben-Seite) und Jahr.
+// Abgrenzungen/Kreditoren: Typ + Kontenpaar + Betrag + Quelle.
+export function suggestionKey(b: {
+  bookingType: string;
+  debitAccountId: number;
+  creditAccountId: number;
+  amount: string;
+  sourceDocumentId?: number | null;
+  sourceJournalEntryId?: number | null;
+}): string {
+  if (b.bookingType === "abschreibung") {
+    return `abschreibung:${b.creditAccountId}`;
+  }
+  return [
+    b.bookingType,
+    b.debitAccountId,
+    b.creditAccountId,
+    Number(b.amount).toFixed(2),
+    b.sourceJournalEntryId ?? 0,
+    b.sourceDocumentId ?? 0,
+  ].join(":");
+}
+
+// Audit: Jahresabschluss-Buchung über die zentralen Helfer erstellen
+// (Soll=Haben-Check, Periodensperre, lückenlose Belegnummer bei Freigabe).
+async function bookYearEndEntry(
+  orgId: number,
+  userId: number,
+  booking: {
+    bookingType: string;
+    description: string;
+    amount: string;
+    debitAccountId: number;
+    creditAccountId: number;
+    aiReasoning?: string | null;
+  },
+  year: number,
+): Promise<number> {
+  const bookingDate = `${year}-12-31`;
+  await assertFiscalYearOpen(orgId, year, bookingDate);
+  const entryId = await createJournalEntry({
+    organizationId: orgId,
+    bookingDate,
+    description: booking.description,
+    status: "pending",
+    source: "system",
+    sourceRef: `yearend-${year}-${booking.bookingType}`,
+    fiscalYear: year,
+    aiReasoning: booking.aiReasoning ?? undefined,
+    lines: [
+      { accountId: booking.debitAccountId, side: "debit", amount: booking.amount, description: booking.description },
+      { accountId: booking.creditAccountId, side: "credit", amount: booking.amount, description: booking.description },
+    ],
+  });
+  await approveJournalEntry(orgId, entryId, userId);
+  return entryId;
+}
+
 export const yearEndRouter = router({
   // ─── Fiscal Year Management ──────────────────────────────────────────────────
 
-  listFiscalYears: orgProcedure.query(async () => {
+  listFiscalYears: orgProcedure.query(async ({ ctx }) => {
     const db = await getDb();
-      if (!db) throw new Error("Database not available");
-    return db.select().from(fiscalYears).orderBy(desc(fiscalYears.year));
+    if (!db) throw new Error("Database not available");
+    // Audit: org-scoped
+    return db.select().from(fiscalYears)
+      .where(eq(fiscalYears.organizationId, ctx.organizationId))
+      .orderBy(desc(fiscalYears.year));
   }),
 
   createFiscalYear: orgProcedure
@@ -69,10 +132,33 @@ export const yearEndRouter = router({
       const closingEnd = `${closingYear}-12-31`;
       const nextStart = `${nextYear}-01-01`;
 
-      // Delete existing unapproved suggestions
+      // Delete existing unapproved suggestions (Audit: org-scoped)
       await db.delete(yearEndBookings).where(
-        and(eq(yearEndBookings.fiscalYear, closingYear), eq(yearEndBookings.status, "suggested"))
+        and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.fiscalYear, closingYear),
+          eq(yearEndBookings.status, "suggested"),
+        )
       );
+
+      // Audit: Idempotenz – bereits freigegebene Jahresabschluss-Buchungen
+      // desselben Typs/Kontos dürfen nicht erneut vorgeschlagen werden.
+      const approvedExisting = await db.select({
+        bookingType: yearEndBookings.bookingType,
+        debitAccountId: yearEndBookings.debitAccountId,
+        creditAccountId: yearEndBookings.creditAccountId,
+        amount: yearEndBookings.amount,
+        sourceDocumentId: yearEndBookings.sourceDocumentId,
+        sourceJournalEntryId: yearEndBookings.sourceJournalEntryId,
+      }).from(yearEndBookings).where(
+        and(
+          eq(yearEndBookings.organizationId, ctx.organizationId),
+          eq(yearEndBookings.fiscalYear, closingYear),
+          eq(yearEndBookings.status, "approved"),
+        )
+      );
+      const approvedKeys = new Set(approvedExisting.map(b => suggestionKey(b)));
+      const alreadyApproved = (b: Parameters<typeof suggestionKey>[0]) => approvedKeys.has(suggestionKey(b));
 
       const suggestions: Array<{
         fiscalYear: number;
@@ -85,10 +171,16 @@ export const yearEndRouter = router({
         sourceJournalEntryId?: number;
         aiReasoning?: string;
       }> = [];
+      const pushSuggestion = (sg: (typeof suggestions)[number]) => {
+        if (alreadyApproved(sg)) return;
+        suggestions.push(sg);
+      };
 
-      // Helper: get account by number (db is guaranteed non-null at this point)
+      // Helper: get account by number (db is guaranteed non-null at this point; Audit: org-scoped)
       async function getAccByNum(num: string) {
-        const [acc] = await db!.select().from(accounts).where(eq(accounts.number, num)).limit(1);
+        const [acc] = await db!.select().from(accounts)
+          .where(and(eq(accounts.organizationId, ctx.organizationId), eq(accounts.number, num)))
+          .limit(1);
         return acc;
       }
 
@@ -100,6 +192,7 @@ export const yearEndRouter = router({
         transactionDate: bankTransactions.transactionDate, journalEntryId: bankTransactions.journalEntryId,
       }).from(bankTransactions).where(
         and(
+          eq(bankTransactions.organizationId, ctx.organizationId),
           gte(bankTransactions.transactionDate, nextStart),
           lte(bankTransactions.transactionDate, `${nextYear}-03-31`),
           sql`${bankTransactions.amount} < 0`,
@@ -121,14 +214,16 @@ export const yearEndRouter = router({
           const lines = await db.select().from(journalLines)
             .where(and(eq(journalLines.entryId, txn.journalEntryId), eq(journalLines.side, "debit")));
           if (lines.length > 0) {
-            const [expAcc] = await db.select().from(accounts).where(eq(accounts.id, lines[0].accountId)).limit(1);
+            const [expAcc] = await db.select().from(accounts)
+              .where(and(eq(accounts.organizationId, ctx.organizationId), eq(accounts.id, lines[0].accountId)))
+              .limit(1);
             if (expAcc && (expAcc.accountType === "expense" || expAcc.accountType === "revenue")) {
               expenseAccountId = expAcc.id;
             }
           }
         }
 
-        suggestions.push({
+        pushSuggestion({
           fiscalYear: closingYear, bookingType: "transitorische_passiven",
           description: `TP: ${txn.counterparty || txn.description || 'Unbekannt'} – Leistung ${closingYear}, Zahlung ${nextYear}`,
           amount: absAmount.toFixed(2), debitAccountId: expenseAccountId, creditAccountId: tpAccount.id,
@@ -141,6 +236,7 @@ export const yearEndRouter = router({
       // Unmatched invoices from the closing year
       const kredDocs = await db.select().from(documents).where(
         and(
+          eq(documents.organizationId, ctx.organizationId),
           eq(documents.documentType, "invoice_in"),
           eq(documents.matchStatus, "unmatched"),
           sql`JSON_EXTRACT(${documents.aiMetadata}, '$.date') >= ${closingStart}`,
@@ -157,7 +253,7 @@ export const yearEndRouter = router({
         const amount = Number(metadata.amount || metadata.totalAmount || 0);
         if (amount <= 0) continue;
 
-        suggestions.push({
+        pushSuggestion({
           fiscalYear: closingYear, bookingType: "kreditoren",
           description: `Kreditoren: ${metadata.counterparty || doc.filename} – Rechnung ${closingYear}, unbezahlt`,
           amount: amount.toFixed(2),
@@ -176,6 +272,7 @@ export const yearEndRouter = router({
         transactionDate: bankTransactions.transactionDate, journalEntryId: bankTransactions.journalEntryId,
       }).from(bankTransactions).where(
         and(
+          eq(bankTransactions.organizationId, ctx.organizationId),
           gte(bankTransactions.transactionDate, `${closingYear}-10-01`),
           lte(bankTransactions.transactionDate, closingEnd),
           sql`${bankTransactions.amount} < 0`,
@@ -197,14 +294,16 @@ export const yearEndRouter = router({
           const lines = await db.select().from(journalLines)
             .where(and(eq(journalLines.entryId, txn.journalEntryId), eq(journalLines.side, "debit")));
           if (lines.length > 0) {
-            const [expAcc] = await db.select().from(accounts).where(eq(accounts.id, lines[0].accountId)).limit(1);
+            const [expAcc] = await db.select().from(accounts)
+              .where(and(eq(accounts.organizationId, ctx.organizationId), eq(accounts.id, lines[0].accountId)))
+              .limit(1);
             if (expAcc && (expAcc.accountType === "expense" || expAcc.accountType === "revenue")) {
               expenseAccountId = expAcc.id;
             }
           }
         }
 
-        suggestions.push({
+        pushSuggestion({
           fiscalYear: closingYear, bookingType: "transitorische_aktiven",
           description: `TA: ${txn.counterparty || txn.description || 'Unbekannt'} – Zahlung ${closingYear}, Leistung ${nextYear}`,
           amount: absAmount.toFixed(2), debitAccountId: taAccount.id, creditAccountId: expenseAccountId,
@@ -214,14 +313,22 @@ export const yearEndRouter = router({
       }
 
       // ── 4. Abschreibungen ──
-      const depSettings = await db.select().from(depreciationSettings).where(eq(depreciationSettings.isActive, true));
+      const depSettings = await db.select().from(depreciationSettings).where(
+        and(eq(depreciationSettings.organizationId, ctx.organizationId), eq(depreciationSettings.isActive, true))
+      );
 
       for (const setting of depSettings) {
-        const [accountData] = await db.select().from(accounts).where(eq(accounts.id, setting.accountId)).limit(1);
+        const [accountData] = await db.select().from(accounts)
+          .where(and(eq(accounts.organizationId, ctx.organizationId), eq(accounts.id, setting.accountId)))
+          .limit(1);
         if (!accountData) continue;
 
         const [ob] = await db.select().from(openingBalances).where(
-          and(eq(openingBalances.accountId, setting.accountId), eq(openingBalances.fiscalYear, closingYear))
+          and(
+            eq(openingBalances.organizationId, ctx.organizationId),
+            eq(openingBalances.accountId, setting.accountId),
+            eq(openingBalances.fiscalYear, closingYear),
+          )
         ).limit(1);
         const openingBal = Number(ob?.balance || 0);
 
@@ -231,6 +338,7 @@ export const yearEndRouter = router({
         }).from(journalLines)
           .innerJoin(journalEntries, eq(journalLines.entryId, journalEntries.id))
           .where(and(
+            eq(journalEntries.organizationId, ctx.organizationId),
             eq(journalLines.accountId, setting.accountId),
             gte(journalEntries.bookingDate, closingStart),
             lte(journalEntries.bookingDate, closingEnd),
@@ -258,7 +366,7 @@ export const yearEndRouter = router({
         }
         if (!expenseAccId) continue;
 
-        suggestions.push({
+        pushSuggestion({
           fiscalYear: closingYear, bookingType: "abschreibung",
           description: `Abschreibung ${accountData.number} ${accountData.name} (${setting.method === 'degressive' ? 'degressiv' : 'linear'} ${setting.depreciationRate}%)`,
           amount: depAmount.toFixed(2), debitAccountId: expenseAccId, creditAccountId: setting.accountId,
@@ -296,7 +404,9 @@ export const yearEndRouter = router({
       const result = [];
       for (const row of bookings) {
         const [creditAcc] = await db.select({ number: accounts.number, name: accounts.name })
-          .from(accounts).where(eq(accounts.id, row.booking.creditAccountId)).limit(1);
+          .from(accounts)
+          .where(and(eq(accounts.organizationId, ctx.organizationId), eq(accounts.id, row.booking.creditAccountId)))
+          .limit(1);
         result.push({
           ...row.booking,
           debitAccountNumber: row.debitAccount?.number || '',
@@ -323,31 +433,17 @@ export const yearEndRouter = router({
       if (!booking) throw new Error("Buchung nicht gefunden");
       if (booking.status !== "suggested") throw new Error("Buchung bereits verarbeitet");
 
-      const entryNumber = await allocateEntryNumber(ctx.organizationId, booking.fiscalYear);
-      const [entry] = await db.insert(journalEntries).values({
-        organizationId: ctx.organizationId,
-        entryNumber,
-        bookingDate: `${booking.fiscalYear}-12-31`,
-        description: booking.description,
-        status: "approved", source: "system",
-        sourceRef: `yearend-${booking.fiscalYear}-${booking.bookingType}`,
-        fiscalYear: booking.fiscalYear,
-        aiReasoning: booking.aiReasoning,
-      }).$returningId();
-
-      await db.insert(journalLines).values([
-        { entryId: entry.id, accountId: booking.debitAccountId, side: "debit" as const, amount: booking.amount, description: booking.description },
-        { entryId: entry.id, accountId: booking.creditAccountId, side: "credit" as const, amount: booking.amount, description: booking.description },
-      ]);
+      // Audit: Periodensperre + Buchung über die zentralen Helfer
+      const entryId = await bookYearEndEntry(ctx.organizationId, ctx.user.id, booking, booking.fiscalYear);
 
       await db.update(yearEndBookings)
-        .set({ status: "approved", journalEntryId: entry.id })
+        .set({ status: "approved", journalEntryId: entryId })
         .where(and(
           eq(yearEndBookings.organizationId, ctx.organizationId),
           eq(yearEndBookings.id, input.bookingId),
         ));
 
-      return { success: true, journalEntryId: entry.id };
+      return { success: true, journalEntryId: entryId };
     }),
 
   // Reject a booking
@@ -378,25 +474,15 @@ export const yearEndRouter = router({
         )
       );
 
+      // Audit: Periodensperre einmal vorab prüfen, dann über die zentralen Helfer buchen
+      await assertFiscalYearOpen(ctx.organizationId, input.year, `${input.year}-12-31`);
+
       let approved = 0;
       for (const booking of pending) {
-        const entryNumber = await allocateEntryNumber(ctx.organizationId, input.year);
-        const [entry] = await db.insert(journalEntries).values({
-          organizationId: ctx.organizationId,
-          entryNumber,
-          bookingDate: `${input.year}-12-31`,
-          description: booking.description, status: "approved", source: "system",
-          sourceRef: `yearend-${input.year}-${booking.bookingType}`,
-          fiscalYear: input.year, aiReasoning: booking.aiReasoning,
-        }).$returningId();
-
-        await db.insert(journalLines).values([
-          { entryId: entry.id, accountId: booking.debitAccountId, side: "debit" as const, amount: booking.amount, description: booking.description },
-          { entryId: entry.id, accountId: booking.creditAccountId, side: "credit" as const, amount: booking.amount, description: booking.description },
-        ]);
+        const entryId = await bookYearEndEntry(ctx.organizationId, ctx.user.id, booking, input.year);
 
         await db.update(yearEndBookings)
-          .set({ status: "approved", journalEntryId: entry.id })
+          .set({ status: "approved", journalEntryId: entryId })
           .where(and(
             eq(yearEndBookings.organizationId, ctx.organizationId),
             eq(yearEndBookings.id, booking.id),
@@ -429,24 +515,44 @@ export const yearEndRouter = router({
         )
       );
 
+      // Audit: Rückbuchungen landen im Folgejahr – dieses muss eröffnet und offen
+      // sein. Fehlt es noch, wird es (wie beim Saldovortrag) angelegt.
+      if (approvedBookings.length > 0) {
+        const [existingNext] = await db.select({ id: fiscalYears.id }).from(fiscalYears)
+          .where(and(
+            eq(fiscalYears.organizationId, ctx.organizationId),
+            eq(fiscalYears.year, nextYear),
+          ))
+          .limit(1);
+        if (!existingNext) {
+          await db.insert(fiscalYears).values({
+            organizationId: ctx.organizationId,
+            year: nextYear, startDate: `${nextYear}-01-01`, endDate: `${nextYear}-12-31`,
+            status: "open", isClosed: false, balanceCarriedForward: false,
+          });
+        }
+        await assertFiscalYearOpen(ctx.organizationId, nextYear, `${nextYear}-01-01`);
+      }
+
       let reversed = 0;
       for (const booking of approvedBookings) {
-        const entryNumber = await allocateEntryNumber(ctx.organizationId, nextYear);
-        const [entry] = await db.insert(journalEntries).values({
+        const reversalDescription = `Rückbuchung: ${booking.description}`;
+        const entryId = await createJournalEntry({
           organizationId: ctx.organizationId,
-          entryNumber,
           bookingDate: `${nextYear}-01-01`,
-          description: `Rückbuchung: ${booking.description}`,
-          status: "approved", source: "system",
+          description: reversalDescription,
+          status: "pending",
+          source: "system",
           sourceRef: `yearend-reversal-${closingYear}`,
           fiscalYear: nextYear,
           aiReasoning: `Automatische Rückbuchung der Jahresabschluss-Buchung #${booking.id} vom ${closingYear}.`,
-        }).$returningId();
-
-        await db.insert(journalLines).values([
-          { entryId: entry.id, accountId: booking.creditAccountId, side: "debit" as const, amount: booking.amount, description: `Rückbuchung: ${booking.description}` },
-          { entryId: entry.id, accountId: booking.debitAccountId, side: "credit" as const, amount: booking.amount, description: `Rückbuchung: ${booking.description}` },
-        ]);
+          lines: [
+            { accountId: booking.creditAccountId, side: "debit", amount: booking.amount, description: reversalDescription },
+            { accountId: booking.debitAccountId, side: "credit", amount: booking.amount, description: reversalDescription },
+          ],
+        });
+        await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
+        const entry = { id: entryId };
 
         await db.insert(yearEndBookings).values({
           organizationId: ctx.organizationId,
@@ -565,20 +671,29 @@ export const yearEndRouter = router({
       }
 
       // Net result → Gewinnvortrag (scoped)
+      // Audit: Jahresergebnis gehört auf 2950 (Gewinn-/Verlustvortrag), ersatzweise
+      // 2979 (Jahresgewinn/-verlust) – NIE auf 2800 (Aktienkapital).
       const netResult = totalRevenue - totalExpense;
-      const gewinnvortragAcc = await db.select().from(accounts).where(
-        and(
-          eq(accounts.organizationId, ctx.organizationId),
-          or(eq(accounts.number, "2990"), eq(accounts.number, "2290"), eq(accounts.number, "2800")),
-        )
-      ).limit(1);
+      let gewinnvortragAcc: (typeof allAccounts)[number] | undefined;
+      for (const num of ["2950", "2979"]) {
+        const [acc] = await db.select().from(accounts).where(
+          and(eq(accounts.organizationId, ctx.organizationId), eq(accounts.number, num))
+        ).limit(1);
+        if (acc) { gewinnvortragAcc = acc; break; }
+      }
+      if (!gewinnvortragAcc) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Kein Konto für den Gewinn-/Verlustvortrag gefunden. Bitte zuerst das Konto 2950 (Gewinnvortrag / Verlustvortrag) im Kontenplan anlegen.",
+        });
+      }
 
-      if (gewinnvortragAcc.length > 0) {
-        const existing = newBalances.find(b => b.accountId === gewinnvortragAcc[0].id);
+      {
+        const existing = newBalances.find(b => b.accountId === gewinnvortragAcc.id);
         if (existing) {
           existing.balance = (Number(existing.balance) + netResult).toFixed(2);
-        } else {
-          newBalances.push({ organizationId: ctx.organizationId, accountId: gewinnvortragAcc[0].id, fiscalYear: nextYear, balance: netResult.toFixed(2) });
+        } else if (Math.abs(netResult) >= 0.01) {
+          newBalances.push({ organizationId: ctx.organizationId, accountId: gewinnvortragAcc.id, fiscalYear: nextYear, balance: netResult.toFixed(2) });
         }
       }
 
@@ -709,7 +824,9 @@ export const yearEndRouter = router({
       for (const [key, value] of Object.entries(updates)) {
         if (value !== undefined) cleanUpdates[key] = value;
       }
-      await db.update(depreciationSettings).set(cleanUpdates).where(eq(depreciationSettings.id, id));
+      // Audit: org-scoped
+      await db.update(depreciationSettings).set(cleanUpdates)
+        .where(and(eq(depreciationSettings.organizationId, ctx.organizationId), eq(depreciationSettings.id, id)));
       return { success: true };
     }),
 
@@ -718,7 +835,9 @@ export const yearEndRouter = router({
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      await db.delete(depreciationSettings).where(eq(depreciationSettings.id, input.id));
+      // Audit: org-scoped
+      await db.delete(depreciationSettings)
+        .where(and(eq(depreciationSettings.organizationId, ctx.organizationId), eq(depreciationSettings.id, input.id)));
       return { success: true };
     }),
 
@@ -726,10 +845,13 @@ export const yearEndRouter = router({
 
   getSummary: orgProcedure
     .input(z.object({ year: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const [fy] = await db.select().from(fiscalYears).where(eq(fiscalYears.year, input.year)).limit(1);
+      // Audit: org-scoped
+      const [fy] = await db.select().from(fiscalYears)
+        .where(and(eq(fiscalYears.organizationId, ctx.organizationId), eq(fiscalYears.year, input.year)))
+        .limit(1);
 
       const bookings = await db.select({
         bookingType: yearEndBookings.bookingType,
@@ -737,7 +859,7 @@ export const yearEndRouter = router({
         count: sql<number>`COUNT(*)`,
         totalAmount: sql<string>`SUM(${yearEndBookings.amount})`,
       }).from(yearEndBookings)
-        .where(eq(yearEndBookings.fiscalYear, input.year))
+        .where(and(eq(yearEndBookings.organizationId, ctx.organizationId), eq(yearEndBookings.fiscalYear, input.year)))
         .groupBy(yearEndBookings.bookingType, yearEndBookings.status);
 
       return { fiscalYear: fy || null, bookingSummary: bookings };

@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, orgProcedure, publicProcedure } from "./_core/trpc";
+import { router, orgProcedure, publicProcedure, protectedProcedure } from "./_core/trpc";
 import { getDb } from "./db";
 import { invitations, userOrganizations, users, organizations } from "../drizzle/schema";
 import { eq, and, gt, isNull } from "drizzle-orm";
 import crypto from "crypto";
+import { resolvePublicOrigin } from "./_core/publicUrl";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Administrator",
@@ -58,6 +59,24 @@ export const invitationsRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
+      // Audit: Einladen nur für Owner/Admin der aktiven Organisation
+      const [membership] = await db
+        .select({ role: userOrganizations.role })
+        .from(userOrganizations)
+        .where(
+          and(
+            eq(userOrganizations.userId, ctx.user.id),
+            eq(userOrganizations.organizationId, ctx.organizationId)
+          )
+        )
+        .limit(1);
+      if (membership?.role !== "owner" && membership?.role !== "admin") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Nur Inhaber oder Administratoren können Benutzer einladen.",
+        });
+      }
+
       // Token generieren (UUID)
       const token = crypto.randomUUID();
       // 7 Tage gültig
@@ -73,7 +92,8 @@ export const invitationsRouter = router({
         expiresAt,
       });
 
-      const inviteUrl = `${input.origin}/einladung/${token}`;
+      // Audit: Einladungslink nur auf die eigene Installation zeigen lassen.
+      const inviteUrl = `${resolvePublicOrigin(ctx.req, input.origin)}/einladung/${token}`;
       return { token, inviteUrl, expiresAt };
     }),
 
@@ -121,5 +141,74 @@ export const invitationsRouter = router({
       if (new Date() > inv.expiresAt) throw new TRPCError({ code: "BAD_REQUEST", message: "Einladung ist abgelaufen" });
 
       return inv;
+    }),
+
+  // Audit: Einladung annehmen (eingeloggter User, E-Mail muss übereinstimmen)
+  accept: protectedProcedure
+    .input(z.object({ token: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const now = new Date();
+      const [inv] = await db
+        .select()
+        .from(invitations)
+        .where(
+          and(
+            eq(invitations.token, input.token),
+            isNull(invitations.usedAt),
+            gt(invitations.expiresAt, now)
+          )
+        )
+        .limit(1);
+      if (!inv) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Einladung nicht gefunden, bereits verwendet oder abgelaufen.",
+        });
+      }
+
+      const userEmail = (ctx.user.email ?? "").trim().toLowerCase();
+      if (!userEmail || userEmail !== inv.email.trim().toLowerCase()) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Diese Einladung wurde an eine andere E-Mail-Adresse ausgestellt.",
+        });
+      }
+
+      // Mitgliedschaft anlegen, falls noch nicht vorhanden
+      const [existingMembership] = await db
+        .select({ id: userOrganizations.id })
+        .from(userOrganizations)
+        .where(
+          and(
+            eq(userOrganizations.userId, ctx.user.id),
+            eq(userOrganizations.organizationId, inv.organizationId)
+          )
+        )
+        .limit(1);
+      if (!existingMembership) {
+        await db.insert(userOrganizations).values({
+          userId: ctx.user.id,
+          organizationId: inv.organizationId,
+          role: inv.role,
+        });
+      }
+
+      await db
+        .update(invitations)
+        .set({ usedAt: now, acceptedByUserId: ctx.user.id })
+        .where(eq(invitations.id, inv.id));
+
+      // Aktive Organisation setzen, falls der User noch keine hat
+      if (ctx.user.currentOrganizationId == null) {
+        await db
+          .update(users)
+          .set({ currentOrganizationId: inv.organizationId })
+          .where(eq(users.id, ctx.user.id));
+      }
+
+      return { organizationId: inv.organizationId, role: inv.role };
     }),
 });

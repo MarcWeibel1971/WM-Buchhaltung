@@ -241,6 +241,58 @@ export async function getJournalEntryWithLines(orgId: number, entryId: number) {
   return { entry, lines };
 }
 
+/**
+ * Audit: Reine (DB-freie) Prüfung der Buchungszeilen-Beträge:
+ * - jeder Betrag muss eine endliche Zahl > 0 sein (Number.isFinite)
+ * - Soll- und Haben-Total müssen in Rappen (Math.round(x*100)) exakt übereinstimmen
+ * Wirft einen deutschen Error, sonst kehrt sie still zurück.
+ */
+export function assertJournalLinesBalanced(
+  lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string }>,
+): void {
+  let debitRappen = 0;
+  let creditRappen = 0;
+  for (const line of lines) {
+    const amount = Number(line.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error(`Ungültiger Betrag "${line.amount}" in Buchungszeile (Konto-ID ${line.accountId}) – erwartet wird eine Zahl grösser 0.`);
+    }
+    const rappen = Math.round(amount * 100);
+    if (line.side === "debit") debitRappen += rappen;
+    else creditRappen += rappen;
+  }
+  if (debitRappen !== creditRappen) {
+    throw new Error(`Double-Entry-Fehler: Soll (${(debitRappen / 100).toFixed(2)}) ≠ Haben (${(creditRappen / 100).toFixed(2)})`);
+  }
+}
+
+/**
+ * Audit: Validiert Buchungszeilen vor dem Schreiben (createJournalEntry,
+ * updateJournalEntryLines).
+ * - jeder Betrag muss eine endliche Zahl > 0 sein (Number.isFinite)
+ * - Soll- und Haben-Total müssen in Rappen exakt übereinstimmen
+ * - jedes Konto muss zur Organisation gehören (Mandantentrennung)
+ */
+export async function validateJournalLines(
+  orgId: number,
+  lines: Array<{ accountId: number; side: "debit" | "credit"; amount: string }>,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  assertJournalLinesBalanced(lines);
+
+  const accountIds = Array.from(new Set(lines.map(l => l.accountId)));
+  if (accountIds.length === 0) return;
+  const found = await db.select({ id: accounts.id }).from(accounts)
+    .where(and(eq(accounts.organizationId, orgId), inArray(accounts.id, accountIds)));
+  const foundIds = new Set(found.map(a => a.id));
+  const missing = accountIds.filter(id => !foundIds.has(id));
+  if (missing.length > 0) {
+    throw new Error(`Konto(s) mit ID ${missing.join(", ")} gehören nicht zur aktiven Organisation.`);
+  }
+}
+
 export async function createJournalEntry(data: {
   organizationId: number;
   bookingDate: string;
@@ -264,12 +316,9 @@ export async function createJournalEntry(data: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // Validate double-entry: sum of debits = sum of credits
-  const debitTotal = data.lines.filter(l => l.side === "debit").reduce((s, l) => s + parseFloat(l.amount), 0);
-  const creditTotal = data.lines.filter(l => l.side === "credit").reduce((s, l) => s + parseFloat(l.amount), 0);
-  if (Math.abs(debitTotal - creditTotal) > 0.01) {
-    throw new Error(`Double-Entry-Fehler: Soll (${debitTotal.toFixed(2)}) ≠ Haben (${creditTotal.toFixed(2)})`);
-  }
+  // Audit: Beträge, Soll/Haben-Gleichheit (in Rappen) und Konto-Zugehörigkeit
+  // zur Organisation prüfen, bevor irgendetwas geschrieben wird.
+  await validateJournalLines(data.organizationId, data.lines);
 
   // Geschäftsjahr konsistent aus dem Buchungsdatum ableiten (niemals still
   // das Kalenderjahr annehmen) und Periodensperre durchsetzen (GeBüV).
@@ -336,6 +385,19 @@ export async function assertFiscalYearOpen(orgId: number, year: number, bookingD
 }
 
 /**
+ * Audit: Liest `insertId` aus dem mysql2-ResultSetHeader eines INSERT-Statements.
+ * mysql2 liefert je nach Treiber-Konfiguration number oder bigint.
+ * Exportiert für Unit-Tests (server/tenancy.test.ts).
+ */
+export function readInsertId(header: unknown): number {
+  if (!header || typeof header !== "object") return 0;
+  const raw = (header as { insertId?: unknown }).insertId;
+  if (typeof raw === "bigint") return Number(raw);
+  if (typeof raw === "number") return raw;
+  return 0;
+}
+
+/**
  * Allokiert eine fortlaufende Belegnummer im Format BL-YYYY-NNNNN für
  * (Organisation, Geschäftsjahr). Atomar dank MySQL's LAST_INSERT_ID()-Trick –
  * funktioniert auch unter Concurrent Inserts ohne explizites FOR UPDATE.
@@ -349,16 +411,16 @@ export async function allocateEntryNumber(orgId: number, fiscalYear: number): Pr
   // Atomarer Upsert: beim ersten Aufruf pro (Org, Jahr) LAST_INSERT_ID(1),
   // danach LAST_INSERT_ID(nextSequence + 1). Der zurückgelieferte Wert ist
   // die allokierte Sequenz für diesen Aufruf.
-  await db.execute(sql`
+  // Audit: Der allokierte Wert wird direkt aus dem ResultSetHeader (insertId)
+  // desselben INSERT-Statements gelesen. Ein separates `SELECT LAST_INSERT_ID()`
+  // könnte auf einem mysql2-Pool auf einer ANDEREN Verbindung laufen und damit
+  // eine fremde/alte Nummer liefern (doppelte Belegnummern).
+  const [header] = await db.execute(sql`
     INSERT INTO journal_entry_sequences (organizationId, fiscalYear, nextSequence)
     VALUES (${orgId}, ${fiscalYear}, LAST_INSERT_ID(1))
     ON DUPLICATE KEY UPDATE nextSequence = LAST_INSERT_ID(nextSequence + 1)
   `);
-  const result = await db.execute(sql`SELECT LAST_INSERT_ID() AS seq`);
-  // mysql2 gibt bei execute() ein [rows, fields]-Tupel zurück
-  const rows = (Array.isArray(result) ? result[0] : result) as unknown as Array<{ seq: number | bigint }>;
-  const seqRaw = rows[0]?.seq ?? 0;
-  const seq = typeof seqRaw === "bigint" ? Number(seqRaw) : seqRaw;
+  const seq = readInsertId(header);
   if (!seq || seq < 1) {
     throw new Error(`Belegnummern-Allokation fehlgeschlagen für Org ${orgId}, Geschäftsjahr ${fiscalYear}`);
   }
@@ -379,15 +441,13 @@ export async function allocateEntryNumber(orgId: number, fiscalYear: number): Pr
 export async function allocateInvoiceNumber(orgId: number, fiscalYear: number): Promise<string> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.execute(sql`
+  // Audit: insertId aus dem ResultSetHeader lesen (siehe allocateEntryNumber).
+  const [header] = await db.execute(sql`
     INSERT INTO invoice_sequences (organizationId, fiscalYear, nextSequence)
     VALUES (${orgId}, ${fiscalYear}, LAST_INSERT_ID(1))
     ON DUPLICATE KEY UPDATE nextSequence = LAST_INSERT_ID(nextSequence + 1)
   `);
-  const result = await db.execute(sql`SELECT LAST_INSERT_ID() AS seq`);
-  const rows = (Array.isArray(result) ? result[0] : result) as unknown as Array<{ seq: number | bigint }>;
-  const seqRaw = rows[0]?.seq ?? 0;
-  const seq = typeof seqRaw === "bigint" ? Number(seqRaw) : seqRaw;
+  const seq = readInsertId(header);
   if (!seq || seq < 1) {
     throw new Error(`Rechnungsnummern-Allokation fehlgeschlagen für Org ${orgId}, Geschäftsjahr ${fiscalYear}`);
   }
@@ -396,7 +456,9 @@ export async function allocateInvoiceNumber(orgId: number, fiscalYear: number): 
   return `R-${year}-${seqPadded}`;
 }
 
-export async function approveJournalEntry(entryId: number, userId: number) {
+// Audit: orgId ist Pflicht-Erstparameter – Eintrag wird nur innerhalb der
+// Organisation gesucht/verändert (Mandantentrennung).
+export async function approveJournalEntry(orgId: number, entryId: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   // Belegnummer allokieren, falls der Eintrag noch keine hat. Wird nur beim
@@ -407,19 +469,15 @@ export async function approveJournalEntry(entryId: number, userId: number) {
       entryNumber: journalEntries.entryNumber,
       fiscalYear: journalEntries.fiscalYear,
       bookingDate: journalEntries.bookingDate,
-      organizationId: journalEntries.organizationId,
     })
     .from(journalEntries)
-    .where(eq(journalEntries.id, entryId))
+    .where(and(eq(journalEntries.organizationId, orgId), eq(journalEntries.id, entryId)))
     .limit(1);
-  if (!existing) throw new Error(`Journal-Eintrag #${entryId} nicht gefunden`);
-  if (existing.organizationId == null) {
-    throw new Error(`Journal-Eintrag #${entryId} hat keine organizationId`);
-  }
+  if (!existing) throw new Error(`Journal-Eintrag #${entryId} nicht gefunden (Organisation ${orgId})`);
 
   // GeBüV-Periodensperre: kein Approval in ein abgeschlossenes Geschäftsjahr
   const fyYear = existing.fiscalYear ?? new Date(existing.bookingDate).getFullYear();
-  await assertFiscalYearOpen(existing.organizationId, fyYear);
+  await assertFiscalYearOpen(orgId, fyYear);
 
   const updateSet: Record<string, unknown> = {
     status: "approved",
@@ -427,16 +485,21 @@ export async function approveJournalEntry(entryId: number, userId: number) {
     approvedAt: new Date(),
   };
   if (!existing.entryNumber) {
-    const fy = existing.fiscalYear ?? new Date(existing.bookingDate).getFullYear();
-    updateSet.entryNumber = await allocateEntryNumber(existing.organizationId, fy);
+    updateSet.entryNumber = await allocateEntryNumber(orgId, fyYear);
   }
-  await db.update(journalEntries).set(updateSet).where(eq(journalEntries.id, entryId));
+  await db.update(journalEntries).set(updateSet)
+    .where(and(eq(journalEntries.organizationId, orgId), eq(journalEntries.id, entryId)));
 }
 
-export async function rejectJournalEntry(entryId: number) {
+// Audit: Nur pending-Einträge dürfen abgelehnt werden. Verbuchte Einträge
+// (mit Belegnummer) sind unveränderlich (GeBüV) – assertJournalEntryEditable
+// wirft in diesem Fall.
+export async function rejectJournalEntry(orgId: number, entryId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(journalEntries).set({ status: "rejected" }).where(eq(journalEntries.id, entryId));
+  await assertJournalEntryEditable(orgId, entryId);
+  await db.update(journalEntries).set({ status: "rejected" })
+    .where(and(eq(journalEntries.organizationId, orgId), eq(journalEntries.id, entryId)));
 }
 
 /**
@@ -445,15 +508,16 @@ export async function rejectJournalEntry(entryId: number) {
  * Approved/rejected Entries sind unveränderlich (Art. 957d OR, GeBüV).
  * Für approved Entries muss eine Storno-/Gegenbuchung erstellt werden.
  */
-export async function assertJournalEntryEditable(entryId: number): Promise<void> {
+export async function assertJournalEntryEditable(orgId: number, entryId: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  // Audit: org-gefiltert – fremde Einträge gelten als "nicht gefunden".
   const [entry] = await db.select({ status: journalEntries.status })
     .from(journalEntries)
-    .where(eq(journalEntries.id, entryId))
+    .where(and(eq(journalEntries.organizationId, orgId), eq(journalEntries.id, entryId)))
     .limit(1);
   if (!entry) {
-    throw new Error(`Journal-Eintrag #${entryId} nicht gefunden`);
+    throw new Error(`Journal-Eintrag #${entryId} nicht gefunden (Organisation ${orgId})`);
   }
   if (entry.status !== "pending") {
     throw new Error(
@@ -462,7 +526,7 @@ export async function assertJournalEntryEditable(entryId: number): Promise<void>
   }
 }
 
-export async function updateJournalEntryLines(entryId: number, lines: Array<{
+export async function updateJournalEntryLines(orgId: number, entryId: number, lines: Array<{
   accountId: number;
   side: "debit" | "credit";
   amount: string;
@@ -471,15 +535,11 @@ export async function updateJournalEntryLines(entryId: number, lines: Array<{
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  // GeBüV: nur pending Entries dürfen geändert werden
-  await assertJournalEntryEditable(entryId);
+  // GeBüV: nur pending Entries dürfen geändert werden (org-gefiltert)
+  await assertJournalEntryEditable(orgId, entryId);
 
-  // Validate
-  const debitTotal = lines.filter(l => l.side === "debit").reduce((s, l) => s + parseFloat(l.amount), 0);
-  const creditTotal = lines.filter(l => l.side === "credit").reduce((s, l) => s + parseFloat(l.amount), 0);
-  if (Math.abs(debitTotal - creditTotal) > 0.01) {
-    throw new Error(`Double-Entry-Fehler: Soll (${debitTotal.toFixed(2)}) ≠ Haben (${creditTotal.toFixed(2)})`);
-  }
+  // Audit: Beträge, Soll/Haben in Rappen und Konto-Zugehörigkeit prüfen
+  await validateJournalLines(orgId, lines);
 
   // Delete old lines and insert new ones
   await db.delete(journalLines).where(eq(journalLines.entryId, entryId));
@@ -566,10 +626,16 @@ export async function saveBankTransaction(data: Omit<typeof bankTransactions.$in
   }
 }
 
-export async function approveBankTransaction(txId: number, journalEntryId: number) {
+// Audit: orgId als Pflicht-Erstparameter; Transaktion muss zur Organisation gehören.
+export async function approveBankTransaction(orgId: number, txId: number, journalEntryId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(bankTransactions).set({ status: "matched", journalEntryId }).where(eq(bankTransactions.id, txId));
+  const [tx] = await db.select({ id: bankTransactions.id }).from(bankTransactions)
+    .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, txId)))
+    .limit(1);
+  if (!tx) throw new Error(`Banktransaktion #${txId} nicht gefunden (Organisation ${orgId})`);
+  await db.update(bankTransactions).set({ status: "matched", journalEntryId })
+    .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, txId)));
 }
 
 // ─── Debitoren-Zahlungsabgleich via QR-Referenz (Phase 2.1) ─────────────────
@@ -663,7 +729,8 @@ export async function applyInvoicePayment(
   return { status: result.status, openAmount: result.openAmount, paidAmount: result.paidAmount };
 }
 
-export async function updateBankTransaction(txId: number, data: {
+// Audit: orgId als Pflicht-Erstparameter; Transaktion muss zur Organisation gehören.
+export async function updateBankTransaction(orgId: number, txId: number, data: {
   description?: string;
   counterparty?: string;
   counterpartyIban?: string;
@@ -685,7 +752,12 @@ export async function updateBankTransaction(txId: number, data: {
   if (data.aiReasoning !== undefined) updateSet.aiReasoning = data.aiReasoning;
   if (data.manuallyEdited !== undefined) updateSet.manuallyEdited = data.manuallyEdited;
   if (Object.keys(updateSet).length === 0) return;
-  await db.update(bankTransactions).set(updateSet).where(eq(bankTransactions.id, txId));
+  const [tx] = await db.select({ id: bankTransactions.id }).from(bankTransactions)
+    .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, txId)))
+    .limit(1);
+  if (!tx) throw new Error(`Banktransaktion #${txId} nicht gefunden (Organisation ${orgId})`);
+  await db.update(bankTransactions).set(updateSet)
+    .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, txId)));
 }
 
 export async function getBankTransactionsByIds(orgId: number, ids: number[]) {
@@ -1256,7 +1328,9 @@ export async function autoMatchDocuments(orgId: number, threshold: number = 50):
 /**
  * Apply matches: update both documents and bank_transactions with match links.
  */
-export async function applyMatches(matches: { documentId: number; transactionId: number; score: number }[]): Promise<number> {
+// Audit: orgId als Pflicht-Erstparameter – alle Lese-/Schreibzugriffe auf
+// documents und bank_transactions sind org-gefiltert.
+export async function applyMatches(orgId: number, matches: { documentId: number; transactionId: number; score: number }[]): Promise<number> {
   const db = await getDb();
   if (!db || matches.length === 0) return 0;
 
@@ -1271,16 +1345,17 @@ export async function applyMatches(matches: { documentId: number; transactionId:
   for (const match of sortedMatches) {
     const [existingTxn] = await db.select({ matchedDocumentId: bankTransactions.matchedDocumentId })
       .from(bankTransactions)
-      .where(eq(bankTransactions.id, match.transactionId))
+      .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, match.transactionId)))
       .limit(1);
-    if (existingTxn?.matchedDocumentId && existingTxn.matchedDocumentId !== match.documentId) {
+    // Audit: Transaktion ausserhalb der Organisation → nie zuordnen
+    if (!existingTxn || (existingTxn.matchedDocumentId && existingTxn.matchedDocumentId !== match.documentId)) {
       usedTransactionIds.add(match.transactionId);
     }
     const [existingDoc] = await db.select({ bankTransactionId: documents.bankTransactionId })
       .from(documents)
-      .where(eq(documents.id, match.documentId))
+      .where(and(eq(documents.organizationId, orgId), eq(documents.id, match.documentId)))
       .limit(1);
-    if (existingDoc?.bankTransactionId && existingDoc.bankTransactionId !== match.transactionId) {
+    if (!existingDoc || (existingDoc.bankTransactionId && existingDoc.bankTransactionId !== match.transactionId)) {
       usedDocumentIds.add(match.documentId);
     }
   }
@@ -1302,7 +1377,7 @@ export async function applyMatches(matches: { documentId: number; transactionId:
         matchStatus: 'matched',
         matchScore: match.score,
       })
-      .where(eq(documents.id, match.documentId));
+      .where(and(eq(documents.organizationId, orgId), eq(documents.id, match.documentId)));
 
     // Update bank transaction
     await db.update(bankTransactions)
@@ -1310,7 +1385,7 @@ export async function applyMatches(matches: { documentId: number; transactionId:
         matchedDocumentId: match.documentId,
         matchScore: match.score,
       })
-      .where(eq(bankTransactions.id, match.transactionId));
+      .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, match.transactionId)));
 
     applied++;
   }
@@ -1321,12 +1396,13 @@ export async function applyMatches(matches: { documentId: number; transactionId:
 /**
  * Get matched document info for a bank transaction.
  */
-export async function getMatchedDocument(transactionId: number): Promise<Document | null> {
+export async function getMatchedDocument(orgId: number, transactionId: number): Promise<Document | null> {
   const db = await getDb();
   if (!db) return null;
 
+  // Audit: org-gefiltert
   const result = await db.select().from(documents)
-    .where(eq(documents.bankTransactionId, transactionId))
+    .where(and(eq(documents.organizationId, orgId), eq(documents.bankTransactionId, transactionId)))
     .limit(1);
 
   return result[0] || null;
@@ -1386,61 +1462,82 @@ export function improveBookingSuggestionFromDocument(
 /**
  * Unmatch a document from a transaction.
  */
-export async function unmatchDocument(documentId: number): Promise<void> {
+export async function unmatchDocument(orgId: number, documentId: number): Promise<void> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) throw new Error("Database not available");
 
-  // Get the document to find linked transaction
-  const [doc] = await db.select().from(documents).where(eq(documents.id, documentId));
-  if (!doc) return;
+  // Audit: Dokument nur innerhalb der Organisation suchen
+  const [doc] = await db.select().from(documents)
+    .where(and(eq(documents.organizationId, orgId), eq(documents.id, documentId)))
+    .limit(1);
+  if (!doc) throw new Error(`Dokument #${documentId} nicht gefunden (Organisation ${orgId})`);
 
   // Clear document match
   await db.update(documents)
     .set({ bankTransactionId: null, matchStatus: 'unmatched', matchScore: null })
-    .where(eq(documents.id, documentId));
+    .where(and(eq(documents.organizationId, orgId), eq(documents.id, documentId)));
 
   // Clear transaction match if linked
   if (doc.bankTransactionId) {
     await db.update(bankTransactions)
       .set({ matchedDocumentId: null, matchScore: null })
-      .where(eq(bankTransactions.id, doc.bankTransactionId));
+      .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, doc.bankTransactionId)));
   }
 }
 
 // ─── Delete Journal Entry (nur für pending Entries – GeBüV-konform) ──────────
-export async function deleteJournalEntry(entryId: number) {
+// Audit: orgId als Pflicht-Erstparameter (Mandantentrennung).
+export async function deleteJournalEntry(orgId: number, entryId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   // GeBüV: approved Entries dürfen nicht gelöscht werden – Storno erforderlich.
-  await assertJournalEntryEditable(entryId);
+  // Wirft auch, wenn der Eintrag nicht zur Organisation gehört.
+  await assertJournalEntryEditable(orgId, entryId);
   // Delete lines first (FK), then entry
   await db.delete(journalLines).where(eq(journalLines.entryId, entryId));
-  await db.delete(journalEntries).where(eq(journalEntries.id, entryId));
+  await db.delete(journalEntries)
+    .where(and(eq(journalEntries.organizationId, orgId), eq(journalEntries.id, entryId)));
 }
 
 // ─── Revert bank transaction to pending ──────────────────────────────────────
-export async function revertBankTransaction(txId: number) {
+// Audit: orgId als Pflicht-Erstparameter; Transaktion muss zur Organisation gehören.
+export async function revertBankTransaction(orgId: number, txId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const [tx] = await db.select({ id: bankTransactions.id }).from(bankTransactions)
+    .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, txId)))
+    .limit(1);
+  if (!tx) throw new Error(`Banktransaktion #${txId} nicht gefunden (Organisation ${orgId})`);
   await db.update(bankTransactions).set({
     status: "pending",
     journalEntryId: null,
-  }).where(eq(bankTransactions.id, txId));
+  }).where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, txId)));
 }
 
 // ─── Delete CC statement and its items ───────────────────────────────────────
-export async function deleteCcStatement(statementId: number) {
+// Audit: orgId als Pflicht-Erstparameter; Abrechnung muss zur Organisation gehören.
+export async function deleteCcStatement(orgId: number, statementId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.delete(creditCardStatements).where(eq(creditCardStatements.id, statementId));
+  const [stmt] = await db.select({ id: creditCardStatements.id }).from(creditCardStatements)
+    .where(and(eq(creditCardStatements.organizationId, orgId), eq(creditCardStatements.id, statementId)))
+    .limit(1);
+  if (!stmt) throw new Error(`Kreditkartenabrechnung #${statementId} nicht gefunden (Organisation ${orgId})`);
+  await db.delete(creditCardStatements)
+    .where(and(eq(creditCardStatements.organizationId, orgId), eq(creditCardStatements.id, statementId)));
 }
 
 // ─── Revert CC statement to pending ──────────────────────────────────────────
-export async function revertCcStatement(statementId: number) {
+// Audit: orgId als Pflicht-Erstparameter; Abrechnung muss zur Organisation gehören.
+export async function revertCcStatement(orgId: number, statementId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const [stmt] = await db.select({ id: creditCardStatements.id }).from(creditCardStatements)
+    .where(and(eq(creditCardStatements.organizationId, orgId), eq(creditCardStatements.id, statementId)))
+    .limit(1);
+  if (!stmt) throw new Error(`Kreditkartenabrechnung #${statementId} nicht gefunden (Organisation ${orgId})`);
   await db.update(creditCardStatements).set({
     status: "pending",
     journalEntryId: null,
-  }).where(eq(creditCardStatements.id, statementId));
+  }).where(and(eq(creditCardStatements.organizationId, orgId), eq(creditCardStatements.id, statementId)));
 }

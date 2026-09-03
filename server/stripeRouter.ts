@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { resolvePublicOrigin } from "./_core/publicUrl";
 import { TRPCError } from "@trpc/server";
 import { orgProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
@@ -80,7 +81,7 @@ export const stripeRouter = router({
         customerEmail: user?.email ?? undefined,
         organizationId: ctx.organizationId,
         userId: ctx.user.id,
-        origin: input.origin,
+        origin: resolvePublicOrigin(ctx.req, input.origin),
       });
 
       return { url };

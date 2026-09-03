@@ -10,6 +10,25 @@ import { createLogger } from "./logger";
 import { resolveEmailProvider } from "../emailProviders";
 import { getLocalStorageDir } from "../storage";
 
+/**
+ * Audit: Pflicht-Konfiguration hart prüfen. In Produktion darf der Server
+ * ohne DATABASE_URL oder ohne (ausreichend langes) JWT_SECRET nicht starten –
+ * vorher lief er weiter und signierte Sessions mit leerem Secret.
+ */
+export function assertRequiredEnv(): void {
+  const logger = createLogger("startup");
+  const problems: string[] = [];
+  if (!ENV.databaseUrl) problems.push("DATABASE_URL fehlt");
+  if (!ENV.cookieSecret) problems.push("JWT_SECRET fehlt (openssl rand -hex 64)");
+  else if (ENV.cookieSecret.length < 32) problems.push("JWT_SECRET ist zu kurz (mindestens 32 Zeichen, empfohlen: openssl rand -hex 64)");
+  if (problems.length === 0) return;
+  if (ENV.isProduction) {
+    logger.fatal({ problems }, "Pflicht-Konfiguration fehlt – Server wird nicht gestartet");
+    process.exit(1);
+  }
+  logger.error({ problems }, "Pflicht-Konfiguration fehlt – im Entwicklungsmodus wird trotzdem gestartet");
+}
+
 export function logStartupFeatureSummary(): void {
   const logger = createLogger("startup");
 
@@ -19,6 +38,10 @@ export function logStartupFeatureSummary(): void {
   }
   if (!ENV.cookieSecret) {
     logger.error("JWT_SECRET ist nicht gesetzt – Login/Sessions funktionieren nicht. Bitte generieren: openssl rand -hex 64");
+  }
+  if (!ENV.appUrl) {
+    const level = ENV.isProduction ? "warn" : "info";
+    logger[level]("APP_URL ist nicht gesetzt – Links in E-Mails (Verifizierung, Passwort-Reset, Einladungen) werden aus dem Host des Requests abgeleitet. Für Produktion APP_URL=https://<domain> setzen.");
   }
   if (!process.env.SECRETS_MASTER_KEY) {
     logger.warn("SECRETS_MASTER_KEY fehlt – EBICS-/POS-Secrets können nicht verschlüsselt gespeichert werden (openssl rand -hex 32).");

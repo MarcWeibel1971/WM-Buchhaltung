@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { todayISO } from "@/lib/date";
 import { Link } from "wouter";
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { Upload, Check, X, Zap, FileText, Pencil, CreditCard, RefreshCw, BookOpen, Undo2, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, ArrowLeftRight, History, Clock, Search, Plus, Trash2, Split, Banknote, Download, FileCheck, FileX, CheckCircle, Loader2, AlertTriangle } from "lucide-react";
@@ -1133,7 +1134,7 @@ export default function BankImport() {
                                     txId: tx.id,
                                     counterparty: tx.counterparty ?? "Kreditkarte",
                                     txAmount: txAmt,
-                                    statementDate: tx.transactionDate ? new Date(tx.transactionDate as string).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+                                    statementDate: tx.transactionDate ? new Date(tx.transactionDate as string).toISOString().split("T")[0] : todayISO(),
                                   });
                                   setCcItems([]);
                                   setCcPaidAmount(txAmt);
@@ -1512,7 +1513,7 @@ export default function BankImport() {
                             const txAmt = Math.abs(parseFloat(editTx.amount)).toFixed(2);
                             const stmtDate = editTx.transactionDate
                               ? new Date(editTx.transactionDate).toISOString().split("T")[0]
-                              : new Date().toISOString().split("T")[0];
+                              : todayISO();
                             setCcDialog({
                               txId: editTx.id,
                               counterparty: editTx.counterparty ?? "Kreditkarte",
@@ -1907,7 +1908,7 @@ function _REMOVED_CreditorExportDialog({ open, onOpenChange }: {
         dueDates.sort();
         setExecDate(dueDates[0]);
       } else {
-        setExecDate(new Date().toISOString().slice(0, 10));
+        setExecDate(todayISO());
       }
     }
   }, [open, unpaidInvoices]); // eslint-disable-line react-hooks/exhaustive-deps

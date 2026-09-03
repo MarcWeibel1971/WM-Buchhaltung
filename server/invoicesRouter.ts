@@ -841,7 +841,7 @@ export const invoicesRouter = router({
         status: "pending",
         lines,
       });
-      await approveJournalEntry(entryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, entryId, ctx.user.id);
 
       // Invoice updaten
       await db.update(invoices).set({
@@ -940,7 +940,7 @@ export const invoicesRouter = router({
         status: "pending",
         lines: mirroredLines,
       });
-      await approveJournalEntry(cancelEntryId, ctx.user.id);
+      await approveJournalEntry(ctx.organizationId, cancelEntryId, ctx.user.id);
 
       await db.update(invoices).set({
         status: "cancelled",

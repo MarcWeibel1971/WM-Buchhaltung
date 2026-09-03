@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, Redirect, useLocation } from "wouter";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect, useRef } from "react";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { FiscalYearProvider } from "./contexts/FiscalYearContext";
@@ -19,25 +19,37 @@ import VerifyEmail from "./pages/VerifyEmail";
 import LandingPage from "./pages/LandingPage";
 
 // Pages – App (protected)
-import Dashboard from "./pages/Dashboard";
-import Workflow from "./pages/Workflow";
-import Berichte from "./pages/Berichte";
-import Payroll from "./pages/Payroll";
-import VatPage from "./pages/Vat";
-import DocumentDetail from "./pages/DocumentDetail";
-import Settings from "./pages/Settings";
-import YearEnd from "./pages/YearEnd";
-import QrBillGenerator from "./pages/QrBillGenerator";
-import Kreditoren from "./pages/Kreditoren";
-import TimeTracking from "./pages/TimeTracking";
-import Onboarding from "./pages/Onboarding";
-import Invoices from "./pages/Invoices";
-import OpenPositions from "./pages/OpenPositions";
+// Audit/Performance: Seiten per React.lazy in eigene Chunks splitten. Vorher
+// lag das gesamte Frontend (inkl. Settings 5.6k Zeilen, Payroll, BankImport,
+// jsPDF, ExcelJS) in einem 2.4-MB-Bundle, das schon auf der Login-Seite
+// geladen wurde.
 import Layout from "./components/Layout";
 import AcceptInvitation from "./pages/AcceptInvitation";
-import Admin from "./pages/Admin";
-import Journal from "./pages/Journal";
-import BankImport from "./pages/BankImport";
+import Onboarding from "./pages/Onboarding";
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Workflow = lazy(() => import("./pages/Workflow"));
+const Berichte = lazy(() => import("./pages/Berichte"));
+const Payroll = lazy(() => import("./pages/Payroll"));
+const VatPage = lazy(() => import("./pages/Vat"));
+const DocumentDetail = lazy(() => import("./pages/DocumentDetail"));
+const Settings = lazy(() => import("./pages/Settings"));
+const YearEnd = lazy(() => import("./pages/YearEnd"));
+const QrBillGenerator = lazy(() => import("./pages/QrBillGenerator"));
+const Kreditoren = lazy(() => import("./pages/Kreditoren"));
+const TimeTracking = lazy(() => import("./pages/TimeTracking"));
+const Invoices = lazy(() => import("./pages/Invoices"));
+const OpenPositions = lazy(() => import("./pages/OpenPositions"));
+const Admin = lazy(() => import("./pages/Admin"));
+const Journal = lazy(() => import("./pages/Journal"));
+const BankImport = lazy(() => import("./pages/BankImport"));
+
+function PageLoader() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center">
+      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+    </div>
+  );
+}
 
 /**
  * AuthGuard: Prüft ob der User eingeloggt ist.
@@ -76,9 +88,25 @@ function OrgGuard({ children }: { children: React.ReactNode }) {
   });
   const setCurrent = trpc.organizations.setCurrent.useMutation({
     onSuccess: async () => {
-      await utils.auth.me.invalidate();
+      // Audit: auch listMine invalidieren, sonst bleibt `isCurrent` false und
+      // der Spinner "Organisation wird aktiviert" hängt für immer.
+      await Promise.all([utils.auth.me.invalidate(), utils.organizations.listMine.invalidate()]);
     },
   });
+
+  const orgs = orgsQuery.data ?? [];
+  const hasCurrent = orgs.some((o) => o.isCurrent);
+  const fallbackOrgId = orgs[0]?.id;
+  const activationTriedRef = useRef(false);
+
+  // Audit: Mutation als Effekt statt im Render (kein doppeltes Feuern im
+  // StrictMode, keine Endlosschleife bei Fehler).
+  useEffect(() => {
+    if (orgsQuery.isLoading || hasCurrent || fallbackOrgId == null) return;
+    if (activationTriedRef.current) return;
+    activationTriedRef.current = true;
+    setCurrent.mutate({ organizationId: fallbackOrgId });
+  }, [orgsQuery.isLoading, hasCurrent, fallbackOrgId, setCurrent]);
 
   if (orgsQuery.isLoading) {
     return (
@@ -91,16 +119,26 @@ function OrgGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const orgs = orgsQuery.data ?? [];
-
   if (orgs.length === 0) {
     return <Onboarding />;
   }
 
-  const hasCurrent = orgs.some((o) => o.isCurrent);
   if (!hasCurrent) {
-    if (!setCurrent.isPending && !setCurrent.isSuccess) {
-      setCurrent.mutate({ organizationId: orgs[0].id });
+    if (setCurrent.isError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <p className="text-sm text-destructive">Organisation konnte nicht aktiviert werden: {setCurrent.error.message}</p>
+            <button
+              type="button"
+              className="text-sm underline"
+              onClick={() => { activationTriedRef.current = false; setCurrent.reset(); void orgsQuery.refetch(); }}
+            >
+              Erneut versuchen
+            </button>
+          </div>
+        </div>
+      );
     }
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -209,7 +247,9 @@ function ProtectedApp() {
       <OrgGuard>
         <FiscalYearProvider>
           <Layout>
-            <AppRouter />
+            <Suspense fallback={<PageLoader />}>
+              <AppRouter />
+            </Suspense>
           </Layout>
         </FiscalYearProvider>
       </OrgGuard>

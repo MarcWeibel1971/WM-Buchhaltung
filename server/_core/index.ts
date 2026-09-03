@@ -14,7 +14,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { logger, requestLogger, errorLogger, installCrashHandlers } from "./logger";
-import { logStartupFeatureSummary } from "./startupCheck";
+import { assertRequiredEnv, logStartupFeatureSummary } from "./startupCheck";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -38,6 +38,8 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   // Global crash handlers as early as possible.
   installCrashHandlers();
+  // Audit: Pflicht-Env prüfen, bevor irgendetwas lauscht.
+  assertRequiredEnv();
 
   const app = express();
   const server = createServer(app);
@@ -110,7 +112,24 @@ async function startServer() {
   registerOAuthRoutes(app);
   // File upload endpoint
   app.use("/api/upload", uploadLimiter, uploadRouter);
-  // tRPC API
+  // tRPC API. Audit: Login/Registrierung/Passwort-Reset bekommen einen
+  // eigenen, strengen Limiter (Brute-Force-Schutz) – der allgemeine
+  // API-Limiter (300/min) reicht dafür nicht.
+  const AUTH_SENSITIVE_PROCEDURES = /auth\.(login|register|forgotPassword|resetPassword|resendVerification|verifyEmail)\b/;
+  const authProcedureLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "Zu viele Anmeldeversuche. Bitte in 15 Minuten erneut versuchen." },
+  });
+  app.use("/api/trpc", (req, res, next) => {
+    if (AUTH_SENSITIVE_PROCEDURES.test(req.path)) {
+      authProcedureLimiter(req, res, next);
+      return;
+    }
+    next();
+  });
   app.use("/api/trpc", apiLimiter);
   app.use(
     "/api/trpc",

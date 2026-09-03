@@ -1,64 +1,68 @@
-# FinanzPlan — Claude Code Instructions
+# WM-Buchhaltung (KLAX) — Claude Code Instructions
 
 > Dieses File wird von Rippletide verwaltet. Manuelle Änderungen werden beim nächsten `npx rippletide-code` überschrieben.
 > Regeln bearbeiten: `.rippletide/selected-rules.md`
 
 ## Projekt-Übersicht
 
-**App:** pensionierung-plus.ch — Schweizer Finanzplanungs-SaaS für Berater
-**Stack:** Next.js 16 · TypeScript 5.9 · Drizzle ORM · Clerk · oRPC · Zod · Railway · PostgreSQL
-**Sprache:** Deutsch (UI + Code-Kommentare)
+**App:** WM-Buchhaltung / KLAX — Schweizer Buchhaltungs-Webapp für KMU (doppelte Buchführung, MWST, Bank-Import, QR-Rechnung, Lohn, DSG-Audit-Log)
+**Stack:** React 19 · Vite 7 · TypeScript 5.9 · Express 4 · tRPC 11 · Drizzle ORM · MySQL 8 · Zod 4 · Vitest · Docker
+**Sprache:** Deutsch (UI + Code-Kommentare, Schweizer Schreibweise ohne «ß»)
 
 ## Kritische Regeln (werden bei jedem Commit geprüft)
 
 ### Authentifizierung & Mandantentrennung
 
-Jede API-Route MUSS `auth()` von `@clerk/nextjs/server` aufrufen. Bei fehlendem `userId` oder `orgId` MUSS mit Status 401 geantwortet werden. Der `orgId` darf NICHT aus dem Request-Body gelesen werden — immer aus `auth()`. Datenbankabfragen MÜSSEN immer `organizationId` als Filter enthalten.
+Org-bezogene tRPC-Prozeduren MÜSSEN `orgProcedure` verwenden und `ctx.organizationId` in jedem WHERE-Filter setzen. Verwaltungsfunktionen laufen über `adminProcedure`. `organizationId`/`userId` niemals aus dem Input lesen. Express-Routen ausserhalb von tRPC rufen `sdk.authenticateRequest(req)` auf oder verifizieren eine Webhook-Signatur. E-Mail-Links werden über `resolvePublicOrigin()` (`server/_core/publicUrl.ts`) gebaut.
 
-### Steuerberechnungen
+### Buchhaltungslogik
 
-Alle Steuerberechnungen laufen über `berechneEinkommenssteuer()` aus `@/modules/steuer`. BVG über `berechneBvgRente()`, AHV über `berechneAhvRente()`. Niemals inline oder mit eigenen Formeln rechnen. Steuer-Inputs verwenden den `TaxInput`-Typ.
+Buchungen müssen ausgeglichen sein (Soll = Haben). MySQL-`decimal`-Werte sind Strings — vor dem Rechnen konvertieren. MWST-Sätze aus den Org-Einstellungen, QR-/SCOR-Referenzen über `shared/qrReference.ts`. Freigegebene Buchungen und abgeschlossene Geschäftsjahre sind unveränderlich (GeBüV).
 
 ### Datenbankzugriff
 
-Alle DB-Abfragen über Drizzle ORM — kein raw SQL. Neue DB-Operationen gehören in einen Service unter `src/services/`. Schema-Änderungen in `src/models/Schema.ts` + neue Migration.
+Alle DB-Abfragen über Drizzle ORM. Schema-Änderungen in `drizzle/schema.ts` + Migration via `pnpm drizzle-kit generate` (Migration committen). Zusammengehörige Schreibzugriffe in einer Transaktion.
 
 ### API-Design
 
-Neue Mutations als oRPC-Procedure in `src/routers/` — keine direkten `fetch()`-Aufrufe zu eigenen API-Routen. Alle Procedures mit Zod-Schemas. Externe API-Routen mit `EXTERN_API_KEY` sichern.
+Neue Endpunkte als tRPC-Prozedur in `server/routers.ts` oder `server/<feature>Router.ts`, immer mit Zod-Input-Schema (kein `z.any()`). Client ruft nur über `trpc.*` auf.
 
 ### Komponenten & UI
 
-Finanzielle Beträge mit `toLocaleString('de-CH')` formatieren. Alle user-facing Strings über `next-intl`. Neue Seiten brauchen `loading.tsx`. Neue Komponenten in `src/components/` oder `src/features/<name>/`.
+Neue Seiten unter `client/src/pages/` und in `App.tsx` per `React.lazy` registrieren. Beträge mit `toLocaleString('de-CH')` formatieren.
 
 ### Code-Qualität
 
-TypeScript `any` ist verboten — `unknown` mit Type Guard verwenden. `console.log()` in Produktionscode verboten. Benutzereingaben vor DB-Operationen mit Zod validieren. Env-Variablen in `src/libs/Env.ts` deklarieren.
+TypeScript `any` ist verboten — `unknown` mit Type Guard verwenden. `console.log()` verboten — `createLogger()` aus `server/_core/logger.ts`. Env-Variablen in `server/_core/env.ts` deklarieren und in `.env.example` dokumentieren. Vor Commit: `pnpm check` und `pnpm test`.
 
 ## Projektstruktur
 
 ```
-src/
-├── app/[locale]/          # Next.js App Router (Seiten)
-├── app/api/               # API-Routen (admin/, extern/, mcp/, portal/)
-├── components/            # Shared UI-Komponenten
-├── features/              # Feature-Module (kunden/, vermoegen/, etc.)
-├── libs/                  # Utilities (Env.ts, DB.ts, McpServer.ts)
-├── models/                # Drizzle Schema (Schema.ts)
-├── modules/               # Business-Logik (steuer/, ahv/, bvg/, vorsorge/)
-├── routers/               # oRPC-Router
-└── services/              # Datenbankzugriff-Services
+client/src/
+├── pages/            # Seiten (Dashboard, Journal, BankImport, Settings, …)
+├── components/       # Shared UI (ui/ = shadcn-Primitives)
+├── contexts/ hooks/  # FiscalYearContext, ThemeContext, useAuth
+└── lib/              # trpc-Client, Formatierungs-Helfer
+server/
+├── _core/            # index.ts (Express-Bootstrap), trpc.ts, sdk.ts (Session), env.ts, logger.ts, publicUrl.ts, storageProxy.ts
+├── routers.ts        # tRPC Root-Router (Journal, Bank, Belege, Berichte, …)
+├── *Router.ts        # Feature-Router (auth, invoices, reminders, qrBill, yearEnd, settings, dsg, …)
+├── db.ts             # Drizzle-Queries / Helfer
+├── storage.ts        # Datei-Storage (Forge-Proxy oder lokal)
+└── *.test.ts         # Vitest
+shared/               # bankParser, camt054Parser, qrReference, currency, kmuKontenplan
+drizzle/              # schema.ts, Migrationen (0000–00xx), meta/
+scripts/              # e2e-core-chain.mjs, encrypt-existing-secrets.ts, reset-all-data.ts
 ```
 
 ## Wichtige Konventionen
 
-- Dateinamen: PascalCase für Klassen/Komponenten, camelCase für Utilities
-- Services exportieren Funktionen (nicht Klassen)
+- Dateinamen: PascalCase für Komponenten/Seiten, camelCase für Utilities und Router
 - Alle Geldbeträge intern als `number` (CHF), Anzeige mit `toLocaleString('de-CH')`
-- Fehler in API-Routen: `{ error: string }` mit passendem HTTP-Status
-- Neue Features: immer unter `src/features/<feature-name>/`
+- Fehler in tRPC: `TRPCError` mit passendem Code; in Express-Routen `{ error: string }` + HTTP-Status
+- Logging: `createLogger("modul")`, strukturiert (`log.info({ feld }, "msg")`)
+- Pflicht-Env: `DATABASE_URL`, `JWT_SECRET`; für Produktion zusätzlich `APP_URL`, `SECRETS_MASTER_KEY`, E-Mail-Provider
 
-## MCP-Server
+## Befehle
 
-Der Finanzplan MCP-Server läuft unter `/api/mcp`. Dokumentation: `docs/mcp-server.md`.
-Tools: `list_kunden`, `get_kunde`, `get_vermoegen`, `get_cashflow`, `get_vorsorge`, `berechne_steuer`, `berechne_ahv`, `berechne_bvg`, `get_pk_kennzahlen`.
+`pnpm dev` (Server + Vite HMR) · `pnpm check` (tsc) · `pnpm test` (Vitest) · `pnpm build` · `pnpm drizzle-kit migrate` · `pnpm test:core-chain` (E2E gegen laufenden Server)

@@ -40,10 +40,15 @@ export function getSessionCookieOptions(
   //       : undefined;
 
   const secure = isSecureRequest(req);
+  // Audit: `SameSite=Lax` statt `None`. Die App wird nie cross-site eingebettet
+  // (helmet setzt X-Frame-Options/frame-ancestors auf same-origin) – mit
+  // `None` würde das Session-Cookie bei fremd ausgelösten Formular-POSTs
+  // (z. B. auf /api/upload) mitgeschickt (CSRF). Lax reicht für den
+  // OAuth-Callback (Top-Level-GET-Navigation) vollständig aus.
   return {
     httpOnly: true,
     path: "/",
-    sameSite: secure ? "none" : "lax",
+    sameSite: "lax",
     secure,
   };
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ENV } from "./env";
 import { notifyOwner } from "./notification";
-import { adminProcedure, publicProcedure, router } from "./trpc";
+import { platformAdminProcedure, publicProcedure, router } from "./trpc";
 
 export const systemRouter = router({
   health: publicProcedure
@@ -26,7 +26,8 @@ export const systemRouter = router({
     configured: Boolean(ENV.resendApiKey),
   })),
 
-  notifyOwner: adminProcedure
+  // Audit: Benachrichtigung des Plattform-Owners nur für Plattform-Admins
+  notifyOwner: platformAdminProcedure
     .input(
       z.object({
         title: z.string().min(1, "title is required"),

@@ -27,6 +27,9 @@ export type SessionPayload = {
   name: string;
 };
 
+/** Mindestabstand zwischen zwei `lastSignedIn`-Updates pro User. */
+const LAST_SIGNED_IN_WRITE_INTERVAL_MS = 10 * 60 * 1000;
+
 const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
 const GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
 const GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfoWithJwt`;
@@ -204,7 +207,8 @@ class SDKServer {
     cookieValue: string | undefined | null
   ): Promise<{ openId: string; appId: string; name: string } | null> {
     if (!cookieValue) {
-      logger.warn("[Auth] Missing session cookie");
+      // Anonyme Requests (Landing, Login, Health) sind normal – kein Warn-Log.
+      logger.debug("[Auth] Missing session cookie");
       return null;
     }
 
@@ -295,10 +299,15 @@ class SDKServer {
       throw ForbiddenError("User not found");
     }
 
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
+    // Audit/Performance: `lastSignedIn` nicht bei jedem Request schreiben
+    // (vorher ein UPDATE pro API-Call), sondern höchstens alle 10 Minuten.
+    const lastSeen = user.lastSignedIn ? new Date(user.lastSignedIn).getTime() : 0;
+    if (signedInAt.getTime() - lastSeen > LAST_SIGNED_IN_WRITE_INTERVAL_MS) {
+      await db.upsertUser({
+        openId: user.openId,
+        lastSignedIn: signedInAt,
+      });
+    }
 
     return user;
   }

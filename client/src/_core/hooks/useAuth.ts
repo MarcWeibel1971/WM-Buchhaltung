@@ -44,10 +44,10 @@ export function useAuth(options?: UseAuthOptions) {
   }, [logoutMutation, utils]);
 
   const state = useMemo(() => {
-    localStorage.setItem(
-      "manus-runtime-user-info",
-      JSON.stringify(meQuery.data)
-    );
+    // Audit: früher wurden E-Mail/Rolle/Org bei jedem Render in localStorage
+    // geschrieben (Manus-Überbleibsel, nirgends gelesen, blieb nach Logout
+    // auf dem Gerät). Ein einmaliges Aufräumen alter Einträge genügt.
+    try { localStorage.removeItem("manus-runtime-user-info"); } catch { /* ignore */ }
     return {
       user: meQuery.data ?? null,
       loading: meQuery.isLoading || logoutMutation.isPending,

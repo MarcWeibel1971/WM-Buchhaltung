@@ -22,11 +22,13 @@ Ausserhalb des Servers:
 
 - **MySQL-kompatibler Storage** (oder Container) – das Compose-File liefert
   MySQL 8 mit.
-- **S3-kompatibler Object-Store** für Dokumenten-Uploads (AWS S3, Cloudflare
-  R2, MinIO, Scaleway Object Storage…). Empfohlen in der Schweiz:
-  Infomaniak Swiss Backup oder Cloudflare R2 mit EU-Data-Residency.
-- **OAuth-Provider** (aktuell Manus SDK). Credentials müssen als Env-Vars
-  gesetzt sein.
+- **Persistentes Volume** für Dokumenten-Uploads (`LOCAL_STORAGE_DIR`,
+  im Compose-Stack das Volume `uploads_data`). Alternativ Forge-Storage der
+  Manus-Plattform (`BUILT_IN_FORGE_API_*`).
+- **E-Mail-Provider** (Resend oder SMTP) für Registrierung, Passwort-Reset,
+  Rechnungen und Mahnungen.
+- Optional: **OAuth-Provider** (Manus SDK) – E-Mail/Passwort-Login funktioniert
+  ohne.
 - **LLM-Endpoint** (Forge-API-kompatibel) für Belegerkennung und
   Kategorisierung.
 
@@ -46,7 +48,8 @@ cd /opt/wm-buchhaltung
 
 # 3. .env aus Template erzeugen und Werte setzen
 cp .env.example .env
-# WICHTIG: JWT_SECRET, MYSQL_*, OAUTH_*, AWS_* mit openssl/Vault füllen.
+# WICHTIG: JWT_SECRET, MYSQL_*, APP_URL, SECRETS_MASTER_KEY und E-Mail-Provider
+# (RESEND_API_KEY oder SMTP_*) füllen; Secrets mit openssl/Vault erzeugen.
 # openssl rand -hex 64 | tee -a /dev/tty für JWT_SECRET
 
 # 4. Backup-Verzeichnis
@@ -203,7 +206,7 @@ Ausbaustufe.
 
 ### Secrets-Rotation
 
-Wenn ein Secret (JWT, OAuth-Client-Secret, AWS-Key) verbrannt wurde:
+Wenn ein Secret (JWT, OAuth-Client-Secret, E-Mail-API-Key) verbrannt wurde:
 
 1. Neuen Wert in `.env` eintragen.
 2. `docker compose up -d` → die App startet mit neuen Env-Vars neu.
@@ -250,8 +253,9 @@ docker compose restart app
 
 ### Disk voll durch Uploads
 
-Dokumenten-Uploads landen in S3, nicht lokal. Wenn der Host dennoch voll
-läuft, liegt es vermutlich an:
+Dokumenten-Uploads landen im Volume `uploads_data` (`LOCAL_STORAGE_DIR`);
+dessen Grösse mit `docker system df -v` prüfen. Läuft der Host darüber hinaus
+voll, liegt es vermutlich an:
 
 1. `docker logs` (Kontainer-stdout). → log-rotation konfigurieren:
    ```json

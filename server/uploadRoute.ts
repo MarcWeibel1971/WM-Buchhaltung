@@ -1,11 +1,11 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { nanoid } from "nanoid";
-import { storagePut } from "./storage";
+import { storagePut, storageDelete } from "./storage";
 import { getDb } from "./db";
-import { documents } from "../drizzle/schema";
+import { documents, journalEntries, bankTransactions, type User } from "../drizzle/schema";
 import { sdk } from "./_core/sdk";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 import { findOrCreateSupplierFromMetadata } from "./suppliersRouter";
 import { createLogger } from "./_core/logger";
@@ -24,23 +24,89 @@ const upload = multer({
 
 export const uploadRouter = Router();
 
+// Audit: gemeinsamer Auth-Helfer für alle Upload-Handler. Antwortet selbst
+// mit 401 und liefert null, damit der Aufrufer nur `if (!user) return;` braucht.
+async function requireAuth(req: Request, res: Response): Promise<User | null> {
+  try {
+    return await sdk.authenticateRequest(req);
+  } catch {
+    res.status(401).json({ error: "Nicht authentifiziert" });
+    return null;
+  }
+}
+
+// Audit: Dateiendung ausschliesslich aus dem (per multer geprüften) MIME-Typ
+// ableiten – der Dateiname aus dem Client ist nicht vertrauenswürdig.
+const MIME_EXT: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+function extFromMime(mime: string): string | null {
+  return MIME_EXT[mime.toLowerCase()] ?? null;
+}
+
+// Audit: optionale Fremdschlüssel aus dem Multipart-Body strikt parsen.
+// Rückgabe: undefined (nicht angegeben), number (gültig) oder null (ungültig).
+function parseOptionalId(raw: unknown): number | null | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const n = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
 // ─── POST /api/upload/document ────────────────────────────────────────────────
 uploadRouter.post("/document", upload.single("file"), async (req, res) => {
-  let user;
-  try {
-    user = await sdk.authenticateRequest(req as any);
-  } catch {
-    return res.status(401).json({ error: "Nicht authentifiziert" });
-  }
+  const user = await requireAuth(req, res);
+  if (!user) return;
   try {
 
     if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
 
-    const { journalEntryId, bankTransactionId, documentType, notes, fiscalYear } = req.body;
+    // Phase 1 Multi-Tenancy: Upload ist an die aktuelle Organisation des
+    // Users gebunden. Ohne aktive Org wird der Upload abgelehnt.
+    // Audit: Prüfung VOR dem Storage-Upload, damit keine verwaisten Dateien entstehen.
+    const orgId = user.currentOrganizationId;
+    if (orgId == null) {
+      return res.status(403).json({
+        error: "Keine aktive Organisation. Bitte zuerst eine Organisation einrichten.",
+      });
+    }
 
-    // Generate unique S3 key
-    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "bin";
-    const s3Key = `documents/${user.id}/${nanoid()}.${ext}`;
+    const { documentType, notes, fiscalYear } = req.body;
+
+    // Audit: journalEntryId / bankTransactionId validieren und auf die Org prüfen
+    const journalEntryId = parseOptionalId(req.body.journalEntryId);
+    if (journalEntryId === null) return res.status(400).json({ error: "Ungültige journalEntryId" });
+    const bankTransactionId = parseOptionalId(req.body.bankTransactionId);
+    if (bankTransactionId === null) return res.status(400).json({ error: "Ungültige bankTransactionId" });
+
+    const db = await getDb();
+    if (!db) return res.status(500).json({ error: "Datenbank nicht verfügbar" });
+
+    if (journalEntryId !== undefined) {
+      const [je] = await db
+        .select({ id: journalEntries.id })
+        .from(journalEntries)
+        .where(and(eq(journalEntries.organizationId, orgId), eq(journalEntries.id, journalEntryId)))
+        .limit(1);
+      if (!je) return res.status(404).json({ error: "Buchung nicht gefunden" });
+    }
+    if (bankTransactionId !== undefined) {
+      const [bt] = await db
+        .select({ id: bankTransactions.id })
+        .from(bankTransactions)
+        .where(and(eq(bankTransactions.organizationId, orgId), eq(bankTransactions.id, bankTransactionId)))
+        .limit(1);
+      if (!bt) return res.status(404).json({ error: "Banktransaktion nicht gefunden" });
+    }
+
+    // Generate unique S3 key (Audit: Endung aus MIME-Typ, Pfad org-scoped)
+    const ext = extFromMime(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: "Nicht unterstützter Dateityp" });
+    const s3Key = `documents/${orgId}/${nanoid()}.${ext}`;
 
     // Upload to S3
     const { url } = await storagePut(s3Key, req.file.buffer, req.file.mimetype);
@@ -181,33 +247,20 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
         if (parsed.description) parts.push(parsed.description.replace(/[^a-zA-Z0-9äöüÄÖÜéèàêâ\s\-\.]/g, '').trim());
         if (parsed.documentDate) parts.push(parsed.documentDate);
         if (parts.length >= 2) {
-          const ext = req.file.originalname.split('.').pop()?.toLowerCase() ?? 'pdf';
           smartFilename = parts.join(' - ').substring(0, 120) + '.' + ext;
         }
       } catch { /* keep original filename */ }
-    }
-
-    // Phase 1 Multi-Tenancy: Upload ist an die aktuelle Organisation des
-    // Users gebunden. Ohne aktive Org wird der Upload abgelehnt.
-    const orgId = user.currentOrganizationId;
-    if (orgId == null) {
-      return res.status(403).json({
-        error: "Keine aktive Organisation. Bitte zuerst eine Organisation einrichten.",
-      });
     }
 
     // Auto-create or link supplier for incoming invoices
     let autoSupplierId: number | undefined = undefined;
     if (detectedDocType === "invoice_in" && aiMetadata) {
       try {
-        const tempDb = await getDb();
-        if (tempDb) {
-          const parsed = JSON.parse(aiMetadata);
-          const supplierResult = await findOrCreateSupplierFromMetadata(orgId, parsed, tempDb);
-          if (supplierResult) {
-            autoSupplierId = supplierResult.supplierId;
-            logger.info(`[Upload] ${supplierResult.created ? 'Created' : 'Linked'} supplier #${supplierResult.supplierId} for invoice from ${parsed.counterparty}`);
-          }
+        const parsed = JSON.parse(aiMetadata);
+        const supplierResult = await findOrCreateSupplierFromMetadata(orgId, parsed, db);
+        if (supplierResult) {
+          autoSupplierId = supplierResult.supplierId;
+          logger.info(`[Upload] ${supplierResult.created ? 'Created' : 'Linked'} supplier #${supplierResult.supplierId} for invoice from ${parsed.counterparty}`);
         }
       } catch (supplierErr) {
         logger.warn("[Upload] Auto-supplier creation failed:", supplierErr);
@@ -215,8 +268,6 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
     }
 
     // Save to database
-    const db = await getDb();
-    if (!db) return res.status(500).json({ error: "Datenbank nicht verfügbar" });
     const [result] = await db.insert(documents).values({
       organizationId: orgId,
       filename: smartFilename,
@@ -225,8 +276,8 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
       mimeType: req.file.mimetype,
       fileSize: req.file.size,
       documentType: detectedDocType as any,
-      journalEntryId: journalEntryId ? parseInt(journalEntryId) : undefined,
-      bankTransactionId: bankTransactionId ? parseInt(bankTransactionId) : undefined,
+      journalEntryId,
+      bankTransactionId,
       extractedText,
       aiMetadata,
       notes: notes ?? null,
@@ -238,7 +289,8 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
     const docId = (result as any).insertId;
 
     // Return the saved document
-    const [saved] = await db.select().from(documents).where(eq(documents.id, docId));
+    const [saved] = await db.select().from(documents)
+      .where(and(eq(documents.organizationId, orgId), eq(documents.id, docId)));
     return res.json({ success: true, document: saved });
   } catch (err: any) {
     logger.error("[Upload] Error:", err);
@@ -248,21 +300,42 @@ Antworte NUR mit dem JSON-Objekt, ohne Erklärungen.`,
 
 // ─── DELETE /api/upload/document/:id ─────────────────────────────────────────
 uploadRouter.delete("/document/:id", async (req, res) => {
-  let user;
+  const user = await requireAuth(req, res);
+  if (!user) return;
   try {
-    user = await sdk.authenticateRequest(req as any);
-  } catch {
-    return res.status(401).json({ error: "Nicht authentifiziert" });
-  }
-  try {
+    // Audit: Löschen nur innerhalb der eigenen Organisation, ID validieren,
+    // Datei im Storage mitlöschen.
+    const orgId = user.currentOrganizationId;
+    if (orgId == null) {
+      return res.status(403).json({ error: "Keine aktive Organisation." });
+    }
+    const docId = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(docId) || docId <= 0) {
+      return res.status(400).json({ error: "Ungültige Dokument-ID" });
+    }
 
     const db = await getDb();
     if (!db) return res.status(500).json({ error: "Datenbank nicht verfügbar" });
 
-    const docId = parseInt(req.params.id);
-    await db.delete(documents).where(eq(documents.id, docId));
+    const [doc] = await db
+      .select({ id: documents.id, s3Key: documents.s3Key })
+      .from(documents)
+      .where(and(eq(documents.organizationId, orgId), eq(documents.id, docId)))
+      .limit(1);
+    if (!doc) return res.status(404).json({ error: "Dokument nicht gefunden" });
+
+    await db.delete(documents).where(and(eq(documents.organizationId, orgId), eq(documents.id, docId)));
+
+    if (doc.s3Key) {
+      try {
+        await storageDelete(doc.s3Key);
+      } catch (storageErr) {
+        logger.warn("[Delete] Storage-Datei konnte nicht gelöscht werden:", storageErr);
+      }
+    }
     return res.json({ success: true });
   } catch (err: any) {
+    logger.error("[Delete] Error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -280,18 +353,15 @@ const pdfUpload = multer({
 });
 
 uploadRouter.post("/bank-statement-pdf", pdfUpload.single("file"), async (req, res) => {
-  let user;
-  try {
-    user = await sdk.authenticateRequest(req as any);
-  } catch {
-    return res.status(401).json({ error: "Nicht authentifiziert" });
-  }
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
 
   try {
-    // Upload PDF to S3 to get a URL for LLM processing
-    const fileKey = `bank-statements/${user.id}-${nanoid()}.pdf`;
+    // Upload PDF to S3 to get a URL for LLM processing (Audit: org-scoped Key)
+    const scope = user.currentOrganizationId != null ? `org-${user.currentOrganizationId}` : `user-${user.id}`;
+    const fileKey = `bank-statements/${scope}/${nanoid()}.pdf`;
     const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, "application/pdf");
 
     // Extract transactions via LLM (vision model reads the PDF)
@@ -403,19 +473,17 @@ const chartPdfUpload = multer({
 });
 
 uploadRouter.post("/chart-of-accounts-pdf", chartPdfUpload.single("file"), async (req, res) => {
-  let user;
-  try {
-    user = await sdk.authenticateRequest(req as any);
-  } catch {
-    return res.status(401).json({ error: "Nicht authentifiziert" });
-  }
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
 
   try {
-    // Upload to S3 to get a URL for LLM processing
-    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "pdf";
-    const fileKey = `chart-of-accounts/${user.id}-${nanoid()}.${ext}`;
+    // Upload to S3 to get a URL for LLM processing (Audit: Endung aus MIME, org-scoped Key)
+    const ext = extFromMime(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: "Nicht unterstützter Dateityp" });
+    const scope = user.currentOrganizationId != null ? `org-${user.currentOrganizationId}` : `user-${user.id}`;
+    const fileKey = `chart-of-accounts/${scope}/${nanoid()}.${ext}`;
     const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
 
     const isPdf = req.file.mimetype === "application/pdf";
@@ -524,18 +592,17 @@ const openingBalancePdfUpload = multer({
 });
 
 uploadRouter.post("/opening-balance-pdf", openingBalancePdfUpload.single("file"), async (req, res) => {
-  let user;
-  try {
-    user = await sdk.authenticateRequest(req as any);
-  } catch {
-    return res.status(401).json({ error: "Nicht authentifiziert" });
-  }
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   if (!req.file) return res.status(400).json({ error: "Keine Datei hochgeladen" });
 
   try {
-    const ext = req.file.originalname.split(".").pop()?.toLowerCase() ?? "pdf";
-    const fileKey = `opening-balances/${user.id}-${nanoid()}.${ext}`;
+    // Audit: Endung aus MIME, org-scoped Key
+    const ext = extFromMime(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: "Nicht unterstützter Dateityp" });
+    const scope = user.currentOrganizationId != null ? `org-${user.currentOrganizationId}` : `user-${user.id}`;
+    const fileKey = `opening-balances/${scope}/${nanoid()}.${ext}`;
     const { url: fileUrl } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
 
     const isPdf = req.file.mimetype === "application/pdf";
@@ -644,6 +711,9 @@ const audioUpload = multer({
 });
 
 uploadRouter.post("/voice", audioUpload.single("audio"), async (req, res) => {
+  // Audit: Authentifizierung wie bei /document
+  const user = await requireAuth(req, res);
+  if (!user) return;
   try {
     if (!req.file) {
       return res.status(400).json({ error: "Keine Audio-Datei hochgeladen" });
@@ -653,7 +723,7 @@ uploadRouter.post("/voice", audioUpload.single("audio"), async (req, res) => {
       : req.file.mimetype.includes("ogg") ? "ogg"
       : req.file.mimetype.includes("mp4") || req.file.mimetype.includes("m4a") ? "m4a"
       : "mp3";
-    const key = `voice-recordings/${nanoid()}.${ext}`;
+    const key = `voice-recordings/${user.id}/${nanoid()}.${ext}`;
     const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
     return res.json({ url, key });
   } catch (err: any) {
@@ -665,6 +735,9 @@ uploadRouter.post("/voice", audioUpload.single("audio"), async (req, res) => {
 // ─── POST /api/upload/transcribe ──────────────────────────────────────────────
 // Accepts audio files and transcribes them DIRECTLY via Whisper API (no S3 roundtrip)
 uploadRouter.post("/transcribe", audioUpload.single("audio"), async (req, res) => {
+  // Audit: Authentifizierung wie bei /document
+  const user = await requireAuth(req, res);
+  if (!user) return;
   try {
     if (!req.file) {
       return res.status(400).json({ error: "Keine Audio-Datei hochgeladen" });

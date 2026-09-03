@@ -1,4 +1,5 @@
 import { trpc } from "@/lib/trpc";
+import { todayISO } from "@/lib/date";
 import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,7 +44,7 @@ export default function Kreditoren() {
   const { data: bankAccs } = trpc.bankImport.getBankAccounts.useQuery();
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [execDate, setExecDate] = useState(new Date().toISOString().slice(0, 10));
+  const [execDate, setExecDate] = useState(todayISO());
   const [showPaid, setShowPaid] = useState(false);
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>("");
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -52,7 +53,7 @@ export default function Kreditoren() {
   const [showManual, setShowManual] = useState(false);
   const [manualForm, setManualForm] = useState({
     counterparty: "", counterpartyIban: "", referenceNumber: "",
-    totalAmount: "", currency: "CHF", documentDate: new Date().toISOString().slice(0, 10),
+    totalAmount: "", currency: "CHF", documentDate: todayISO(),
     dueDate: "", description: "",
   });
   const [camtResults, setCamtResults] = useState<any>(null);
@@ -70,7 +71,7 @@ export default function Kreditoren() {
       setShowManual(false);
       setManualForm({
         counterparty: "", counterpartyIban: "", referenceNumber: "",
-        totalAmount: "", currency: "CHF", documentDate: new Date().toISOString().slice(0, 10),
+        totalAmount: "", currency: "CHF", documentDate: todayISO(),
         dueDate: "", description: "",
       });
       refetchInvoices();

@@ -8,6 +8,19 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Mail, Lock, ArrowRight, AlertCircle, CheckCircle, Sparkles, FileText } from "lucide-react";
 
+/** Sicheres Ziel nach dem Login: `?returnPath=` oder gemerkte Einladung, sonst "/". */
+function resolvePostLoginTarget(): string {
+  const params = new URLSearchParams(window.location.search);
+  let target = params.get("returnPath") ?? "";
+  if (!target) {
+    try {
+      const token = sessionStorage.getItem("pendingInvitationToken");
+      if (token) target = `/einladung/${encodeURIComponent(token)}`;
+    } catch { /* sessionStorage nicht verfügbar */ }
+  }
+  return target.startsWith("/") && !target.startsWith("//") ? target : "/";
+}
+
 export default function Login() {
   const [, navigate] = useLocation();
   const [email, setEmail] = useState("");
@@ -16,7 +29,11 @@ export default function Login() {
   const [needsVerification, setNeedsVerification] = useState(false);
 
   const loginMutation = trpc.auth.login.useMutation({
-    onSuccess: () => { window.location.href = "/"; },
+    onSuccess: () => {
+      // Audit (Einladungs-Flow): nach dem Login zurück zur Einladung bzw. zum
+      // gewünschten internen Pfad. Nur relative Pfade zulassen (kein Open Redirect).
+      window.location.href = resolvePostLoginTarget();
+    },
     onError: (err) => {
       if (err.message.includes("bestätigen Sie zuerst")) {
         setNeedsVerification(true);
